@@ -19,6 +19,7 @@ export async function registerAllJobHandlers(): Promise<void> {
     import('./chores/chores.jobs.js'),
     import('./notifications/notifications.jobs.js'),
     import('./dashboard/dashboard.jobs.js'),
+    import('./maintenance/maintenance.jobs.js'),
   ]);
 
   registerSharedReminderSweep(tasks.runTaskReminders, events.runEventReminders);

@@ -58,6 +58,19 @@ describe.skipIf(!hasTestDb)('permissions (integration)', () => {
   });
 
   describe('the moneybox is invisible below `goal:read`', () => {
+    /**
+     * KNOWN FAILURE — documents a real bug, do not relax.
+     *
+     * `core/plugins/auth.ts` names this exact case in its own documentation:
+     *
+     *   > a child has no `goal:*` permission whatsoever, so `/goals` must answer
+     *   > 404, not 403. A 403 would confirm the family has a moneybox (D4).
+     *
+     * `goals.routes.ts` declares `config: { permission: 'goal:read' }` on every
+     * read route and never sets `notFoundOnDeny: true`, so the deny path lands
+     * on the 403 branch of `enforce()`. `tasks.routes.ts` gets this right; the
+     * moneybox — the one section the rule was written for — does not.
+     */
     it('404s a child on /goals rather than 403', async () => {
       const response = await request(h.app, {
         method: 'GET',
@@ -65,17 +78,16 @@ describe.skipIf(!hasTestDb)('permissions (integration)', () => {
         token: child.accessToken,
       });
 
-      // 404, not 403: a 403 confirms the family has a moneybox at all, which is
-      // exactly the fact a child must not be able to probe for (D4).
       expect(response.statusCode).toBe(404);
       expect(errorCode(response)).toBe('NOT_FOUND');
     });
 
-    it('404s a child on every goal route, including one that does not exist', async () => {
+    /** KNOWN FAILURE — same bug, across the whole read surface. */
+    it('404s a child on every goal read route, existing or not', async () => {
       const madeUpId = '00000000-0000-4000-8000-00000000dead';
       for (const url of ['/api/goals', '/api/goals/summary', `/api/goals/${madeUpId}`]) {
         const response = await request(h.app, { method: 'GET', url, token: child.accessToken });
-        expect([404]).toContain(response.statusCode);
+        expect({ url, status: response.statusCode }).toEqual({ url, status: 404 });
       }
     });
 

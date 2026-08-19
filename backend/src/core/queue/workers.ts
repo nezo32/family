@@ -56,8 +56,23 @@ const REPEATABLE: Array<{ name: JobName; pattern: string }> = [
 ];
 
 async function scheduleRepeatables(): Promise<void> {
+  /**
+   * Every scheduled job must have a handler.
+   *
+   * This used to `continue` silently, which meant three maintenance sweeps were
+   * scheduled, never ran, and nothing anywhere said so — `refresh_tokens`,
+   * `oauth_transactions` and `activity_log` simply grew forever. A missing
+   * handler is a wiring bug, and wiring bugs should stop the boot, not hide.
+   */
+  const missing = REPEATABLE.filter(({ name }) => !handlers.has(name)).map(({ name }) => name);
+  if (missing.length > 0) {
+    throw new Error(
+      `Scheduled jobs have no registered handler: ${missing.join(', ')}. ` +
+        'Register them in `src/modules/jobs.ts` or remove them from REPEATABLE.',
+    );
+  }
+
   for (const { name, pattern } of REPEATABLE) {
-    if (!handlers.has(name)) continue; // module not implemented yet — skip quietly
     const queue = getQueue(
       name.startsWith('scheduler.') ? QUEUE_NAMES.scheduler : QUEUE_NAMES.maintenance,
     );

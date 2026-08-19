@@ -31,7 +31,11 @@ async function attachConsole(page: Page) {
   });
   page.on('pageerror', (e) => messages.push(`[pageerror] ${String(e).slice(0, 300)}`));
   page.on('response', (r) => {
-    if (r.status() >= 400) messages.push(`[http ${r.status()}] ${r.url()}`);
+    if (r.url().includes('/api/'))
+      messages.push(
+        `[http ${r.status()}] ${r.request().method()} ${r.url().replace(/^https?:\/\/[^/]+/, '')} auth=${r.request().headers().authorization ? 'yes' : 'no'}`,
+      );
+    else if (r.status() >= 400) messages.push(`[http ${r.status()}] ${r.url()}`);
   });
   return messages;
 }
@@ -270,7 +274,7 @@ test('visual walk', async ({ page }, testInfo) => {
 
   fs.writeFileSync(
     path.join(OUT, `${t}-audit.json`),
-    JSON.stringify({ audits, messages: messages.slice(0, 120) }, null, 2),
+    JSON.stringify({ audits, messages }, null, 2),
   );
   consoleLog.push({ url: t, messages });
   expect(true).toBe(true);
