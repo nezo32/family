@@ -34,6 +34,9 @@ export interface JobPayloads {
   'scheduler.overdue-sweep': Record<string, never>;
   'scheduler.birthdays': Record<string, never>;
   'scheduler.weekly-digest': Record<string, never>;
+  // chores
+  'chores.expire-swaps': Record<string, never>;
+  'chores.streaks': Record<string, never>;
   // maintenance
   'maintenance.prune-refresh-tokens': Record<string, never>;
   'maintenance.prune-oauth-transactions': Record<string, never>;
@@ -53,6 +56,8 @@ const QUEUE_FOR_JOB: Record<JobName, QueueName> = {
   'scheduler.overdue-sweep': 'scheduler',
   'scheduler.birthdays': 'scheduler',
   'scheduler.weekly-digest': 'scheduler',
+  'chores.expire-swaps': 'maintenance',
+  'chores.streaks': 'maintenance',
   'maintenance.prune-refresh-tokens': 'maintenance',
   'maintenance.prune-oauth-transactions': 'maintenance',
   'maintenance.push-health-check': 'maintenance',

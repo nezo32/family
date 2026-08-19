@@ -55,6 +55,7 @@ export default function MembersPage() {
   // `member:update:any`; `member:remove` is the narrower of the two and the one
   // this destructive control follows.
   const canModerate = can('member:remove');
+  const canReadRoster = can('member:read');
 
   const [approveFor, setApproveFor] = useState<PendingMember | null>(null);
   const [rejectFor, setRejectFor] = useState<PendingMember | null>(null);
@@ -186,49 +187,54 @@ export default function MembersPage() {
       </section>
 
       {/* ---- everybody else ---------------------------------------------- */}
-      <section aria-labelledby="members-heading">
-        <h2 id="members-heading" className="mb-2 text-base font-semibold text-foreground">
-          {ADMIN_RU.membersTitle}
-        </h2>
+      {/* `useMembers` is enabled on `member:read`, and a disabled query stays
+          `pending` forever — so the section is gated on the same check rather
+          than rendering a skeleton that never resolves. */}
+      {canReadRoster ? (
+        <section aria-labelledby="members-heading">
+          <h2 id="members-heading" className="mb-2 text-base font-semibold text-foreground">
+            {ADMIN_RU.membersTitle}
+          </h2>
 
-        {members.isPending ? (
-          <ListSkeleton />
-        ) : members.isError ? (
-          <ErrorState
-            error={members.error}
-            title={ADMIN_RU.loadErrorTitle}
-            onRetry={() => void members.refetch()}
-          />
-        ) : memberItems.length === 0 ? (
-          <EmptyState
-            compact
-            title={ADMIN_RU.membersEmptyTitle}
-            description={ADMIN_RU.membersEmptyDescription}
-          />
-        ) : (
-          <>
-            <p className="mb-2 text-sm text-muted-foreground">{ADMIN_RU.membersHint}</p>
-            <ul className="flex flex-col gap-2 pb-safe">
-              {memberItems.map((member) => (
-                <MemberAdminRow
-                  key={member.id}
-                  member={member}
-                  canModerate={canModerate}
-                  isBusy={busy}
-                  onSuspend={() => {
-                    setConflict(false);
-                    setSuspendFor(member);
-                  }}
-                  onReactivate={() => {
-                    setConflict(false);
-                    setReactivateFor(member);
-                  }}
-                />
-              ))}
-            </ul>
-          </>
-        )}
-      </section>
+          {members.isPending ? (
+            <ListSkeleton />
+          ) : members.isError ? (
+            <ErrorState
+              error={members.error}
+              title={ADMIN_RU.loadErrorTitle}
+              onRetry={() => void members.refetch()}
+            />
+          ) : memberItems.length === 0 ? (
+            <EmptyState
+              compact
+              title={ADMIN_RU.membersEmptyTitle}
+              description={ADMIN_RU.membersEmptyDescription}
+            />
+          ) : (
+            <>
+              <p className="mb-2 text-sm text-muted-foreground">{ADMIN_RU.membersHint}</p>
+              <ul className="flex flex-col gap-2 pb-safe">
+                {memberItems.map((member) => (
+                  <MemberAdminRow
+                    key={member.id}
+                    member={member}
+                    canModerate={canModerate}
+                    isBusy={busy}
+                    onSuspend={() => {
+                      setConflict(false);
+                      setSuspendFor(member);
+                    }}
+                    onReactivate={() => {
+                      setConflict(false);
+                      setReactivateFor(member);
+                    }}
+                  />
+                ))}
+              </ul>
+            </>
+          )}
+        </section>
+      ) : null}
 
       {/* ---- flows -------------------------------------------------------- */}
       <ApproveRoleSheet

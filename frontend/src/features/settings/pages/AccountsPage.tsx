@@ -153,9 +153,7 @@ export default function AccountsPage() {
                 }}
               >
                 <Link2 aria-hidden />
-                {pendingLink === provider
-                  ? T.linking
-                  : `${T.link} ${PROVIDER_LABELS[provider]}`}
+                {pendingLink === provider ? T.linking : `${T.link} ${PROVIDER_LABELS[provider]}`}
               </Button>
             ))}
           </CardContent>
@@ -200,7 +198,9 @@ function IdentityRow(props: {
           ) : null}
         </div>
         {subtitle ? <p className="truncate text-xs text-muted-foreground">{subtitle}</p> : null}
-        <p className="text-xs text-muted-foreground">{T.linkedAt(formatDateTime(identity.linkedAt))}</p>
+        <p className="text-xs text-muted-foreground">
+          {T.linkedAt(formatDateTime(identity.linkedAt))}
+        </p>
       </div>
 
       {props.canUnlink ? (

@@ -109,14 +109,19 @@ export function permissionState(): PushPermission {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Read at module scope, from the build.
+ * The application server key, read from the build.
  *
  * HARD RULE: never fetch `GET /api/notifications/vapid-public-key` inside the
  * click handler. The round trip spends the user-activation token and
- * `pushManager.subscribe()` then fails on Safari with a bare
- * `NotAllowedError`.
+ * `pushManager.subscribe()` then fails on Safari with a bare `NotAllowedError`.
+ *
+ * A plain function rather than a module-level const only so tests can vary it;
+ * `import.meta.env` is inlined at build time, so this stays a synchronous
+ * property read with no I/O of any kind.
  */
-export const VAPID_PUBLIC_KEY: string = import.meta.env.VITE_VAPID_PUBLIC_KEY ?? '';
+export function vapidPublicKey(): string {
+  return import.meta.env.VITE_VAPID_PUBLIC_KEY ?? '';
+}
 
 /** base64url → `Uint8Array`, the only form `applicationServerKey` accepts. */
 export function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
@@ -248,13 +253,7 @@ export async function currentEndpoint(): Promise<string | null> {
 /* -------------------------------------------------------------------------- */
 
 export type EnableOutcome =
-  | 'enabled'
-  | 'denied'
-  | 'dismissed'
-  | 'unsupported'
-  | 'needs-install'
-  | 'misconfigured'
-  | 'failed';
+  'enabled' | 'denied' | 'dismissed' | 'unsupported' | 'needs-install' | 'misconfigured' | 'failed';
 
 export interface EnableResult {
   outcome: EnableOutcome;
@@ -277,7 +276,7 @@ export function enablePush(): Promise<EnableResult> {
   if (!isPushSupported()) {
     return Promise.resolve({ outcome: isIos() ? 'needs-install' : 'unsupported' });
   }
-  if (!VAPID_PUBLIC_KEY) {
+  if (!vapidPublicKey()) {
     // A build without the key can never subscribe; say so rather than firing the
     // one-shot OS prompt and then failing.
     return Promise.resolve({ outcome: 'misconfigured' });
@@ -314,7 +313,7 @@ async function completeSubscribe(
       (await registration.pushManager.subscribe({
         // HARD RULE: there is no silent push on iOS. `false` is not an option.
         userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+        applicationServerKey: urlBase64ToUint8Array(vapidPublicKey()),
       }));
 
     const summary = await postSubscription(subscription);

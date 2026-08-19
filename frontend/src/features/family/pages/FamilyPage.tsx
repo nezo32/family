@@ -44,7 +44,7 @@ export default function FamilyPage() {
     [members, selectedId],
   );
 
-  if (!isReady || roster.isPending) {
+  if (!isReady) {
     return (
       <>
         <PageHeader title={FAMILY_RU.title} description={FAMILY_RU.description} />
@@ -53,6 +53,9 @@ export default function FamilyPage() {
     );
   }
 
+  // Before the loading branch, deliberately: the roster query is `enabled` on
+  // this same permission, and a disabled query stays `pending` forever — the
+  // other order would show a skeleton that never resolves.
   if (!can('member:read')) {
     return (
       <>
@@ -62,6 +65,15 @@ export default function FamilyPage() {
           title={FAMILY_RU.noAccessTitle}
           description={FAMILY_RU.noAccessDescription}
         />
+      </>
+    );
+  }
+
+  if (roster.isPending) {
+    return (
+      <>
+        <PageHeader title={FAMILY_RU.title} description={FAMILY_RU.description} />
+        <RosterSkeleton />
       </>
     );
   }

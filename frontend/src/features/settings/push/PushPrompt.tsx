@@ -214,9 +214,7 @@ export function PushSection() {
           <PushDeniedCard onRecheck={push.refresh} />
         ) : null}
 
-        {push.needsReEnable ? (
-          <PushReEnableCard onEnable={runEnable} busy={push.busy} />
-        ) : null}
+        {push.needsReEnable ? <PushReEnableCard onEnable={runEnable} busy={push.busy} /> : null}
 
         {push.availability === 'available' && push.permission !== 'denied' ? (
           <div className="flex flex-wrap items-center gap-2">

@@ -52,6 +52,33 @@ import {
  * individually and logged, and the job as a whole still succeeds. A thrown job
  * would be retried by BullMQ and would re-walk everyone, which the dedupe keys
  * make harmless but pointless.
+ *
+ * ## ⚠ Ownership conflict — for the lead
+ *
+ * `notifications/notifications.jobs.ts` **also** registers
+ * `scheduler.weekly-digest` (calling `notifications.service.runWeeklyDigest`),
+ * and `registerJobHandler` throws on a duplicate name. Whichever module the
+ * worker imports second would otherwise crash the whole worker at boot, taking
+ * reminders and materialization down with it — so registration here is guarded
+ * and logs loudly instead. **Exactly one of the two must be deleted.**
+ *
+ * The two differ in ways that matter, so this is not a coin flip:
+ *
+ * | | this module | notifications |
+ * |---|---|---|
+ * | dedupe key | `weekly_digest:<user>:<ISO week>` | `…:<YYYY-MM-DD>` |
+ * | send-once claim | same ISO week | trailing 23 hours |
+ * | slot window | "the slot has passed, this week" | a **one-hour** window |
+ * | body | composed Russian prose with agreement | `headline` fragments joined by `·` |
+ *
+ * A date-based key plus a 23-hour claim permits two digests in one week if the
+ * user edits `weekday`; a one-hour window silently skips the week whenever the
+ * worker misses its tick. Both are the failure this module was written to
+ * remove, so the recommendation is to keep this handler, drop the
+ * `scheduler.weekly-digest` registration from `notifications.jobs.ts`, and
+ * leave `runWeeklyDigest`/`buildWeeklyDigest`/`registerDigestSectionProvider`
+ * in the notifications service unused (or delete them) — the composition seam
+ * they define is subsumed by `digest.service.ts`.
  */
 
 /** Family scale; the cap exists so a corrupted table cannot wedge the worker. */
@@ -110,33 +137,64 @@ async function loadFamilyTimezone(): Promise<string> {
   return row?.timezone ?? 'Europe/Moscow';
 }
 
-registerJobHandler('scheduler.weekly-digest', async () => {
-  const db = getDb();
-  const familyTimezone = await loadFamilyTimezone();
-  const now = new Date();
-
-  const results = await runWeeklyDigestSweep(
-    createDigestPort(db),
-    createNotificationIntentPort(db),
-    familyTimezone,
-    now,
-  );
-
-  const sent = results.filter((r) => r.sent).length;
-  const raced = results.filter((r) => r.reason === 'raced' || r.reason === 'already_sent').length;
-  logger.info(
-    { considered: results.length, sent, raced, familyTimezone },
-    'weekly digest sweep finished',
-  );
-});
-
 /**
- * The job name, exported so the worker entrypoint can assert it registered.
+ * The job name. Exported so `worker.ts` can assert the handler is registered.
  *
- * Importing this module is what registers the handler — `core/queue/workers.ts`
- * discovers handlers from its registry at import time, and
- * `scheduleRepeatables()` skips a repeatable whose handler is absent. The lead
- * must therefore import this module (directly or via the module registry) in
- * `worker.ts`, or the digest silently never runs.
+ * Importing this module is what registers it — `core/queue/workers.ts` reads
+ * its registry at import time and `scheduleRepeatables()` silently skips a
+ * repeatable whose handler is absent. The lead must therefore import this
+ * module (directly, or via the module registry) from `worker.ts`, or the digest
+ * never runs and nothing says so.
  */
 export const WEEKLY_DIGEST_JOB = 'scheduler.weekly-digest' as const;
+
+let registered = false;
+
+/**
+ * Mirrors `registerNotificationJobs()` so the lead can wire either module
+ * explicitly rather than relying on import order.
+ *
+ * The `try` is not defensive programming for its own sake: while the ownership
+ * conflict described in the file header stands, a duplicate registration would
+ * throw at import time and take the **entire worker** down — reminders,
+ * materialization, backups and all — over one job name. A loud error line and a
+ * running worker is the proportionate failure mode; the conflict itself is a
+ * code review item, not a runtime one.
+ */
+export function registerDashboardJobs(): void {
+  if (registered) return;
+  registered = true;
+
+  try {
+    registerJobHandler(WEEKLY_DIGEST_JOB, async () => {
+      const db = getDb();
+      const familyTimezone = await loadFamilyTimezone();
+      const now = new Date();
+
+      const results = await runWeeklyDigestSweep(
+        createDigestPort(db),
+        createNotificationIntentPort(db),
+        familyTimezone,
+        now,
+      );
+
+      const sent = results.filter((r) => r.sent).length;
+      const raced = results.filter(
+        (r) => r.reason === 'raced' || r.reason === 'already_sent',
+      ).length;
+      logger.info(
+        { considered: results.length, sent, raced, familyTimezone },
+        'weekly digest sweep finished',
+      );
+    });
+  } catch (error) {
+    logger.error(
+      { job: WEEKLY_DIGEST_JOB, err: error },
+      'the weekly digest handler is already registered by another module — ' +
+        'the dashboard digest is NOT running. See the ownership note in ' +
+        'dashboard.jobs.ts and delete one of the two registrations.',
+    );
+  }
+}
+
+registerDashboardJobs();

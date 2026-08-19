@@ -407,6 +407,27 @@ const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
+  app.delete(
+    '/notifications/subscriptions/:id',
+    {
+      config: { permission: 'notification:manage:own' },
+      schema: {
+        tags: ['notifications'],
+        summary: 'Revoke one of my devices by id (idempotent)',
+        description:
+          'Used to kill push on a lost or replaced device from another one. ' +
+          'The endpoint-based route cannot serve this: the endpoint is a ' +
+          'capability URL and is withheld from list responses.',
+        params: z.object({ id: idSchema }),
+        response: { 200: okSchema },
+      },
+    },
+    async (request) => {
+      await service.removeSubscriptionById(getDb(), auth(request).userId, request.params.id);
+      return { ok: true } as const;
+    },
+  );
+
   /**
    * «Отправить тестовое уведомление». Rate-limited because it is the one
    * endpoint a bored child will hammer, and each call is a real push.

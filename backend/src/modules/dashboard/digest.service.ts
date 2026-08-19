@@ -15,11 +15,11 @@ import type { DigestBlock, DigestPreviewResponse } from '@family/shared/contract
 import type { Executor } from '../../core/db.js';
 import { notFound } from '../../core/errors.js';
 import { logger } from '../../core/logger.js';
-import { enqueue } from '../../core/queue/queues.js';
 import { kudos } from '../chores/chores.schema.js';
 import { goalTransactions } from '../goals/goals.schema.js';
 import { users } from '../identity/users.schema.js';
-import { digestSubscriptions, notificationIntents } from '../notifications/notifications.schema.js';
+import { digestSubscriptions } from '../notifications/notifications.schema.js';
+import * as notifications from '../notifications/notifications.service.js';
 import { posts } from '../wall/wall.schema.js';
 import {
   addLocalDays,
@@ -82,10 +82,10 @@ import {
 /* Russian language primitives                                                */
 /* ========================================================================== */
 
-/** `[одна, две, пять]` — the three Russian numeric agreement forms. */
 /** U+00A0. Russian typography groups digits with it, and never with a comma. */
 export const NBSP = String.fromCharCode(0x00a0);
 
+/** `[одна, две, пять]` — the three Russian numeric agreement forms. */
 export type PluralForms = readonly [one: string, few: string, many: string];
 
 /**
@@ -548,9 +548,11 @@ export interface DigestIntent {
 /**
  * The narrow slice of the notifications module this one needs.
  *
- * `notifications.service.ts` does not exist yet; when it does, this interface
- * should be satisfied by its `emit()` and this local implementation deleted.
- * The exact signature wanted is in the handover notes.
+ * Declared as an interface rather than calling `notifications.emitIntent`
+ * directly from {@link sendDigest} for one reason: it lets the send-once tests
+ * drive the whole sweep with an in-memory dedupe set, no Postgres and no Redis.
+ * The real implementation below is a thin adapter over the notifications
+ * **service** — never its repository (D8).
  */
 export interface NotificationIntentPort {
   emit(intent: DigestIntent): Promise<{ intentId: string; created: boolean }>;
@@ -559,47 +561,38 @@ export interface NotificationIntentPort {
 export function createNotificationIntentPort(exec: Executor): NotificationIntentPort {
   return {
     async emit(intent) {
-      const [row] = await exec
-        .insert(notificationIntents)
-        .values({
-          type: 'weekly_digest',
-          // No actor: the scheduler caused this, not a person.
-          actorId: null,
-          entityType: 'digest',
-          entityId: null,
-          payload: intent.payload,
-          audience: { users: [intent.userId] },
-          dedupeKey: intent.dedupeKey,
-          // `low` — a digest must never escalate and never punch through quiet
-          // hours (D11: "never escalate a low/normal notification").
-          priority: 'low',
-        })
-        // The dedupe index is partial, so the predicate has to be repeated or
-        // Postgres refuses to match it.
-        .onConflictDoNothing({
-          target: notificationIntents.dedupeKey,
-          where: sql`${notificationIntents.dedupeKey} is not null`,
-        })
-        .returning({ id: notificationIntents.id });
+      // `emitIntent` writes the row on the caller's executor and hands back a
+      // `dispatch()` to enqueue the fan-out. Both halves are idempotent: the
+      // partial unique index on `dedupe_key` collapses a duplicate row, and the
+      // BullMQ `jobId` collapses a duplicate job.
+      const result = await notifications.emitIntent(exec, {
+        type: 'weekly_digest',
+        audience: { users: [intent.userId] },
+        // No actor: the scheduler caused this, not a person.
+        actorId: null,
+        entityType: 'digest',
+        payload: intent.payload,
+        dedupeKey: intent.dedupeKey,
+        // `low` — a digest must never escalate and must never punch through
+        // quiet hours (D11: "never escalate a low/normal notification").
+        priority: 'low',
+      });
 
-      if (!row) return { intentId: '', created: false };
+      if (result.deduped) return { intentId: result.intentId, created: false };
 
       try {
-        await enqueue(
-          'notification.dispatch',
-          { intentId: row.id },
-          { jobId: `notification.dispatch:${row.id}` },
-        );
+        // Outside a transaction, so dispatching here is the "after commit" step.
+        await result.dispatch();
       } catch (error) {
         // Fail-soft: the intent row is committed and the notifications sweep
         // re-dispatches undelivered intents. Redis being down must not cost the
         // family their digest.
         logger.error(
-          { intentId: row.id, err: error },
-          'failed to enqueue notification.dispatch for weekly digest',
+          { intentId: result.intentId, err: error },
+          'failed to enqueue notification fan-out for the weekly digest',
         );
       }
-      return { intentId: row.id, created: true };
+      return { intentId: result.intentId, created: true };
     },
   };
 }

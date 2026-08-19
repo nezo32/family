@@ -5,8 +5,6 @@ import type {
   CalendarRange,
   OccurrenceStatus,
   Permission,
-  RecurrenceEnd,
-  RecurrencePreset,
   RecurrenceSpec,
   RecurrenceView,
   TaskAssign,
@@ -256,8 +254,8 @@ export function recurrenceViewOf(series: TaskSeriesRow): RecurrenceView {
     exdatesLocal: series.exdatesLocal,
     seriesEndsAt: series.seriesEndsAt?.toISOString() ?? null,
     materializedThrough: series.materializedThrough?.toISOString() ?? null,
-    preset: (decompiled?.preset ?? null) as RecurrencePreset | null,
-    ends: (decompiled?.ends ?? null) as RecurrenceEnd | null,
+    preset: decompiled?.preset ?? null,
+    ends: decompiled?.ends ?? null,
     summary: recurrenceEngine.describe(rule),
   };
 }

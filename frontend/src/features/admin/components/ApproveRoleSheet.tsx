@@ -1,11 +1,5 @@
 import { ROLE_DESCRIPTIONS_RU, ROLE_LABELS_RU, type Role } from '@family/shared';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@/shared/ui/sheet';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/shared/ui/sheet';
 import { InlineSpinner } from '@/shared/components/LoadingScreen';
 import { ADMIN_RU } from '../locale';
 
@@ -48,9 +42,7 @@ export function ApproveRoleSheet(props: {
 
         {props.roles.length === 0 ? (
           <div className="px-4 pb-6">
-            <p className="text-sm font-medium text-foreground">
-              {ADMIN_RU.noAssignableRolesTitle}
-            </p>
+            <p className="text-sm font-medium text-foreground">{ADMIN_RU.noAssignableRolesTitle}</p>
             <p className="mt-1 text-sm text-muted-foreground">
               {ADMIN_RU.noAssignableRolesDescription}
             </p>

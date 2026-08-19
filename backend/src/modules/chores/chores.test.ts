@@ -600,7 +600,7 @@ describe('swaps', () => {
       bonusPoints: 3,
     });
 
-    await svc.swaps.respond(actor(ADULT, ['task:assign:any']), swap.id, { accept: true });
+    await svc.swaps.respond(actor(ADULT, ['task:assign:any', 'chore:swap:accept']), swap.id, { accept: true });
 
     expect(store.occurrences.get(OCCURRENCE)).toMatchObject({
       assigneeId: CHILD,
@@ -618,9 +618,9 @@ describe('swaps', () => {
       bonusPoints: 0,
     });
 
-    await svc.swaps.respond(actor(ADULT, ['task:assign:any']), swap.id, { accept: true });
+    await svc.swaps.respond(actor(ADULT, ['task:assign:any', 'chore:swap:accept']), swap.id, { accept: true });
     await expect(
-      svc.swaps.respond(actor(ADULT, ['task:assign:any']), swap.id, { accept: true }),
+      svc.swaps.respond(actor(ADULT, ['task:assign:any', 'chore:swap:accept']), swap.id, { accept: true }),
     ).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 

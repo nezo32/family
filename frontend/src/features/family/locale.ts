@@ -18,7 +18,6 @@ export const FAMILY_RU = {
   emptyTitle: 'Пока никого нет',
   emptyDescription: 'Здесь появятся все участники семьи.',
   loadErrorTitle: 'Не удалось загрузить участников',
-  loadingLabel: 'Загружаем семью',
   youBadge: 'Это вы',
   birthdayPrefix: 'День рождения',
   birthdayToday: 'День рождения сегодня 🎂',
@@ -30,7 +29,6 @@ export const FAMILY_RU = {
   loadShareLabel: 'Своя доля недели',
   loadDone: 'сделано',
   loadPlanned: 'запланировано',
-  loadPoints: 'баллов за неделю',
   loadEmpty: 'На этой неделе дел за этим участником не закреплено.',
   loadUnavailable: 'Нагрузка за неделю пока недоступна.',
   loadBarLabel: 'Доля недели',
@@ -41,19 +39,16 @@ export const FAMILY_RU = {
   sheetUpcomingError: 'Не удалось загрузить ближайшие дела.',
   sheetRoleTitle: 'Роль',
   sheetRoleHint: 'От роли зависит, что человек видит в приложении.',
-  sheetRoleReadOnly: 'Роль может изменить только администратор с более высокой ролью.',
   sheetWeightTitle: 'Вес в ротации дел',
   sheetWeightHint:
     'Чем больше вес, тем чаще дела достаются этому участнику. 0 — временно освобождён.',
   sheetWeightDecrease: 'Уменьшить вес',
   sheetWeightIncrease: 'Увеличить вес',
   sheetAccessTitle: 'Доступ',
-  sheetClose: 'Закрыть',
 
   /* role change ----------------------------------------------------------- */
   roleChangeSaved: 'Роль обновлена',
   weightSaved: 'Вес обновлён',
-  noAssignableRoles: 'Вам недоступно назначение ролей этому участнику.',
 
   /* suspension ------------------------------------------------------------ */
   suspend: 'Приостановить доступ',

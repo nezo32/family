@@ -6,6 +6,7 @@ import { MemoryRouter } from 'react-router-dom';
 import type { LinkedIdentityList } from '@family/shared';
 
 import { parsePushPayload, notificationOptions, safeNavigatePath } from './push/payload';
+import { ackKey, ackPath, postAck } from './push/ack-queue';
 import {
   enablePush,
   isPushSupported,
@@ -38,7 +39,18 @@ const ORIGIN = 'https://family.example.com';
 /* helpers                                                                     */
 /* -------------------------------------------------------------------------- */
 
+/** jsdom has no `navigator.serviceWorker`; `isPushSupported()` requires one. */
+function ensureServiceWorker() {
+  if (!('serviceWorker' in navigator)) {
+    Object.defineProperty(navigator, 'serviceWorker', {
+      value: { ready: new Promise(() => undefined), addEventListener: vi.fn() },
+      configurable: true,
+    });
+  }
+}
+
 function stubNotification(permission: NotificationPermission, request?: () => Promise<string>) {
+  ensureServiceWorker();
   const requestPermission = vi.fn(request ?? (() => Promise.resolve(permission)));
   const NotificationStub = function NotificationStub() {
     /* constructor never used in these tests */
@@ -120,9 +132,9 @@ describe('permission request', () => {
     // If anything is awaited before `requestPermission()`, the call lands in a
     // later microtask and Safari silently refuses both the prompt and
     // `subscribe()`. Asserting *synchronously* after the call is what pins that.
+    vi.stubEnv('VITE_VAPID_PUBLIC_KEY', 'BJ_test_key');
     const requestPermission = stubNotification('default', () => Promise.resolve('default'));
     stubServiceWorker(fakeSubscription());
-    vi.stubEnv('VITE_VAPID_PUBLIC_KEY', 'BJ_test_key');
 
     const promise = enablePush();
 
@@ -280,6 +292,60 @@ describe('push payload parser', () => {
     expect(options.icon).toBeUndefined();
     expect(options.renotify).toBeUndefined();
     expect(options.requireInteraction).toBeUndefined();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* 4b. the D11 ack contract                                                    */
+/* -------------------------------------------------------------------------- */
+
+describe('delivery ack contract (D11)', () => {
+  it('targets the two documented endpoints', () => {
+    expect(ackPath('del-1', 'delivered')).toBe('/notifications/deliveries/del-1/delivered');
+    expect(ackPath('del-1', 'interacted')).toBe('/notifications/deliveries/del-1/interacted');
+    // Replaying the same receipt must collapse to one queue row.
+    expect(ackKey('del-1', 'delivered')).toBe(ackKey('del-1', 'delivered'));
+    expect(ackKey('del-1', 'delivered')).not.toBe(ackKey('del-1', 'interacted'));
+  });
+
+  it('never throws and never posts without a token', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ack = {
+      key: ackKey('del-1', 'delivered'),
+      deliveryId: 'del-1',
+      kind: 'delivered' as const,
+      occurredAt: '2026-08-19T10:00:00.000Z',
+      queuedAt: '2026-08-19T10:00:00.000Z',
+    };
+
+    // No window open → no borrowed token → queue it rather than burn a 401.
+    await expect(postAck(ack, { apiBase: ORIGIN, token: null })).resolves.toEqual({
+      ok: false,
+      retryable: true,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // A hard failure resolves rather than rejecting: an ack that throws inside
+    // `event.waitUntil()` fails the push, and three of those cost the
+    // subscription on iOS.
+    fetchMock.mockImplementation(() => Promise.reject(new Error('offline')));
+    await expect(postAck(ack, { apiBase: ORIGIN, token: 't' })).resolves.toEqual({
+      ok: false,
+      retryable: true,
+    });
+
+    fetchMock.mockImplementation(() => Promise.resolve(new Response(null, { status: 200 })));
+    const result = await postAck(ack, { apiBase: ORIGIN, token: 't' });
+    expect(result.ok).toBe(true);
+    const [url, init] = fetchMock.mock.calls.at(-1) as unknown as [string, RequestInit];
+    expect(String(url)).toBe(`${ORIGIN}/api/notifications/deliveries/del-1/delivered`);
+    expect(init.method).toBe('POST');
+    // `occurredAt` travels with the ack; the server clamps it.
+    expect(JSON.parse(String(init.body)) as unknown).toEqual({
+      occurredAt: '2026-08-19T10:00:00.000Z',
+    });
   });
 });
 

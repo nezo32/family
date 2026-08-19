@@ -19,11 +19,18 @@ import { FAMILY_RU, choreCount, pointCount } from '../locale';
  */
 export function WeekLoadBar(props: {
   load: FairnessMember | undefined;
+  /**
+   * Render nothing at all when there are no numbers. Used on the roster card,
+   * where a row of «недоступна» under every member would be noise; the detail
+   * sheet has a heading above the bar and says so explicitly instead.
+   */
+  quiet?: boolean;
   className?: string;
 }) {
   const { load } = props;
 
   if (!load) {
+    if (props.quiet) return null;
     return (
       <p className={cn('text-xs text-muted-foreground', props.className)}>
         {FAMILY_RU.loadUnavailable}

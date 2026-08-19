@@ -26,3 +26,4 @@ export * from './contracts/goals.js';
 export * from './contracts/shopping.js';
 export * from './contracts/wall.js';
 export * from './contracts/notifications.js';
+export * from './contracts/dashboard.js';

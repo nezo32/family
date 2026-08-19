@@ -14,7 +14,7 @@ export async function registerAllJobHandlers(): Promise<void> {
     // Enabled as each module lands:
     // import('./tasks/tasks.jobs.js'),
     // import('./events/events.jobs.js'),
-    // import('./chores/chores.jobs.js'),
+    import('./chores/chores.jobs.js'),
     // import('./dashboard/dashboard.jobs.js'),
   ]);
 }

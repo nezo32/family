@@ -142,19 +142,13 @@ export async function approveMember(input: ApproveInput): Promise<MemberRow> {
 
 export async function rejectMember(input: RejectInput): Promise<MemberRow> {
   const reason = input.reason?.trim();
-  const raw = await api.post<unknown>(
-    `/members/${input.id}/reject`,
-    reason ? { reason } : {},
-  );
+  const raw = await api.post<unknown>(`/members/${input.id}/reject`, reason ? { reason } : {});
   return memberRowSchema.parse(raw);
 }
 
 export async function suspendMember(input: SuspendInput): Promise<MemberRow> {
   const reason = input.reason?.trim();
-  const raw = await api.post<unknown>(
-    `/members/${input.id}/suspend`,
-    reason ? { reason } : {},
-  );
+  const raw = await api.post<unknown>(`/members/${input.id}/suspend`, reason ? { reason } : {});
   return memberRowSchema.parse(raw);
 }
 

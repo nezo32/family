@@ -25,7 +25,7 @@ const MODULE_LOADERS: ModuleLoader[] = [
   // Enabled as each module lands:
   // () => import('./tasks/tasks.routes.js'),
   // () => import('./events/events.routes.js'),
-  // () => import('./chores/chores.routes.js'),
+  () => import('./chores/chores.routes.js'),
   () => import('./notifications/notifications.routes.js'),
   // () => import('./dashboard/dashboard.routes.js'),
 ];

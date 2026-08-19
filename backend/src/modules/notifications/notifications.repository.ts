@@ -451,6 +451,26 @@ export async function deletePushSubscription(
   return rows.length;
 }
 
+/**
+ * Delete one of the caller's own subscriptions by row id.
+ *
+ * This is the "revoke my lost phone" path. It cannot key on `endpoint` the way
+ * the self-unsubscribe route does, because the endpoint is a capability URL and
+ * is deliberately withheld from list responses — the other device has no way to
+ * know it. Scoping the delete to `userId` is what keeps it safe.
+ */
+export async function deletePushSubscriptionById(
+  x: Executor,
+  userId: string,
+  id: string,
+): Promise<number> {
+  const rows = await x
+    .delete(pushSubscriptions)
+    .where(and(eq(pushSubscriptions.userId, userId), eq(pushSubscriptions.id, id)))
+    .returning({ id: pushSubscriptions.id });
+  return rows.length;
+}
+
 /** `404`/`410` from the push service, or a health check that gave up. */
 export async function expirePushSubscription(x: Executor, id: string, at: Date): Promise<void> {
   await x

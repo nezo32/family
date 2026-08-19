@@ -871,7 +871,13 @@ export function resolveAccess(actor: DashboardActor): TodayAccess {
     // A child sees only their own load, so they get no family bar at all.
     fairness: actor.can('task:read:any'),
     approvals: actor.can('member:approve'),
-    everyGoal: actor.can('goal:delete'),
+    // `visibility = 'private'` narrows *further* than the permission matrix:
+    // it limits reads to the goal's owner plus owner/admin
+    // (`docs/architecture/household.md` §5). An ordinary adult holds every
+    // `goal:*` permission and still must not see another adult's private goal,
+    // so this cannot key off a `goal:` permission at all — `member:update:any`
+    // is the catalog's owner/admin marker.
+    everyGoal: actor.can('member:update:any'),
   };
 }
 

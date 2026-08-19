@@ -60,6 +60,8 @@ export const PERMISSIONS = [
   'task:assign:any',
   'task:complete:own',
   'task:complete:any',
+  'chore:swap:request',
+  'chore:swap:accept',
 
   // calendar events
   'event:read',
@@ -121,6 +123,8 @@ const CHILD: Permission[] = [
   ...GUEST,
   'task:read:own',
   'task:complete:own',
+  'chore:swap:request',
+  'chore:swap:accept',
   'shopping:read',
   'shopping:write',
   'post:create',

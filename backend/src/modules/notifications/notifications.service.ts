@@ -1313,6 +1313,19 @@ export async function upsertSubscription(
   return toSummary(row, input.endpoint);
 }
 
+/**
+ * Revoke a subscription by id — how a family member kills push on a lost or
+ * replaced device from a phone they still have. Idempotent; a row that is
+ * already gone is a success, so a double tap cannot produce a scary error.
+ */
+export async function removeSubscriptionById(
+  db: Db,
+  userId: string,
+  subscriptionId: string,
+): Promise<void> {
+  await repo.deletePushSubscriptionById(db, userId, subscriptionId);
+}
+
 export async function removeSubscription(db: Db, userId: string, endpoint: string): Promise<void> {
   // Idempotent: unsubscribing a device that is already gone is a success, not a
   // 404. The client calls this from an unload path where it cannot retry.

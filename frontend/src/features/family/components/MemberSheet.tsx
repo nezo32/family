@@ -134,7 +134,10 @@ export function MemberSheet(props: {
                 <ul className="space-y-2">
                   {upcoming.data.map((task) => (
                     <li key={task.id} className="flex items-start gap-2">
-                      <ListTodo className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+                      <ListTodo
+                        className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+                        aria-hidden
+                      />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm text-foreground">{task.title}</span>
                         <span className="block text-xs text-muted-foreground">
@@ -274,12 +277,7 @@ export function MemberSheet(props: {
  * options are exactly what `assignableRoles()` returned — a role the current
  * user may not hand out is not shown greyed out, it is not shown at all.
  */
-function RoleOption(props: {
-  role: Role;
-  current: boolean;
-  busy: boolean;
-  onSelect: () => void;
-}) {
+function RoleOption(props: { role: Role; current: boolean; busy: boolean; onSelect: () => void }) {
   return (
     <button
       type="button"

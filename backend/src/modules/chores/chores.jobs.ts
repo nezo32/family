@@ -1,4 +1,4 @@
-import type { Job } from 'bullmq';
+
 
 import { getDb, type Db } from '../../core/db.js';
 import { logger } from '../../core/logger.js';
@@ -75,23 +75,6 @@ export const CHORE_JOBS = {
 
 export type ChoreJobName = (typeof CHORE_JOBS)[keyof typeof CHORE_JOBS];
 
-/**
- * `JobPayloads` / `QUEUE_FOR_JOB` in `core/queue/queues.ts` carry no `chores.*`
- * entries yet, and that file is owned by the lead (module agents must not edit
- * `src/core/**`). Declaration-merging the interface is not an option either: it
- * would make the `Record<JobName, QueueName>` literal in that file incomplete
- * and break its own typecheck.
- *
- * So registration goes through **one** narrowly typed adapter instead of an
- * `any` at each call site. Runtime behaviour is identical — the worker registry
- * is a `Map` keyed by the raw job name string. Once the lead adds the two names
- * to `JobPayloads`, `QUEUE_FOR_JOB` and the `REPEATABLE` schedule, this alias
- * can be deleted and the calls below will typecheck unchanged.
- */
-const registerChoreJob = registerJobHandler as unknown as (
-  name: ChoreJobName,
-  handler: (payload: Record<string, never>, job: Job) => Promise<void>,
-) => void;
 
 let registered = false;
 
@@ -103,11 +86,11 @@ export function registerChoreJobs(): void {
   if (registered) return;
   registered = true;
 
-  registerChoreJob(CHORE_JOBS.expireSwaps, async () => {
+  registerJobHandler(CHORE_JOBS.expireSwaps, async () => {
     await runSwapExpiry(getDb());
   });
 
-  registerChoreJob(CHORE_JOBS.streaks, async () => {
+  registerJobHandler(CHORE_JOBS.streaks, async () => {
     await runStreakMaintenance(getDb());
   });
 }

@@ -11,7 +11,7 @@ import {
   permissionState,
   primeRegistration,
   pushAvailability,
-  VAPID_PUBLIC_KEY,
+  vapidPublicKey,
   type EnableResult,
   type PushAvailability,
   type PushPermission,
@@ -145,7 +145,7 @@ export function usePush(): UsePushResult {
     standalone,
     ios,
     iosNonSafari,
-    misconfigured: availability === 'available' && VAPID_PUBLIC_KEY.length === 0,
+    misconfigured: availability === 'available' && vapidPublicKey().length === 0,
     reconcile,
     // `missing` is only meaningful while permission is still granted: the
     // browser agreed to notify us and then quietly dropped the subscription.

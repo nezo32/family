@@ -58,7 +58,7 @@ export function MemberCard(props: {
             <span className="block text-xs text-muted-foreground">{birthday}</span>
           ) : null}
 
-          <WeekLoadBar load={props.load} className="pt-0.5" />
+          <WeekLoadBar load={props.load} quiet className="pt-0.5" />
         </span>
 
         <ChevronRight className="mt-1 size-4 shrink-0 text-muted-foreground" aria-hidden />

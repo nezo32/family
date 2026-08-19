@@ -30,7 +30,6 @@ export const ADMIN_RU = {
   queueEmptyDescription: 'Как только кто-то попросит доступ, заявка появится здесь.',
   requestedPrefix: 'Заявка',
   signedInWith: 'Вход через',
-  signedInUnknown: 'Способ входа неизвестен',
   emailUnknown: 'Почты нет',
 
   /* approve --------------------------------------------------------------- */
@@ -82,7 +81,6 @@ export const ADMIN_RU = {
   /* misc ------------------------------------------------------------------ */
   pendingBadgeLabel: 'Заявки на вступление',
   loadErrorTitle: 'Не удалось загрузить участников',
-  loadingLabel: 'Загружаем участников',
 } as const;
 
 /** Which sign-in method the request arrived through. */
@@ -106,5 +104,3 @@ export const STATUS_LABELS_RU: Record<UserStatus, string> = {
 /* -------------------------------------------------------------------------- */
 
 export const requestCount = (n: number): string => pluralize(n, ['заявка', 'заявки', 'заявок']);
-export const memberCount = (n: number): string =>
-  pluralize(n, ['участник', 'участника', 'участников']);

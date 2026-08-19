@@ -24,7 +24,7 @@ export {
   reconcileSubscription,
   setPrimedRegistration,
   urlBase64ToUint8Array,
-  VAPID_PUBLIC_KEY,
+  vapidPublicKey,
   type EnableOutcome,
   type EnableResult,
   type PushAvailability,

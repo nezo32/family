@@ -166,9 +166,12 @@ export class SwapsService {
       }
 
       if (input.accept) {
-        // A handoff of responsibility needs an adult (see the file header).
-        if (!actor.can('task:assign:any')) {
-          throw forbidden('Передачу задачи подтверждает взрослый');
+        // Taking on a chore somebody offered is volunteering for work, not
+        // escaping it, so it needs no adult gatekeeper — children hold
+        // `chore:swap:accept` too. Fairness still self-corrects because points
+        // follow whoever actually does the job (D5).
+        if (!actor.can('chore:swap:accept')) {
+          throw forbidden('Missing permission: chore:swap:accept');
         }
         const taker = swap.toUserId ?? actor.id;
         await this.assertCanTake(tx, taker, occurrence.rotationId, occurrence.startsAt);

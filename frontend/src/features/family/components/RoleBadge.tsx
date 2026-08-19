@@ -13,11 +13,7 @@ import { FAMILY_RU } from '../locale';
  */
 export function RoleBadge(props: { role: Role; className?: string }) {
   return (
-    <Badge
-      variant="outline"
-      className={props.className}
-      title={ROLE_DESCRIPTIONS_RU[props.role]}
-    >
+    <Badge variant="outline" className={props.className} title={ROLE_DESCRIPTIONS_RU[props.role]}>
       {ROLE_LABELS_RU[props.role]}
     </Badge>
   );

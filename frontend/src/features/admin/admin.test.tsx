@@ -222,9 +222,7 @@ describe('approval queue', () => {
     expect(screen.queryByText('Владелец')).not.toBeInTheDocument();
 
     // And the choice is explained, not just labelled (ROLE_DESCRIPTIONS_RU).
-    expect(
-      screen.getByText('Свои задачи, общий календарь и список покупок.'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Свои задачи, общий календарь и список покупок.')).toBeInTheDocument();
   });
 
   it('renders no queue at all for a member without member:approve', async () => {
@@ -245,9 +243,7 @@ describe('approval queue', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Приостановить' }));
 
-    expect(
-      await screen.findByText(/все сессии будут завершены/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/все сессии будут завершены/i)).toBeInTheDocument();
     expect(countCalls('/suspend')).toBe(0);
 
     fireEvent.click(screen.getByRole('button', { name: 'Приостановить доступ' }));

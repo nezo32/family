@@ -137,7 +137,8 @@ export function QuietHoursEditor(props: { windows: readonly QuietHours[] }) {
                       value={window.dayOfWeek === null ? 'all' : String(window.dayOfWeek)}
                       onChange={(event) => {
                         update(index, {
-                          dayOfWeek: event.target.value === 'all' ? null : Number(event.target.value),
+                          dayOfWeek:
+                            event.target.value === 'all' ? null : Number(event.target.value),
                         });
                       }}
                     >

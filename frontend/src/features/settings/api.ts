@@ -153,10 +153,8 @@ export function fetchSubscriptions(
  * client only knows for the browser it is running in. For any other device we
  * fall back to a by-id route.
  *
- * TODO(contract): `DELETE /api/notifications/subscriptions/:id` is not
- * registered in `notifications.routes.ts` yet — a family member cannot currently
- * revoke a lost phone from another device. Flagged for the lead; the by-endpoint
- * path (this device) works today and is the common case.
+ * The by-id route now exists, so revoking a lost or replaced phone from a
+ * device you still have works. Both paths are idempotent.
  */
 export function removeSubscription(row: {
   id: string;
