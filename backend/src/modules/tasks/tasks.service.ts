@@ -37,14 +37,13 @@ import {
   createMaterializerPort,
   materializeDueThroughPort,
   materializeSeries,
-  type ExtraColumnValue,
   type MaterializeResult,
   type OccurrenceDecorator,
 } from '../../core/recurrence/materializer.js';
 import { PointsService } from '../chores/points.service.js';
 import { RotationRun, type RotationSnapshot } from '../chores/rotation.js';
+import { emitIntent } from '../notifications/notifications.service.js';
 import { deleteCommentsFor } from '../wall/comments.service.js';
-import { notificationIntents } from '../notifications/notifications.schema.js';
 import * as repo from './tasks.repository.js';
 import type { ResolvedOccurrence, TaskViewer } from './tasks.repository.js';
 import type { NewTaskSeriesRow, TaskSeriesRow } from './tasks.schema.js';
@@ -489,93 +488,6 @@ export interface TasksServiceDeps {
   readonly swaps?: SwapPort;
   /** Injected so tests and a deterministic nightly run share one clock. */
   readonly now?: () => Date;
-}
-
-/* -------------------------------------------------------------------------- */
-/* Notification intents (D10)                                                  */
-/* -------------------------------------------------------------------------- */
-
-export type TaskIntentType = 'task_assigned' | 'task_due_soon' | 'task_overdue' | 'task_completed';
-
-export interface TaskIntent {
-  readonly type: TaskIntentType;
-  readonly actorId: string | null;
-  readonly occurrenceId: string;
-  readonly dedupeKey: string;
-  readonly priority: 'low' | 'normal' | 'high';
-  readonly audience: Record<string, unknown>;
-  readonly payload: Record<string, unknown>;
-}
-
-export interface QueuedIntent {
-  readonly intentId: string;
-  readonly dedupeKey: string;
-}
-
-/**
- * Stage intents **inside the caller's transaction**, so an intent can never
- * outlive a rolled-back task write.
- *
- * `ON CONFLICT (dedupe_key) DO NOTHING` on the partial unique index is what
- * makes the overdue sweep idempotent per occurrence: the sweep runs every
- * fifteen minutes and a task stays overdue for days, but the family is told
- * exactly once.
- */
-export async function stageIntents(
-  ex: Executor,
-  intents: readonly TaskIntent[],
-): Promise<QueuedIntent[]> {
-  if (intents.length === 0) return [];
-
-  const rows = await ex
-    .insert(notificationIntents)
-    .values(
-      intents.map((intent) => ({
-        type: intent.type,
-        actorId: intent.actorId,
-        entityType: 'task_occurrence',
-        entityId: intent.occurrenceId,
-        payload: intent.payload,
-        audience: intent.audience,
-        dedupeKey: intent.dedupeKey,
-        priority: intent.priority,
-      })),
-    )
-    .onConflictDoNothing({
-      target: notificationIntents.dedupeKey,
-      // The unique index is partial; Postgres needs the predicate to infer it.
-      where: sql`dedupe_key is not null`,
-    })
-    .returning({ id: notificationIntents.id, dedupeKey: notificationIntents.dedupeKey });
-
-  return rows.flatMap((row) =>
-    row.dedupeKey === null ? [] : [{ intentId: row.id, dedupeKey: row.dedupeKey }],
-  );
-}
-
-/**
- * Hand the staged intents to BullMQ **after** the transaction commits.
- *
- * A queue outage must not fail a committed task write: the intent rows are
- * durable and the dispatcher's own sweep picks them up later.
- */
-export async function flushIntents(queued: readonly QueuedIntent[]): Promise<void> {
-  if (queued.length === 0) return;
-
-  // Imported lazily: `core/queue/queues.js` pulls in BullMQ and ioredis at
-  // module load, and reading a task should never open a Redis socket.
-  const { enqueue } = await import('../../core/queue/queues.js');
-
-  for (const item of queued) {
-    try {
-      await enqueue('notification.dispatch', { intentId: item.intentId }, { jobId: item.dedupeKey });
-    } catch (error) {
-      console.warn(
-        `[tasks] failed to enqueue notification dispatch for intent ${item.intentId}:`,
-        error instanceof Error ? error.message : error,
-      );
-    }
-  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1185,7 +1097,7 @@ export class TasksService {
       });
     }
 
-    const queued = await this.db.transaction(async (tx) => {
+    const dispatch = await this.db.transaction(async (tx) => {
       const current = await this.loadReadableOccurrence(tx, actor, id);
       this.assertMayComplete(actor, current);
 
@@ -1193,7 +1105,7 @@ export class TasksService {
         case 'already_done':
           // The client's intent is already satisfied. Not an error, and
           // emphatically not a second award.
-          return [];
+          return null;
         case 'conflict':
           throw conflict('Задача уже закрыта или отменена');
         case 'completed':
@@ -1203,7 +1115,7 @@ export class TasksService {
       const row = await repo.completeIfScheduled(tx, { id, completedById, completedAt });
       // Lost the race with a concurrent completion: somebody else's update
       // already flipped the row, so this request books nothing.
-      if (!row) return [];
+      if (!row) return null;
 
       await this.points.bookCompletion(tx, {
         occurrenceId: id,
@@ -1215,20 +1127,23 @@ export class TasksService {
         completedAt,
       });
 
-      return stageIntents(tx, [
-        {
-          type: 'task_completed',
-          actorId: actor.userId,
-          occurrenceId: id,
-          dedupeKey: `task_completed:${id}:${completedAt.toISOString()}`,
-          priority: 'low',
-          audience: { everyone: true },
-          payload: { title: current.title, completedById, points: current.points },
-        },
-      ]);
+      // Written on the caller's transaction, so a rolled-back completion can
+      // never produce a notification (D10).
+      const intent = await emitIntent(tx, {
+        type: 'task_completed',
+        audience: { everyone: true },
+        actorId: actor.userId,
+        entityType: 'task_occurrence',
+        entityId: id,
+        dedupeKey: `task_completed:${id}:${completedAt.toISOString()}`,
+        payload: { title: current.title, completedById, points: current.points },
+      });
+      return intent.dispatch;
     });
 
-    await flushIntents(queued);
+    // Enqueued only after commit — a worker must never read a row that is not
+    // there yet.
+    if (dispatch) await dispatch();
     return this.reloadOccurrence(this.db, actor, id);
   }
 
@@ -1504,4 +1419,51 @@ export class TasksService {
     id: string,
   ): Promise<TaskOccurrenceResponse> {
     const row = await repo.findOccurrenceById(ex, id, {
-      viewer: viewerOf(a
+      viewer: viewerOf(actor),
+      now: this.now(),
+    });
+    if (!row) throw notFound('Task');
+    const [decorated] = await this.decorateWithSwaps([row]);
+    if (!decorated) throw notFound('Task');
+    return decorated;
+  }
+
+  private async decorateWithSwaps(rows: ResolvedOccurrence[]): Promise<TaskOccurrenceResponse[]> {
+    if (rows.length === 0) return [];
+    const pending = await this.swaps.pendingSwapIds(
+      this.db,
+      rows.map((r) => r.id),
+    );
+    return rows.map((row) => toOccurrenceResponse(row, pending.get(row.id) ?? null));
+  }
+
+  /** Append an EXDATE, idempotently. A duplicate would be harmless but untidy. */
+  private async addExdate(tx: Executor, series: TaskSeriesRow, key: string): Promise<void> {
+    if (series.exdatesLocal.includes(key)) return;
+    await repo.updateSeriesRow(tx, series.id, {
+      exdatesLocal: [...series.exdatesLocal, key].sort(),
+    });
+  }
+
+  /**
+   * A hard-deleted occurrence must not leave its comments and reactions
+   * dangling — nothing else would ever collect them, and the wall would render
+   * a thread against an id that no longer resolves.
+   */
+  private async forgetComments(tx: Executor, occurrenceIds: readonly string[]): Promise<void> {
+    for (const id of occurrenceIds) {
+      await deleteCommentsFor(tx, 'task', id);
+    }
+  }
+
+  /** The family default timezone, for callers who carry none of their own. */
+  private async familyTimezone(): Promise<string> {
+    const rows = await this.db.execute<{ timezone: string }>(
+      sql`select timezone from family_settings limit 1`,
+    );
+    return rows[0]?.timezone ?? 'Europe/Moscow';
+  }
+}
+
+/** The rolling window, re-exported so the jobs module has one source for it. */
+export { HORIZON_DAYS };

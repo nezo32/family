@@ -47,7 +47,7 @@ import {
   todayKey,
   type RecurrenceBuilderState,
 } from '../calendar-model';
-import { useCreateEvent, useFamilyTimeZone, useUpdateEvent } from '../hooks';
+import { useCreateEvent, useEventSeries, useFamilyTimeZone, useUpdateEvent } from '../hooks';
 import { CALENDAR_RU } from '../locale';
 import { EditScopeDialog } from './EditScopeDialog';
 import { RecurrenceBuilder } from './RecurrenceBuilder';
@@ -69,8 +69,8 @@ export interface EventFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   members: readonly PublicUser[];
-  /** Editing an existing series; absent means "create". */
-  series?: EventSeriesResponse | undefined;
+  /** Editing an existing series; absent means "create". Fetched on demand. */
+  seriesId?: string | undefined;
   /** The instance the edit was started from — the anchor of a scoped edit. */
   occurrence?: EventOccurrenceResponse | undefined;
   /** Pre-selected day when creating from the grid. */
@@ -80,30 +80,30 @@ export interface EventFormDialogProps {
 
 export function EventFormDialog(props: EventFormDialogProps) {
   const timezone = useFamilyTimeZone();
-  const isEdit = Boolean(props.series);
+  const seriesQuery = useEventSeries(props.open ? props.seriesId : undefined);
+  const series = props.seriesId ? seriesQuery.data : undefined;
+  const isEdit = Boolean(props.seriesId);
 
   const create = useCreateEvent();
-  const update = useUpdateEvent(props.series?.id ?? '');
+  const update = useUpdateEvent(series?.id ?? '');
 
   const anchorDateKey =
     props.occurrence?.localDate ??
     props.initialDateKey ??
-    (props.series ? dateKeyOfFloating(props.series.recurrence.dtstartLocal) : todayKey(timezone));
-  const anchorTime = props.series
-    ? timeOfFloating(props.series.recurrence.dtstartLocal)
-    : defaultStartTime();
+    (series ? dateKeyOfFloating(series.recurrence.dtstartLocal) : todayKey(timezone));
+  const anchorTime = series ? timeOfFloating(series.recurrence.dtstartLocal) : defaultStartTime();
 
   const [dateKey, setDateKey] = useState(anchorDateKey);
   const [time, setTime] = useState(anchorTime);
   const [recurrenceState, setRecurrenceState] = useState<RecurrenceBuilderState>(() =>
-    initialRecurrenceState(props.series, anchorDateKey),
+    initialRecurrenceState(series, anchorDateKey),
   );
   const [scopeOpen, setScopeOpen] = useState(false);
   const [pendingValues, setPendingValues] = useState<EventFormValues | null>(null);
 
   const form = useForm<EventFormInput, unknown, EventFormValues>({
     resolver: zodResolver(eventFormSchema),
-    defaultValues: toDefaults(props.series, props.occurrence),
+    defaultValues: toDefaults(series, props.occurrence),
   });
 
   // Re-seed on open: the dialog is kept mounted, so stale values from the last
@@ -112,18 +112,18 @@ export function EventFormDialog(props: EventFormDialogProps) {
     if (!props.open) return;
     setDateKey(anchorDateKey);
     setTime(anchorTime);
-    setRecurrenceState(initialRecurrenceState(props.series, anchorDateKey));
+    setRecurrenceState(initialRecurrenceState(series, anchorDateKey));
     setPendingValues(null);
-    form.reset(toDefaults(props.series, props.occurrence));
+    form.reset(toDefaults(series, props.occurrence));
     // `form` is stable; the rest is the identity of the thing being edited.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.open, props.series?.id, props.occurrence?.id, anchorDateKey, anchorTime]);
+  }, [props.open, series?.id, props.occurrence?.id, anchorDateKey, anchorTime]);
 
   const isAllDay = form.watch('isAllDay') ?? false;
-  const recurringSeries = isRecurring(props.series?.recurrence);
-  const scheduleLocked = Boolean(props.series?.isReadOnly);
+  const recurringSeries = isRecurring(series?.recurrence);
+  const scheduleLocked = Boolean(series?.isReadOnly);
   /** A rule the backend could not decompile: show it, never silently rewrite it. */
-  const scheduleUnparsed = Boolean(props.series && recurrenceStateFrom(props.series.recurrence) === null);
+  const scheduleUnparsed = Boolean(series && recurrenceStateFrom(series.recurrence) === null);
 
   const activeMembers = useMemo(
     () => props.members.filter((member) => member.status === 'active'),
@@ -147,7 +147,7 @@ export function EventFormDialog(props: EventFormDialogProps) {
       durationMinutes: values.isAllDay ? 1440 : values.durationMinutes,
     };
 
-    if (!props.series) {
+    if (!series) {
       const body: EventSeriesCreate = { ...cleaned, recurrence };
       create.mutate(body, {
         onSuccess: () => {
@@ -186,13 +186,13 @@ export function EventFormDialog(props: EventFormDialogProps) {
   };
 
   const onSubmit = form.handleSubmit((values) => {
-    if (props.series && recurringSeries) {
+    if (series && recurringSeries) {
       // No default scope: guessing here is how a calendar loses data (D2 §3).
       setPendingValues(values);
       setScopeOpen(true);
       return;
     }
-    submit(values, props.series ? 'all' : null);
+    submit(values, series ? 'all' : null);
   });
 
   const isPending = create.isPending || update.isPending;
@@ -313,7 +313,7 @@ export function EventFormDialog(props: EventFormDialogProps) {
               <p className="rounded-lg bg-muted/60 p-3 text-sm text-muted-foreground">
                 {CALENDAR_RU.scheduleNotEditable}
                 <span className="mt-1 block text-foreground">
-                  {props.series?.recurrence.summary}
+                  {series?.recurrence.summary}
                 </span>
               </p>
             ) : (

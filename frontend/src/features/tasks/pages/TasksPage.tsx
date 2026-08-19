@@ -12,11 +12,8 @@ import { collectCategories, groupOccurrences } from '../grouping';
 import { useFairness, useMembers, useOccurrences, useSwaps } from '../hooks';
 import type { OccurrenceFilters } from '../api';
 import { TaskList } from '../components/TaskList';
-import {
-  DEFAULT_FILTERS,
-  TaskFilters,
-  type TaskFilterState,
-} from '../components/TaskFilters';
+import { TaskFilters } from '../components/TaskFilters';
+import { DEFAULT_FILTERS, type TaskFilterState } from '../filters';
 import { TaskEditor } from '../components/TaskEditor';
 import { WeeklyLoad } from '../components/WeeklyLoad';
 import { SwapInbox } from '../components/SwapPanel';
@@ -51,7 +48,7 @@ export default function TasksPage() {
   const fairness = useFairness(7);
   const swaps = useSwaps('incoming');
 
-  const items = occurrences.data?.items ?? [];
+  const items = useMemo(() => occurrences.data?.items ?? [], [occurrences.data]);
   const groups = useMemo(() => groupOccurrences(items, today), [items, today]);
   const categories = useMemo(() => collectCategories(items), [items]);
   const roster = members.data ?? [];

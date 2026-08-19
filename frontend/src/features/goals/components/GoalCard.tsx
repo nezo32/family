@@ -100,7 +100,8 @@ export function GoalCard(props: {
                   </span>
                 ) : (
                   <>
-                    {GOALS_RU.remaining}: <span className="tabular-nums">{formatMoney(remaining)}</span>
+                    {GOALS_RU.remaining}:{' '}
+                    <span className="tabular-nums">{formatMoney(remaining)}</span>
                   </>
                 )}
               </p>
@@ -131,7 +132,11 @@ export function GoalCard(props: {
           <div className="flex items-center justify-between gap-3">
             {/* `contributors` only exists on the detail response — a card must
                 not assume it is there. */}
-            <ContributorAvatars contributors={goal.contributors} roster={props.roster} showTotalLine />
+            <ContributorAvatars
+              contributors={goal.contributors}
+              roster={props.roster}
+              showTotalLine
+            />
             {props.canContribute && !muted ? (
               <Button
                 type="button"

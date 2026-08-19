@@ -20,7 +20,6 @@ import {
   type CreatePost,
   type EntityRef,
   type KudosCreate,
-  type KudosListResponse,
   type KudosResponse,
   type PollListResponse,
   type PollResponse,
@@ -113,6 +112,8 @@ export const kudosTotalsSchema = z.object({
     }),
   ),
 });
+export type KudosListResponse = z.infer<typeof kudosListResponseSchema>;
+
 export type KudosTotals = z.infer<typeof kudosTotalsSchema>;
 export type KudosTotal = KudosTotals['items'][number];
 
@@ -171,6 +172,11 @@ export async function setPostPin(id: string, pinnedUntil: string | null): Promis
 
 export async function deletePost(id: string): Promise<void> {
   await api.del<unknown>(`/wall/posts/${id}`);
+}
+
+/** `pinnedUntil` for "закрепить на N дней". Pins expire; they are never a flag. */
+export function isoInDays(days: number): string {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
 }
 
 /* -------------------------------------------------------------------------- */

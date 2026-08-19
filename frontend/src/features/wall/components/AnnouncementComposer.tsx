@@ -21,9 +21,9 @@ import { Label } from '@/shared/ui/label';
 import { InlineSpinner } from '@/shared/components';
 import { cn } from '@/shared/lib/utils';
 import { COMMON } from '@/shared/lib/i18n';
+import { isoInDays } from '../api';
 import { useCreatePost } from '../hooks';
 import { WALL_RU } from '../locale';
-import { isoInDays } from './AnnouncementCard';
 
 /**
  * Write an announcement.

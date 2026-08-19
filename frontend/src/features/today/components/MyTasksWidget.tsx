@@ -2,80 +2,63 @@ import { ListTodo, PartyPopper } from 'lucide-react';
 import { useCan } from '@/shared/auth/use-can';
 import { ROUTES } from '@/shared/lib/routes';
 import { TODAY_RU, choreCount, taskCount } from '../locale';
-import type { TodayTasksSection } from '../types';
+import type { DashboardTasks } from '../types';
 import { TaskRow } from './TaskRow';
 import { WidgetCard } from './WidgetCard';
 
 /**
- * My chores for today, plus the ones nobody has claimed.
+ * What is on me today.
  *
- * The unassigned block sits inside this card rather than in its own: "что на
- * мне" and "что свободно" are one decision, and a second card would push the
- * calendar below the fold on a phone.
+ * Overdue work has its own card above this one, so this list stays exactly what
+ * its title promises — today's open chores — and never mixes in yesterday's.
  */
 export function MyTasksWidget(props: {
-  tasks: TodayTasksSection;
+  tasks: DashboardTasks;
   onComplete: (occurrenceId: string) => void;
 }) {
   const { can } = useCan();
   const { tasks } = props;
-  const open = tasks.mine.filter((occurrence) => occurrence.status !== 'done');
-  const allDone = tasks.mine.length > 0 && open.length === 0;
 
   return (
     <WidgetCard
       title={TODAY_RU.tasksTitle}
       icon={ListTodo}
-      meta={open.length > 0 ? taskCount(open.length) : undefined}
+      meta={tasks.dueToday.length > 0 ? taskCount(tasks.dueToday.length) : undefined}
       linkTo={ROUTES.tasks}
       linkLabel={TODAY_RU.tasksAll}
     >
-      {tasks.mine.length === 0 ? (
-        <p className="py-2 text-sm text-muted-foreground">{TODAY_RU.tasksFree}</p>
+      {tasks.dueToday.length === 0 ? (
+        <div className="flex items-start gap-2 py-1">
+          {tasks.doneTodayCount > 0 ? (
+            <PartyPopper className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
+          ) : null}
+          <p className="text-sm text-muted-foreground">
+            {tasks.doneTodayCount > 0 ? (
+              <>
+                <span className="font-medium text-success">{TODAY_RU.tasksAllDone}</span>{' '}
+                {TODAY_RU.tasksAllDoneHint}
+              </>
+            ) : (
+              TODAY_RU.tasksFree
+            )}
+          </p>
+        </div>
       ) : (
         <ul className="divide-y divide-border/60">
-          {tasks.mine.map((occurrence) => (
+          {tasks.dueToday.map((task) => (
             <TaskRow
-              key={occurrence.id}
-              occurrence={occurrence}
-              canComplete={can('task:complete', occurrence)}
+              key={task.id}
+              task={task}
+              canComplete={can('task:complete', task)}
               onComplete={props.onComplete}
             />
           ))}
         </ul>
       )}
 
-      {allDone ? (
-        <div className="flex items-center gap-2 pt-3">
-          <PartyPopper className="size-4 shrink-0 text-success" aria-hidden />
-          <p className="text-sm font-medium text-success">
-            {TODAY_RU.tasksAllDone}{' '}
-            <span className="font-normal text-muted-foreground">{TODAY_RU.tasksAllDoneHint}</span>
-          </p>
-        </div>
-      ) : null}
-
-      {tasks.unassigned.length > 0 ? (
-        <div className="mt-3 border-t border-border/60 pt-3">
-          <p className="text-xs font-medium text-muted-foreground">
-            {TODAY_RU.tasksUnassignedTitle} · {TODAY_RU.tasksUnassignedHint}
-          </p>
-          <ul className="divide-y divide-border/60">
-            {tasks.unassigned.slice(0, 3).map((occurrence) => (
-              <TaskRow
-                key={occurrence.id}
-                occurrence={occurrence}
-                canComplete={can('task:complete', occurrence)}
-                onComplete={props.onComplete}
-              />
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      {tasks.familyDoneToday > 0 ? (
+      {tasks.doneTodayCount > 0 ? (
         <p className="pt-3 text-xs text-muted-foreground">
-          {TODAY_RU.tasksFamilyDone} {choreCount(tasks.familyDoneToday)}.
+          {TODAY_RU.tasksDoneToday} {choreCount(tasks.doneTodayCount)}.
         </p>
       ) : null}
     </WidgetCard>

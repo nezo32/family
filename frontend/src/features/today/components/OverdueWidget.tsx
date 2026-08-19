@@ -1,8 +1,8 @@
 import { AlarmClock } from 'lucide-react';
-import type { TaskOccurrenceResponse } from '@family/shared';
 import { useCan } from '@/shared/auth/use-can';
 import { ROUTES } from '@/shared/lib/routes';
 import { TODAY_RU, taskCount } from '../locale';
+import type { DashboardTask } from '../types';
 import { TaskRow } from './TaskRow';
 import { WidgetCard } from './WidgetCard';
 
@@ -13,11 +13,11 @@ const VISIBLE = 4;
  * Anything past its due time, first on the screen.
  *
  * Urgent, never shaming (D5's framing rule applied to copy): the card says
- * «Требует внимания» and offers the tick, it does not count failures and it
+ * «Требует внимания» and offers the tick. It does not count failures and it
  * does not name who dropped the ball.
  */
 export function OverdueWidget(props: {
-  items: TaskOccurrenceResponse[];
+  items: DashboardTask[];
   onComplete: (occurrenceId: string) => void;
 }) {
   const { can } = useCan();
@@ -37,12 +37,12 @@ export function OverdueWidget(props: {
     >
       <p className="pb-2 text-xs text-muted-foreground">{TODAY_RU.overdueHint}</p>
       <ul className="divide-y divide-border/60">
-        {shown.map((occurrence) => (
+        {shown.map((task) => (
           <TaskRow
-            key={occurrence.id}
-            occurrence={occurrence}
+            key={task.id}
+            task={task}
             overdue
-            canComplete={can('task:complete', occurrence)}
+            canComplete={can('task:complete', task)}
             onComplete={props.onComplete}
           />
         ))}

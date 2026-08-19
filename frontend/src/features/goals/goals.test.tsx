@@ -15,6 +15,7 @@ import {
   parseMinorUnits,
   parsePositiveAmount,
 } from './money';
+import { useGoalAbilities } from './hooks';
 import { GoalCard } from './components/GoalCard';
 import { ContributeDialog } from './components/ContributeDialog';
 
@@ -140,16 +141,7 @@ describe('money parsing (D6)', () => {
   });
 
   it('never produces a float, at any input', () => {
-    const inputs = [
-      '19.99',
-      '0,01',
-      '0,1',
-      '1 234,56',
-      '999 999,99',
-      '8,05',
-      '70,7',
-      '1000000,03',
-    ];
+    const inputs = ['19.99', '0,01', '0,1', '1 234,56', '999 999,99', '8,05', '70,7', '1000000,03'];
     for (const input of inputs) {
       const value = parseMinorUnits(input);
       expect(value).not.toBeNull();
@@ -196,25 +188,25 @@ describe('goal progress', () => {
 /* permissions (D4)                                                            */
 /* -------------------------------------------------------------------------- */
 
+/** Exactly what the page renders: the ability comes from `useCan()` via
+ *  `useGoalAbilities()`, never from a `role ===` comparison (D4). */
+function GoalCardUnderPermissions() {
+  const abilities = useGoalAbilities();
+  return (
+    <GoalCard goal={makeGoal()} roster={EMPTY_ROSTER} canContribute={abilities.canContribute} />
+  );
+}
+
 describe('permission affordances', () => {
   it('shows the contribute button to an adult', () => {
-    renderAs(
-      ADULT_PERMISSIONS,
-      <GoalCard goal={makeGoal()} roster={EMPTY_ROSTER} canContribute />,
-    );
+    renderAs(ADULT_PERMISSIONS, <GoalCardUnderPermissions />);
     expect(screen.getByRole('button', { name: GOALS_RU.contribute })).toBeInTheDocument();
   });
 
   it('hides every write affordance from a read-only teen', () => {
-    const CardUnderPermissions = () => {
-      // Exactly what the page does: the ability comes from `useCan()`, never
-      // from a `role ===` comparison.
-      const canContribute = TEEN_PERMISSIONS.includes('goal:contribute' as Permission);
-      return <GoalCard goal={makeGoal()} roster={EMPTY_ROSTER} canContribute={canContribute} />;
-    };
+    renderAs(TEEN_PERMISSIONS, <GoalCardUnderPermissions />);
 
-    renderAs(TEEN_PERMISSIONS, <CardUnderPermissions />);
-
+    // The teen still sees the goal — they just cannot act on it.
     expect(screen.getByText('Отпуск на море')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: GOALS_RU.contribute })).not.toBeInTheDocument();
   });
@@ -236,9 +228,7 @@ describe('contribute dialog preview', () => {
     fireEvent.change(amount, { target: { value: '1 234,56' } });
 
     // 100000 + 123456 = 223456 копеек.
-    expect(screen.getByTestId('contribute-preview-balance').textContent).toBe(
-      formatMoney(223456),
-    );
+    expect(screen.getByTestId('contribute-preview-balance').textContent).toBe(formatMoney(223456));
     // 223456 / 500000 = 44.69 % → 45 %.
     expect(screen.getByTestId('contribute-preview-percent').textContent).toContain('45');
   });

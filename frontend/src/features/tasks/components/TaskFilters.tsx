@@ -6,24 +6,7 @@ import { Button } from '@/shared/ui/button';
 import { cn } from '@/shared/lib/utils';
 import { COMMON } from '@/shared/lib/i18n';
 import { TASKS_RU } from '../locale';
-
-/**
- * `assignee: 'me'` is a server-resolved literal, not our own id — the contract
- * is explicit that the client never guesses who it is.
- */
-export type AssigneeFilter = { kind: 'all' } | { kind: 'me' } | { kind: 'user'; userId: string };
-
-export interface TaskFilterState {
-  assignee: AssigneeFilter;
-  category: string | null;
-  showDone: boolean;
-}
-
-export const DEFAULT_FILTERS: TaskFilterState = {
-  assignee: { kind: 'all' },
-  category: null,
-  showDone: false,
-};
+import { DEFAULT_FILTERS, type TaskFilterState } from '../filters';
 
 function FilterChip(props: {
   active: boolean;

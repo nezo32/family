@@ -1,11 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-  type UseMutationResult,
-  type UseQueryResult,
-} from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import type {
   EventOccurrenceResponse,
   EventRsvp,
@@ -223,7 +217,7 @@ function useInvalidateCalendar(): () => void {
   }, [queryClient]);
 }
 
-export function useCreateEvent(): UseMutationResult<EventSeriesResponse, Error, EventSeriesCreate> {
+export function useCreateEvent() {
   const invalidate = useInvalidateCalendar();
   return useMutation({
     mutationFn: (body: EventSeriesCreate) => createEventSeries(body),
@@ -237,9 +231,7 @@ export function useCreateEvent(): UseMutationResult<EventSeriesResponse, Error, 
   });
 }
 
-export function useUpdateEvent(
-  seriesId: string,
-): UseMutationResult<EventSeriesResponse, Error, EventSeriesUpdate> {
+export function useUpdateEvent(seriesId: string) {
   const invalidate = useInvalidateCalendar();
   return useMutation({
     mutationFn: (body: EventSeriesUpdate) => updateEventSeries(seriesId, body),
@@ -253,9 +245,7 @@ export function useUpdateEvent(
   });
 }
 
-export function useDeleteEvent(
-  seriesId: string,
-): UseMutationResult<void, Error, EventSeriesDelete> {
+export function useDeleteEvent(seriesId: string) {
   const invalidate = useInvalidateCalendar();
   return useMutation({
     mutationFn: (body: EventSeriesDelete) => deleteEventSeries(seriesId, body),
@@ -269,11 +259,7 @@ export function useDeleteEvent(
   });
 }
 
-export function useSetRsvp(): UseMutationResult<
-  EventOccurrenceResponse,
-  Error,
-  { occurrenceId: string } & EventRsvp
-> {
+export function useSetRsvp() {
   const invalidate = useInvalidateCalendar();
   return useMutation({
     mutationFn: ({ occurrenceId, ...body }: { occurrenceId: string } & EventRsvp) =>
@@ -288,7 +274,7 @@ export function useSetRsvp(): UseMutationResult<
   });
 }
 
-export function useCancelOccurrence(): UseMutationResult<void, Error, string> {
+export function useCancelOccurrence() {
   const invalidate = useInvalidateCalendar();
   return useMutation({
     mutationFn: (occurrenceId: string) => cancelOccurrence(occurrenceId),

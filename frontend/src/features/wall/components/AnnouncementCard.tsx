@@ -16,6 +16,7 @@ import { ConfirmDialog } from '@/shared/components';
 import { cn } from '@/shared/lib/utils';
 import { COMMON } from '@/shared/lib/i18n';
 import { formatDateTime } from '@/shared/lib/format';
+import { isoInDays } from '../api';
 import { useDeletePost, useSetPin, type Roster } from '../hooks';
 import { WALL_RU } from '../locale';
 import { AuthorLine } from './AuthorLine';
@@ -200,13 +201,9 @@ function PostMenu(props: {
   );
 }
 
-/** Pinning expires by design (D-contract): «закреплено до» self-clears. */
+/** Pinning expires by design: «закреплено до» self-clears; a flag would not. */
 const PIN_DURATIONS = [
   { days: 1, label: WALL_RU.post.pinDay },
   { days: 3, label: WALL_RU.post.pinThreeDays },
   { days: 7, label: WALL_RU.post.pinWeek },
 ] as const;
-
-export function isoInDays(days: number): string {
-  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
-}

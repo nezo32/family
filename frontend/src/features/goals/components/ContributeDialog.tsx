@@ -98,7 +98,9 @@ export function ContributeDialog(props: {
   const nextBalance = props.goal.currentAmount + delta;
   const nextPercent = goalProgressPercent(nextBalance, props.goal.targetAmount);
   const reachesTarget =
-    isContribution && props.goal.currentAmount < props.goal.targetAmount && nextBalance >= props.goal.targetAmount;
+    isContribution &&
+    props.goal.currentAmount < props.goal.targetAmount &&
+    nextBalance >= props.goal.targetAmount;
   const overdraft = !isContribution && nextBalance < 0;
 
   const onSubmit = form.handleSubmit((values) => {
@@ -206,7 +208,10 @@ export function ContributeDialog(props: {
               </p>
             ) : null}
             {overdraft ? (
-              <p className="flex items-center gap-2 text-sm font-medium text-destructive" role="alert">
+              <p
+                className="flex items-center gap-2 text-sm font-medium text-destructive"
+                role="alert"
+              >
                 <TriangleAlert className="size-4" aria-hidden />
                 {GOALS_RU.previewOverdraft}
               </p>

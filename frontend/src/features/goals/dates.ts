@@ -21,7 +21,10 @@ function dateKeyToUtc(dateKey: string): number | null {
  * Whole days from today (family timezone) to `deadline`. Negative when the
  * deadline has passed, `null` when there is no deadline or it is unparseable.
  */
-export function daysUntil(deadline: string | null | undefined, now: Date = new Date()): number | null {
+export function daysUntil(
+  deadline: string | null | undefined,
+  now: Date = new Date(),
+): number | null {
   if (!deadline) return null;
   const target = dateKeyToUtc(deadline);
   const today = dateKeyToUtc(toLocalDateKey(now));

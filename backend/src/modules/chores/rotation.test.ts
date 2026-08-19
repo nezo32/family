@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   compareByDebt,
+  DEBT_EPSILON,
   computeDebt,
   EXCUSED_DEBT,
   ineligibleReason,
@@ -156,14 +157,17 @@ describe('compareByDebt — the deterministic tie-break chain (D5)', () => {
     expect(compareByDebt(sameEverything, { ...sameEverything })).toBe(0);
   });
 
-  it('absorbs float noise so 4/0.4 ties with 10/1.0', () => {
-    // 4 / 0.4 === 9.999999999999998 in IEEE-754. Without DEBT_EPSILON the
-    // proportional-load case below would be decided by rounding error.
-    expect(4 / 0.4).not.toBe(10);
-    const child = { ...base, userId: CHILD, position: 9, debt: 4 / 0.4 };
-    const adult = { ...base, userId: ADULT, position: 1, debt: 10 };
-    // Debt ties, so position decides: the adult wins on position 1 vs 9.
+  it('treats debts within DEBT_EPSILON as a tie, so IEEE-754 noise cannot pick a person', () => {
+    // Fractional weights make exact equality a coin flip: `(0.1 + 0.2) / 0.3`
+    // is 1.0000000000000002, not 1. Without the tolerance the documented
+    // tie-break chain would be short-circuited by the last bit of a mantissa.
+    const child = { ...base, userId: CHILD, position: 9, debt: 10 };
+    const adult = { ...base, userId: ADULT, position: 1, debt: 10 + DEBT_EPSILON / 2 };
+    // Nominally the child owes a hair less; within epsilon they tie, so
+    // position decides and the adult wins on 1 vs 9.
     expect(compareByDebt(adult, child)).toBeLessThan(0);
+    // A difference that actually means something still wins on debt.
+    expect(compareByDebt({ ...adult, debt: 10.001 }, child)).toBeGreaterThan(0);
   });
 });
 

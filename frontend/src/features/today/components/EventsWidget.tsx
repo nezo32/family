@@ -1,14 +1,17 @@
 import { CalendarDays, MapPin } from 'lucide-react';
-import type { EventOccurrenceResponse } from '@family/shared';
 import { ROUTES } from '@/shared/lib/routes';
 import { cn } from '@/shared/lib/utils';
-import { formatTime } from '@/shared/lib/format';
 import { TODAY_RU, eventCount } from '../locale';
-import type { TodayEventsSection } from '../types';
+import type { DashboardEvent, DashboardEvents } from '../types';
 import { WidgetCard } from './WidgetCard';
 
-/** Today and tomorrow only — the calendar screen owns everything further out. */
-export function EventsWidget(props: { events: TodayEventsSection }) {
+/**
+ * Today and tomorrow only — Календарь owns everything further out.
+ *
+ * Tomorrow earns its place on a *today* screen because the thing a family
+ * actually needs the evening before is "во сколько завтра тренировка".
+ */
+export function EventsWidget(props: { events: DashboardEvents }) {
   const { events } = props;
   const total = events.today.length + events.tomorrow.length;
 
@@ -32,7 +35,7 @@ export function EventsWidget(props: { events: TodayEventsSection }) {
   );
 }
 
-function EventGroup(props: { label: string; items: EventOccurrenceResponse[]; muted?: boolean }) {
+function EventGroup(props: { label: string; items: DashboardEvent[]; muted?: boolean }) {
   if (props.items.length === 0) return null;
 
   return (
@@ -50,7 +53,7 @@ function EventGroup(props: { label: string; items: EventOccurrenceResponse[]; mu
                 props.muted ? 'text-muted-foreground/70' : 'text-muted-foreground',
               )}
             >
-              {event.isAllDay ? TODAY_RU.allDay : formatTime(event.startsAt)}
+              {event.isAllDay || !event.time ? TODAY_RU.allDay : event.time}
             </span>
             <span
               className="h-8 w-1 shrink-0 rounded-full"

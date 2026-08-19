@@ -19,17 +19,17 @@ import { TODAY_RU, eventCount, taskCount } from '../locale';
  */
 export function GreetingHeader(props: {
   displayName: string | undefined;
-  /** Local calendar date of the payload, `YYYY-MM-DD` in the family timezone. */
+  /** The payload's `today`, `YYYY-MM-DD` in the caller's timezone. */
   date: string | undefined;
-  taskCount: number;
-  eventCount: number;
+  tasks: number;
+  events: number;
 }) {
   const { greeting, Icon } = greetingNow();
   const firstName = props.displayName?.trim().split(/\s+/)[0];
 
   const summary = [
-    props.taskCount > 0 ? taskCount(props.taskCount) : null,
-    props.eventCount > 0 ? eventCount(props.eventCount) : null,
+    props.tasks > 0 ? taskCount(props.tasks) : null,
+    props.events > 0 ? eventCount(props.events) : null,
   ]
     .filter((part): part is string => part !== null)
     .join(' · ');

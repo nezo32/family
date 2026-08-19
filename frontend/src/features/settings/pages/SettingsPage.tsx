@@ -1,26 +1,47 @@
-import { ChevronRight } from 'lucide-react';
+import { useState } from 'react';
+import { BellRing, ChevronRight, LogOut } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '@/shared/components/PageHeader';
+import { ConfirmDialog } from '@/shared/components/ConfirmDialog';
+import { Button } from '@/shared/ui/button';
 import { Card } from '@/shared/ui/card';
 import { useCan } from '@/shared/auth/use-can';
 import { SETTINGS_NAV } from '@/app/layout/nav-items';
+import { signOut } from '@/shared/api/refresh';
 import { COMMON } from '@/shared/lib/i18n';
+import { SETTINGS_RU } from '../locale';
+import { usePush } from '../push/use-push';
 
 /**
- * PLACEHOLDER — owned by the `features/settings` agent.
+ * The `/settings` index.
  *
- * The index of `/settings`. Sub-pages live at `/settings/{profile,notifications,accounts}`
- * and are separate route entries, not nested `<Outlet>` children, so that each
- * one is a full screen on a phone.
- * Keep the file path and the default export.
+ * Sub-pages are separate top-level route entries rather than nested `<Outlet>`
+ * children, so each one is a full screen on a phone with its own back
+ * behaviour. The list is filtered through `useCan()` — never `role ===` (D4).
+ *
+ * The push status line here is deliberate: «уведомления не работают» is the
+ * complaint this feature exists to prevent, and the hub is where a family member
+ * looks first.
  */
 export default function SettingsPage() {
   const { can } = useCan();
+  const push = usePush();
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
+
   const items = SETTINGS_NAV.filter((item) => !item.perm || can(item.perm));
+
+  const pushStatus = (): string => {
+    if (push.availability === 'unsupported') return SETTINGS_RU.push.statusUnsupported;
+    if (push.availability === 'needs-install') return SETTINGS_RU.push.statusNotInstalled;
+    if (push.permission === 'denied') return SETTINGS_RU.push.statusDenied;
+    if (push.needsReEnable) return SETTINGS_RU.push.reEnableTitle;
+    return push.isEnabled ? SETTINGS_RU.push.statusOn : SETTINGS_RU.push.statusOff;
+  };
 
   return (
     <>
-      <PageHeader title={COMMON.settings} description="Профиль, уведомления и способы входа." />
+      <PageHeader title={SETTINGS_RU.hub.title} description={SETTINGS_RU.hub.description} />
+
       <Card className="divide-y divide-border overflow-hidden p-0">
         {items.map((item) => (
           <Link
@@ -34,6 +55,35 @@ export default function SettingsPage() {
           </Link>
         ))}
       </Card>
+
+      <div className="mt-4 flex items-center gap-2 px-1 text-xs text-muted-foreground">
+        <BellRing className="size-3.5 shrink-0" aria-hidden />
+        <span>
+          {SETTINGS_RU.push.sectionTitle}: {pushStatus()}
+        </span>
+      </div>
+
+      <div className="mt-8">
+        <Button
+          variant="outline"
+          className="w-full sm:w-auto"
+          onClick={() => {
+            setConfirmSignOut(true);
+          }}
+        >
+          <LogOut aria-hidden />
+          {SETTINGS_RU.hub.signOut}
+        </Button>
+      </div>
+
+      <ConfirmDialog
+        open={confirmSignOut}
+        onOpenChange={setConfirmSignOut}
+        title={SETTINGS_RU.hub.signOutConfirmTitle}
+        description={SETTINGS_RU.hub.signOutConfirmText}
+        confirmLabel={COMMON.signOut}
+        onConfirm={() => signOut()}
+      />
     </>
   );
 }

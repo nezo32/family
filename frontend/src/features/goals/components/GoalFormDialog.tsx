@@ -56,7 +56,20 @@ export const GOAL_COLORS = [
   '#3F7F6E',
 ] as const;
 
-const GOAL_ICONS = ['🏖️', '🚲', '🏠', '💻', '🎓', '🎁', '🚗', '🎮', '✈️', '🛋️', '🐶', '💍'] as const;
+const GOAL_ICONS = [
+  '🏖️',
+  '🚲',
+  '🏠',
+  '💻',
+  '🎓',
+  '🎁',
+  '🚗',
+  '🎮',
+  '✈️',
+  '🛋️',
+  '🐶',
+  '💍',
+] as const;
 
 interface GoalFormValues {
   title: string;
@@ -85,7 +98,10 @@ const goalFormSchema = z.object({
   }),
   deadline: z
     .string()
-    .refine((value) => value === '' || /^\d{4}-\d{2}-\d{2}$/.test(value), GOALS_RU.errorDeadlineInvalid),
+    .refine(
+      (value) => value === '' || /^\d{4}-\d{2}-\d{2}$/.test(value),
+      GOALS_RU.errorDeadlineInvalid,
+    ),
   color: z.string().refine((value) => /^#[0-9a-fA-F]{6}$/.test(value), GOALS_RU.errorColorInvalid),
   icon: z.string().max(64),
   ownership: z.enum(['shared', 'personal']),

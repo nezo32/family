@@ -105,14 +105,31 @@ export function parseMoney(input: string): number | null {
     .replace(/[^\d.,-]/g, '')
     .replace(',', '.');
   if (normalized === '' || normalized === '-') return null;
-  const value = Number(normalized);
-  if (!Number.isFinite(value)) return null;
-  // `Math.round` on the scaled value, never `parseFloat * 100`, which drifts:
-  // 19.99 * 100 === 1998.9999999999998.
-  return Math.round(value * 100);
+
+  // Exactly one optional sign, digits, and at most two decimal places. Rejecting
+  // `12.345` matters: rounding it silently would turn a typo into a wrong amount
+  // in the family's ledger, and the user would never see it happen.
+  const match = /^(-?)(\d*)(?:\.(\d{1,2}))?$/.exec(normalized);
+  if (!match) return null;
+
+  const [, sign, whole = '', fraction = ''] = match;
+  if (whole === '' && fraction === '') return null;
+
+  // Concatenate digit strings rather than multiplying by 100. A float never
+  // enters the calculation, so there is nothing to drift (D6).
+  const minor = Number(`${whole || '0'}${fraction.padEnd(2, '0')}`);
+  if (!Number.isSafeInteger(minor)) return null;
+
+  return sign === '-' ? -minor : minor;
 }
 
-/** Percentage of a goal reached, clamped to 0–100 and rounded to whole percent. */
+/**
+ * Percentage of a goal reached, for filling a progress **bar** — hence the
+ * clamp to 0–100, since a bar cannot render past full.
+ *
+ * Do NOT use this for the number shown next to the bar: the server does not cap
+ * progress, and a goal that is over-funded should honestly read «112 %».
+ */
 export function progressPercent(current: number, target: number): number {
   if (target <= 0) return 0;
   return Math.max(0, Math.min(100, Math.round((current / target) * 100)));

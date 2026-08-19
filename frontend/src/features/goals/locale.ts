@@ -15,7 +15,8 @@ export const GOALS_RU = {
   // ---- list -------------------------------------------------------------
   createGoal: 'Новая копилка',
   emptyTitle: 'Копилок пока нет',
-  emptyDescription: 'Заведите первую цель — на отпуск, велосипед или новый диван. Копить вместе интереснее.',
+  emptyDescription:
+    'Заведите первую цель — на отпуск, велосипед или новый диван. Копить вместе интереснее.',
   emptyReadOnlyDescription: 'Здесь появятся семейные цели, когда взрослые их создадут.',
   emptyFiltered: 'По этому фильтру ничего нет',
   emptyFilteredDescription: 'Попробуйте другой раздел или снимите фильтры.',
@@ -44,6 +45,7 @@ export const GOALS_RU = {
   contributors: 'Кто уже вложился',
   noContributors: 'Пока никто не пополнял',
   contributorsCount: 'участников',
+  youSuffix: '(вы)',
   openGoal: 'Открыть копилку',
   backToGoals: 'К копилкам',
 
@@ -68,7 +70,8 @@ export const GOALS_RU = {
   contributeTitle: 'Пополнить копилку',
   withdrawTitle: 'Снять из копилки',
   contributeDescription: 'Сумма прибавится к накоплениям. Историю видит вся семья.',
-  withdrawDescription: 'Сумма спишется с накоплений. Запись останется в истории — её нельзя стереть.',
+  withdrawDescription:
+    'Сумма спишется с накоплений. Запись останется в истории — её нельзя стереть.',
   amount: 'Сумма',
   amountPlaceholder: '1 000',
   amountHint: 'Можно с копейками: 1 234,56',

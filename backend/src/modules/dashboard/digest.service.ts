@@ -113,6 +113,13 @@ export function countRu(count: number, forms: PluralForms): string {
 
 export const RU_PLURALS = {
   task: ['задача', 'задачи', 'задач'],
+  /**
+   * Accusative — «Вы закрыли 21 задачу», not «21 задача». Russian numerals
+   * govern the case of the noun, so a single "task" form cannot serve both
+   * «21 задача на неделе» and «закрыли 21 задачу»; conflating them is the
+   * second-most-common Russian pluralisation bug after the 11–14 exception.
+   */
+  taskAccusative: ['задачу', 'задачи', 'задач'],
   event: ['событие', 'события', 'событий'],
   birthday: ['день рождения', 'дня рождения', 'дней рождения'],
   purchase: ['покупка', 'покупки', 'покупок'],
@@ -184,13 +191,19 @@ export function formatLocalRangeRu(from: string, toInclusive: string): string {
 }
 
 /**
- * How a date is referred to relative to the digest's anchor: «сегодня»,
- * «завтра», otherwise «во вторник». Beyond the week it falls back to the
- * calendar date, so a 31-day preview never claims two different Tuesdays.
+ * How a date is referred to inside the digest: «сегодня» for the day it is
+ * composed, a weekday phrase for the rest of the week, a calendar date beyond
+ * it.
+ *
+ * There is deliberately **no «завтра»**. A digest is written once and read
+ * whenever the person gets to it — Sunday evening, Monday morning on the
+ * commute, Tuesday when they finally open Telegram. «Завтра» is wrong by then;
+ * «во вторник» never goes stale. The same reasoning caps the relative form at
+ * one week: past that, two different Tuesdays are in play and only a date is
+ * honest.
  */
 export function relativeDayRu(date: string, anchor: string): string {
   if (date === anchor) return 'сегодня';
-  if (date === addLocalDays(anchor, 1)) return 'завтра';
   const withinWeek = date < addLocalDays(anchor, 7);
   if (withinWeek) return WEEKDAY_ON_RU[isoWeekdayOf(date)] ?? formatLocalDateRu(date);
   return formatLocalDateRu(date);
@@ -215,6 +228,8 @@ export function formatMoneyRu(minorUnits: number, currency: string): string {
   const abs = Math.abs(Math.trunc(minorUnits));
   const major = Math.trunc(abs / 100);
   const minor = abs % 100;
+  // U+00A0 as an explicit escape, both between groups and before the symbol:
+  // a literal non-breaking space in source is invisible in review and in diffs.
   const grouped = String(major).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
   const symbol = currency === 'RUB' ? '₽' : currency;
   const body = minor === 0 ? grouped : `${grouped},${String(minor).padStart(2, '0')}`;
@@ -802,7 +817,8 @@ function buildPoints(data: DigestData): SectionResult {
 
   if (mine && (mine.doneCount > 0 || mine.points !== 0)) {
     lines.push(
-      `Вы закрыли ${countRu(mine.doneCount, RU_PLURALS.task)} и набрали ${countRu(mine.points, RU_PLURALS.point)}.`,
+      `Вы закрыли ${countRu(mine.doneCount, RU_PLURALS.taskAccusative)} ` +
+        `и набрали ${countRu(mine.points, RU_PLURALS.point)}.`,
     );
   }
   if (totalDone > 0) {

@@ -35,8 +35,10 @@ export function AssigneeControl(props: {
   const assignee = props.members.find((member) => member.id === props.occurrence.assigneeId);
   const mayAssign = can('task:assign');
   const closed = props.occurrence.status !== 'scheduled';
-  const mayClaim =
-    !closed && props.occurrence.assigneeId === null && can('task:complete', props.occurrence);
+  // Deliberately the resource-less affordance check: an unassigned chore is
+  // nobody's, so an ownership test against it can only ever answer "no" — and
+  // claiming is precisely the act that makes it yours.
+  const mayClaim = !closed && props.occurrence.assigneeId === null && can('task:complete');
 
   const face = assignee ? (
     <span className="flex min-w-0 items-center gap-2">

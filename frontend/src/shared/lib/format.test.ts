@@ -79,6 +79,25 @@ describe('parseMoney', () => {
     expect(parseMoney('—')).toBeNull();
     expect(parseMoney('abc')).toBeNull();
   });
+  it('rejects more precision than копейки can hold', () => {
+    // Silently rounding a typo would put a wrong amount in the family ledger.
+    expect(parseMoney('12,345')).toBeNull();
+    expect(parseMoney('1.2345')).toBeNull();
+  });
+
+  it('never routes the value through a float', () => {
+    // Each of these drifts if computed as Number(x) * 100.
+    expect(parseMoney('19,99')).toBe(1999);
+    expect(parseMoney('70,7')).toBe(7070);
+    expect(parseMoney('8,05')).toBe(805);
+    expect(parseMoney('0,1')).toBe(10);
+  });
+
+  it('rejects rubbish rather than coercing it', () => {
+    expect(parseMoney('abc')).toBeNull();
+    expect(parseMoney('1,2,3')).toBeNull();
+  });
+
 });
 
 describe('progressPercent', () => {

@@ -262,6 +262,52 @@ export async function findSeriesById(
 }
 
 /**
+ * The read-scoped fetch: the visibility gate is part of the WHERE clause, so a
+ * series the caller may not see is simply not there.
+ *
+ * That is what makes **404, not 403** (D4) structural rather than a discipline
+ * every handler has to remember — there is no moment at which the row exists in
+ * memory and a later `if` decides whether to admit it.
+ */
+export async function findSeriesByIdForViewer(
+  ex: Executor,
+  id: string,
+  viewer: TaskViewer,
+): Promise<TaskSeriesRow | undefined> {
+  const assignedToMe = sql`exists (
+    select 1 from ${taskOccurrences}
+    where ${taskOccurrences.seriesId} = ${taskSeries.id}
+      and ${taskOccurrences.assigneeId} = ${viewer.userId}
+  )`;
+  const mine = or(eq(taskSeries.createdById, viewer.userId), assignedToMe);
+
+  const visibilityGate = or(
+    eq(taskSeries.visibility, 'household'),
+    mine,
+    viewer.canSeeRestricted ? eq(taskSeries.visibility, 'restricted') : sql`false`,
+  );
+  const scopeGate = viewer.canReadAny
+    ? sql`true`
+    : or(eq(taskSeries.visibility, 'household'), mine);
+
+  const [row] = await ex
+    .select()
+    .from(taskSeries)
+    .where(and(eq(taskSeries.id, id), visibilityGate, scopeGate))
+    .limit(1);
+  return row;
+}
+
+/** Every occurrence id of a series — the cleanup list before a hard delete. */
+export async function listOccurrenceIds(ex: Executor, seriesId: string): Promise<string[]> {
+  const rows = await ex
+    .select({ id: taskOccurrences.id })
+    .from(taskOccurrences)
+    .where(eq(taskOccurrences.seriesId, seriesId));
+  return rows.map((r) => r.id);
+}
+
+/**
  * `SELECT ... FOR UPDATE`. Every mutation path takes this first, so a
  * concurrent edit and the nightly materializer serialise on the same row rather
  * than interleaving a schedule change with an expansion of the old rule.
@@ -749,7 +795,7 @@ export async function applyOccurrenceOverride(
 export async function deleteFutureScheduled(
   ex: Executor,
   params: { seriesId: string; fromKey?: string | undefined; fromInstant?: Date | undefined },
-): Promise<number> {
+): Promise<string[]> {
   const filters: SQL[] = [
     eq(taskOccurrences.seriesId, params.seriesId),
     eq(taskOccurrences.status, 'scheduled'),
@@ -766,7 +812,7 @@ export async function deleteFutureScheduled(
     .delete(taskOccurrences)
     .where(and(...filters))
     .returning({ id: taskOccurrences.id });
-  return rows.length;
+  return rows.map((r) => r.id);
 }
 
 /**

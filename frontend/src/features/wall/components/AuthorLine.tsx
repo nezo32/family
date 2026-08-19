@@ -2,7 +2,6 @@ import type { ReactNode } from 'react';
 import { UserAvatar, type AvatarSize } from '@/shared/components';
 import { cn } from '@/shared/lib/utils';
 import { relativeTime } from '@/shared/lib/i18n';
-import { WALL_RU } from '../locale';
 import type { Roster } from '../hooks';
 
 /**
@@ -47,6 +46,3 @@ export function AuthorLine(props: {
     </div>
   );
 }
-
-/** Screen-reader label for the system author, exported so tests can assert it. */
-export const SYSTEM_AUTHOR_LABEL = WALL_RU.feed.systemAuthor;

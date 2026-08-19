@@ -7,9 +7,9 @@ import { plural, pluralize } from '@/shared/lib/i18n';
  * of times a day:
  *
  *  - Warm, never corporate. «Сегодня свободно 🎉», not «Нет данных».
- *  - Overdue copy is **urgent, never shaming**: «Просрочено» states a fact;
- *    «Вы не сделали» would assign blame, and a family app that nags is a family
- *    app that gets deleted.
+ *  - Overdue copy is **urgent, never shaming**: it states how late a chore is
+ *    and offers the tick. «Вы не сделали» would assign blame, and a family app
+ *    that nags is a family app that gets deleted.
  *  - Load is neutral (D5): «Ваша неделя», never «место в рейтинге».
  */
 export const TODAY_RU = {
@@ -22,21 +22,21 @@ export const TODAY_RU = {
 
   /* overdue -------------------------------------------------------------- */
   overdueTitle: 'Требует внимания',
-  overdueHint: 'Сроки прошли — можно сделать сейчас или перенести.',
+  overdueHint: 'Сроки прошли — можно закрыть сейчас или перенести.',
+  overdueBy: 'Просрочено на',
+  overdueLongAgo: 'Просрочено',
 
   /* my tasks ------------------------------------------------------------- */
   tasksTitle: 'Мои дела на сегодня',
-  tasksAllDone: 'Все дела на сегодня закрыты',
+  tasksAllDone: 'Все дела на сегодня закрыты.',
   tasksAllDoneHint: 'Хороший день. Можно выдохнуть.',
-  tasksFree: 'На сегодня дел нет',
-  tasksUnassignedTitle: 'Свободные дела',
-  tasksUnassignedHint: 'Их пока никто не взял.',
-  tasksFamilyDone: 'Семья сегодня закрыла',
+  tasksFree: 'На сегодня дел за вами не закреплено.',
+  tasksDoneToday: 'Сегодня закрыто',
   tasksAll: 'Все задачи',
   complete: 'Отметить выполненным',
-  completed: 'Выполнено',
   completeErrorTitle: 'Не удалось отметить',
   dueAt: 'до',
+  dueAnyTime: 'в течение дня',
 
   /* events --------------------------------------------------------------- */
   eventsTitle: 'События',
@@ -50,7 +50,7 @@ export const TODAY_RU = {
   shoppingTitle: 'Купить срочно',
   shoppingEmpty: 'Срочных покупок нет.',
   shoppingAll: 'Список покупок',
-  shoppingPendingPrefix: 'Всего в списке',
+  shoppingNeededPrefix: 'Всего в списках',
 
   /* goal ----------------------------------------------------------------- */
   goalTitle: 'Ближайшая цель',
@@ -58,14 +58,13 @@ export const TODAY_RU = {
   goalReached: 'Цель достигнута 🎉',
   goalDeadline: 'до',
   goalAll: 'Все копилки',
+  goalEmpty: 'Пока нет активных копилок.',
 
   /* weekly load ---------------------------------------------------------- */
   loadTitle: 'Ваша неделя',
   loadDone: 'сделано',
-  loadPlanned: 'запланировано',
-  loadExpected: 'ожидаемая',
-  loadFairShare: 'Ваша доля недели',
-  loadEmpty: 'На этой неделе дел за вами не закреплено.',
+  loadShare: 'доля недели',
+  weekAhead: 'Впереди на неделе',
 
   /* approvals ------------------------------------------------------------ */
   approvalsTitle: 'Заявки на вступление',
@@ -94,6 +93,6 @@ export const eventCount = (n: number): string => pluralize(n, ['событие',
 export const itemCount = (n: number): string => pluralize(n, ['товар', 'товара', 'товаров']);
 export const requestCount = (n: number): string => pluralize(n, ['заявка', 'заявки', 'заявок']);
 export const pointCount = (n: number): string => pluralize(n, ['балл', 'балла', 'баллов']);
-/** The bare word, for a figure that is already rendered next to it. */
-export const pointWord = (n: number): string => plural(n, ['балл', 'балла', 'баллов']);
 export const choreCount = (n: number): string => pluralize(n, ['дело', 'дела', 'дел']);
+/** The bare word, for a figure already rendered next to it. */
+export const pointWord = (n: number): string => plural(n, ['балл', 'балла', 'баллов']);

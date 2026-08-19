@@ -18,12 +18,7 @@
  */
 
 /** Why a typed amount could not be turned into minor units. */
-export type MoneyParseError =
-  | 'empty'
-  | 'invalid'
-  | 'precision'
-  | 'tooLarge'
-  | 'notPositive';
+export type MoneyParseError = 'empty' | 'invalid' | 'precision' | 'tooLarge' | 'notPositive';
 
 export type MoneyParseResult =
   | { readonly ok: true; readonly minorUnits: number }

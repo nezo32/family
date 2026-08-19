@@ -22,10 +22,7 @@ import { MilestoneDialog } from './MilestoneDialog';
  * balance comparison is only a fallback for a goal whose crossing edge has not
  * been processed yet.
  */
-export function MilestoneTimeline(props: {
-  goal: GoalResponse;
-  canManage: boolean;
-}) {
+export function MilestoneTimeline(props: { goal: GoalResponse; canManage: boolean }) {
   const [editing, setEditing] = useState<MilestoneResponse | undefined>(undefined);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<MilestoneResponse | null>(null);
@@ -68,10 +65,7 @@ export function MilestoneTimeline(props: {
       ) : (
         <ol className="relative space-y-4 pl-8">
           {/* The rail the markers sit on. */}
-          <span
-            aria-hidden
-            className="absolute top-2 bottom-2 left-3 w-px bg-border"
-          />
+          <span aria-hidden className="absolute top-2 bottom-2 left-3 w-px bg-border" />
           {milestones.map((milestone) => {
             const reached =
               milestone.reachedAt !== null || props.goal.currentAmount >= milestone.targetAmount;
@@ -100,9 +94,7 @@ export function MilestoneTimeline(props: {
                   <div className="min-w-0">
                     <p className="flex items-center gap-1.5 font-medium">
                       {milestone.title}
-                      {reached ? (
-                        <Sparkles className="size-3.5 text-success" aria-hidden />
-                      ) : null}
+                      {reached ? <Sparkles className="size-3.5 text-success" aria-hidden /> : null}
                     </p>
                     <p className="text-xs text-muted-foreground">
                       <span className="tabular-nums">{formatMoney(milestone.targetAmount)}</span>

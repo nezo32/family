@@ -2,7 +2,11 @@ import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { createMilestoneSchema, updateMilestoneSchema, type MilestoneResponse } from '@family/shared';
+import {
+  createMilestoneSchema,
+  updateMilestoneSchema,
+  type MilestoneResponse,
+} from '@family/shared';
 import { Button } from '@/shared/ui/button';
 import {
   Dialog,
@@ -71,9 +75,7 @@ export function MilestoneDialog(props: {
     if (props.open) {
       form.reset({
         title: props.milestone?.title ?? '',
-        targetAmount: props.milestone
-          ? formatMinorUnitsForInput(props.milestone.targetAmount)
-          : '',
+        targetAmount: props.milestone ? formatMinorUnitsForInput(props.milestone.targetAmount) : '',
       });
     }
   }, [props.open, props.milestone, form]);

@@ -1,24 +1,23 @@
 import { ShoppingCart } from 'lucide-react';
 import { ROUTES } from '@/shared/lib/routes';
-import { formatNumber } from '@/shared/lib/format';
 import { TODAY_RU, itemCount } from '../locale';
-import type { TodayShoppingSection } from '../types';
+import type { DashboardShopping } from '../types';
 import { WidgetCard } from './WidgetCard';
 
 /**
  * Only the items somebody marked urgent.
  *
- * The full list is one tap away; putting thirty items on the home screen turns
- * the screen into the shopping feature, which it is not.
+ * The full list is one tap away; thirty items on the home screen would turn it
+ * into the shopping feature, which it is not.
  */
-export function ShoppingWidget(props: { shopping: TodayShoppingSection }) {
+export function ShoppingWidget(props: { shopping: DashboardShopping }) {
   const { shopping } = props;
 
   return (
     <WidgetCard
       title={TODAY_RU.shoppingTitle}
       icon={ShoppingCart}
-      meta={shopping.urgent.length > 0 ? itemCount(shopping.urgent.length) : undefined}
+      meta={shopping.urgentCount > 0 ? itemCount(shopping.urgentCount) : undefined}
       linkTo={ROUTES.shopping}
       linkLabel={TODAY_RU.shoppingAll}
     >
@@ -32,10 +31,12 @@ export function ShoppingWidget(props: { shopping: TodayShoppingSection }) {
               className="max-w-full truncate rounded-full bg-secondary px-3 py-1.5 text-sm text-secondary-foreground"
             >
               {item.name}
+              {/* `quantity` is a decimal string on the wire, never a float (D6's
+                  sibling rule for `numeric`) — render it verbatim. */}
               {item.quantity ? (
                 <span className="text-muted-foreground">
                   {' '}
-                  {formatNumber(item.quantity, Number.isInteger(item.quantity) ? 0 : 1)}
+                  {item.quantity}
                   {item.unit ? ` ${item.unit}` : ''}
                 </span>
               ) : null}
@@ -44,9 +45,9 @@ export function ShoppingWidget(props: { shopping: TodayShoppingSection }) {
         </ul>
       )}
 
-      {shopping.pendingCount > 0 ? (
+      {shopping.neededCount > 0 ? (
         <p className="pt-3 text-xs text-muted-foreground">
-          {TODAY_RU.shoppingPendingPrefix} {itemCount(shopping.pendingCount)}.
+          {TODAY_RU.shoppingNeededPrefix} {itemCount(shopping.neededCount)}.
         </p>
       ) : null}
     </WidgetCard>

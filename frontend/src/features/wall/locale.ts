@@ -1,3 +1,5 @@
+import type { ReactionSummary } from '@family/shared';
+
 /**
  * Russian strings for the family wall.
  *
@@ -154,3 +156,18 @@ export const REACTION_EMOJI = ['❤️', '\u{1F44D}', '\u{1F389}', '\u{1F602}', 
 
 /** Emoji offered when giving kudos. */
 export const KUDOS_EMOJI = ['\u{1F44F}', '❤️', '\u{1F31F}', '\u{1F917}', '\u{1F4AA}'] as const;
+
+/**
+ * Who is behind a reaction chip.
+ *
+ * The summary contract carries `count` and "did I react", not the reactor ids,
+ * so this says exactly as much as is actually known. When the backend starts
+ * returning reactor ids, this is the one function that has to change.
+ */
+export function reactorLabel(summary: ReactionSummary): string {
+  if (!summary.reacted) {
+    return summary.count > 0 ? WALL_RU.reactions.others(summary.count) : WALL_RU.reactions.nobody;
+  }
+  const others = summary.count - 1;
+  return others > 0 ? WALL_RU.reactions.youAndOthers(others) : WALL_RU.reactions.you;
+}

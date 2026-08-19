@@ -1,0 +1,518 @@
+import { useState, type ReactNode } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type {
+  Permission,
+  RecurrenceView,
+  TaskOccurrenceResponse,
+  TaskSeriesResponse,
+} from '@family/shared';
+
+/**
+ * The five rules of this feature that are expensive to get wrong:
+ *
+ *  1. the builder can only ever emit the restricted grammar,
+ *  2. a rule outside that grammar is never silently rewritten,
+ *  3. a recurring edit always asks which instances it touches,
+ *  4. an optimistic completion that fails puts the tick back,
+ *  5. assignee controls are gated by a permission, not by a role.
+ */
+
+const apiMock = vi.hoisted(() => ({
+  get: vi.fn(),
+  post: vi.fn(),
+  patch: vi.fn(),
+  put: vi.fn(),
+  del: vi.fn(),
+}));
+
+vi.mock('@/shared/api/client', () => ({ api: apiMock }));
+
+import { ApiError } from '@/shared/api/errors';
+import { RecurrenceBuilder } from './components/RecurrenceBuilder';
+import { ScheduleField } from './components/ScheduleField';
+import { TaskEditor } from './components/TaskEditor';
+import { AssigneeControl } from './components/AssigneeControl';
+import { useCompleteOccurrence } from './hooks';
+import { taskKeys } from './api';
+import { ONCE, type ScheduleValue } from './recurrence';
+
+/* -------------------------------------------------------------------------- */
+/* fixtures                                                                    */
+/* -------------------------------------------------------------------------- */
+
+const ME_ID = '11111111-1111-4111-8111-111111111111';
+const OTHER_ID = '22222222-2222-4222-8222-222222222222';
+const OCCURRENCE_ID = '33333333-3333-4333-8333-333333333333';
+const SERIES_ID = '44444444-4444-4444-8444-444444444444';
+
+const DTSTART = '2026-09-08T09:00:00'; // a Tuesday
+
+function me(permissions: Permission[]) {
+  return {
+    id: ME_ID,
+    email: null,
+    displayName: 'Аня',
+    avatarUrl: null,
+    role: 'adult',
+    status: 'active',
+    timezone: 'Europe/Moscow',
+    permissions,
+    providers: [],
+  };
+}
+
+function occurrence(overrides: Partial<TaskOccurrenceResponse> = {}): TaskOccurrenceResponse {
+  return {
+    id: OCCURRENCE_ID,
+    seriesId: SERIES_ID,
+    occurrenceKey: DTSTART,
+    startsAt: '2026-09-08T06:00:00.000Z',
+    dueAt: '2026-09-08T18:00:00.000Z',
+    localDate: '2026-09-08',
+    startsLocal: DTSTART,
+    timezone: 'Europe/Moscow',
+    status: 'scheduled',
+    isException: false,
+    isOverdue: false,
+    title: 'Вынести мусор',
+    notes: null,
+    points: 3,
+    category: 'Уборка',
+    visibility: 'household',
+    assigneeId: ME_ID,
+    assignedVia: 'rotation',
+    completedById: null,
+    completedAt: null,
+    skippedById: null,
+    skipReason: null,
+    pendingSwapId: null,
+    createdAt: '2026-09-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function recurrenceView(overrides: Partial<RecurrenceView> = {}): RecurrenceView {
+  return {
+    rrule: 'FREQ=WEEKLY;INTERVAL=1;BYDAY=TU',
+    dtstartLocal: DTSTART,
+    timezone: 'Europe/Moscow',
+    rdatesLocal: [],
+    exdatesLocal: [],
+    seriesEndsAt: null,
+    materializedThrough: null,
+    preset: { kind: 'weekly', interval: 1, weekdays: ['TU'] },
+    ends: { type: 'never' },
+    summary: 'Каждый вторник, 09:00',
+    ...overrides,
+  };
+}
+
+function series(overrides: Partial<TaskSeriesResponse> = {}): TaskSeriesResponse {
+  return {
+    id: SERIES_ID,
+    title: 'Вынести мусор',
+    notes: null,
+    visibility: 'household',
+    createdById: ME_ID,
+    recurrence: recurrenceView(),
+    dueOffsetMinutes: 0,
+    graceMinutes: 0,
+    rotationId: null,
+    defaultAssigneeId: ME_ID,
+    points: 3,
+    category: 'Уборка',
+    autoCancelAfterDays: null,
+    supersedesSeriesId: null,
+    archivedAt: null,
+    createdAt: '2026-09-01T00:00:00.000Z',
+    updatedAt: '2026-09-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function makeClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: Infinity, staleTime: Infinity },
+      mutations: { retry: false },
+    },
+  });
+}
+
+function wrapperFor(client: QueryClient) {
+  return function Wrapper(props: { children: ReactNode }) {
+    return <QueryClientProvider client={client}>{props.children}</QueryClientProvider>;
+  };
+}
+
+/** Answers `/me` with the given permission list; everything else 404s loudly. */
+function stubMe(permissions: Permission[]): void {
+  apiMock.get.mockImplementation((path: string) => {
+    if (path === '/me') return Promise.resolve(me(permissions));
+    if (path === '/members') return Promise.resolve([]);
+    return Promise.reject(new ApiError({ code: 'NOT_FOUND', status: 404 }));
+  });
+}
+
+beforeEach(() => {
+  apiMock.get.mockReset();
+  apiMock.post.mockReset();
+  apiMock.patch.mockReset();
+  apiMock.del.mockReset();
+  stubMe(['task:read:any', 'task:create', 'task:update:any', 'task:complete:any']);
+});
+
+/* -------------------------------------------------------------------------- */
+/* 1. the restricted grammar                                                   */
+/* -------------------------------------------------------------------------- */
+
+function BuilderHarness(props: { onChange: (value: ScheduleValue) => void }) {
+  const [value, setValue] = useState<ScheduleValue>(ONCE);
+  return (
+    <RecurrenceBuilder
+      value={value}
+      dtstartLocal={DTSTART}
+      onChange={(next) => {
+        setValue(next);
+        props.onChange(next);
+      }}
+    />
+  );
+}
+
+describe('recurrence builder', () => {
+  it('emits the matching preset object for every arm of the grammar', () => {
+    const onChange = vi.fn<(value: ScheduleValue) => void>();
+    render(<BuilderHarness onChange={onChange} />);
+    const last = (): ScheduleValue => onChange.mock.calls.at(-1)?.[0] as ScheduleValue;
+
+    // ежедневно
+    fireEvent.click(screen.getByRole('radio', { name: 'Ежедневно' }));
+    expect(last()).toEqual({
+      mode: 'preset',
+      preset: { kind: 'daily', interval: 1 },
+      ends: { type: 'never' },
+    });
+
+    // каждые N дней
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '3' } });
+    expect(last()).toEqual({
+      mode: 'preset',
+      preset: { kind: 'daily', interval: 3 },
+      ends: { type: 'never' },
+    });
+
+    // по дням недели — seeded from the anchor weekday (2026-09-08 is Tuesday)
+    fireEvent.click(screen.getByRole('radio', { name: 'По дням недели' }));
+    expect(last()).toEqual({
+      mode: 'preset',
+      preset: { kind: 'weekly', interval: 1, weekdays: ['TU'] },
+      ends: { type: 'never' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'четверг' }));
+    expect(last()).toEqual({
+      mode: 'preset',
+      preset: { kind: 'weekly', interval: 1, weekdays: ['TU', 'TH'] },
+      ends: { type: 'never' },
+    });
+
+    // раз в N недель is the same arm with an interval — no second preset kind
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '2' } });
+    expect(last()).toEqual({
+      mode: 'preset',
+      preset: { kind: 'weekly', interval: 2, weekdays: ['TU', 'TH'] },
+      ends: { type: 'never' },
+    });
+
+    // N-е число месяца
+    fireEvent.click(screen.getByRole('radio', { name: 'Число месяца' }));
+    expect(last()).toEqual({
+      mode: 'preset',
+      preset: { kind: 'monthly_day', interval: 1, dayOfMonth: 8 },
+      ends: { type: 'never' },
+    });
+
+    const [, dayOfMonth] = screen.getAllByRole('spinbutton');
+    fireEvent.change(dayOfMonth as HTMLElement, { target: { value: '15' } });
+    expect(last()).toEqual({
+      mode: 'preset',
+      preset: { kind: 'monthly_day', interval: 1, dayOfMonth: 15 },
+      ends: { type: 'never' },
+    });
+
+    // последний день месяца — the steer away from BYMONTHDAY=31
+    fireEvent.click(screen.getByRole('radio', { name: 'Последний день месяца' }));
+    expect(last()).toEqual({
+      mode: 'preset',
+      preset: { kind: 'monthly_last_day', interval: 1 },
+      ends: { type: 'never' },
+    });
+
+    // ends
+    fireEvent.click(screen.getByRole('radio', { name: 'После' }));
+    expect(last()).toEqual({
+      mode: 'preset',
+      preset: { kind: 'monthly_last_day', interval: 1 },
+      ends: { type: 'after', count: 10 },
+    });
+
+    // and back to a one-off
+    fireEvent.click(screen.getByRole('radio', { name: 'Не повторяется' }));
+    expect(last()).toEqual({ mode: 'once' });
+  });
+
+  it('offers no free-text rule field', () => {
+    render(<BuilderHarness onChange={vi.fn()} />);
+    for (const input of screen.queryAllByRole('textbox')) {
+      expect(input).not.toHaveValue(expect.stringContaining('FREQ='));
+    }
+    expect(screen.queryByText(/RRULE/i)).toBeNull();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* 2. rules outside the grammar                                                */
+/* -------------------------------------------------------------------------- */
+
+function ScheduleHarness(props: { view: RecurrenceView }) {
+  const [value, setValue] = useState<ScheduleValue>(ONCE);
+  const [dtstart, setDtstart] = useState(DTSTART);
+  return (
+    <ScheduleField
+      dtstartLocal={dtstart}
+      onDtstartChange={setDtstart}
+      value={value}
+      onChange={setValue}
+      view={props.view}
+    />
+  );
+}
+
+describe('a rule that does not decompile', () => {
+  const imported = recurrenceView({
+    rrule: 'FREQ=MONTHLY;BYDAY=2FR',
+    preset: null,
+    ends: null,
+    summary: 'Каждую вторую пятницу месяца',
+  });
+
+  it('is read-only, shown by its Russian summary, and only offers a replacement', () => {
+    render(<ScheduleHarness view={imported} />);
+
+    expect(screen.getByText('Каждую вторую пятницу месяца')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Заменить расписание' })).toBeInTheDocument();
+    // The builder is absent — nothing here can rewrite the imported rule.
+    expect(screen.queryByRole('radio', { name: 'Ежедневно' })).toBeNull();
+    expect(screen.queryByRole('radio', { name: 'По дням недели' })).toBeNull();
+  });
+
+  it('reveals the builder only after an explicit «Заменить расписание»', () => {
+    render(<ScheduleHarness view={imported} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Заменить расписание' }));
+    expect(screen.getByRole('radio', { name: 'Ежедневно' })).toBeInTheDocument();
+  });
+
+  it('still builds normally for a rule that does decompile', () => {
+    render(<ScheduleHarness view={recurrenceView()} />);
+    expect(screen.getByRole('radio', { name: 'По дням недели' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Заменить расписание' })).toBeNull();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* 3. the edit-scope prompt                                                    */
+/* -------------------------------------------------------------------------- */
+
+describe('edit scope prompt', () => {
+  it('asks which instances are affected before editing a recurring occurrence', async () => {
+    const client = makeClient();
+    render(
+      <TaskEditor
+        open
+        onOpenChange={vi.fn()}
+        series={series()}
+        occurrence={occurrence()}
+        members={[]}
+      />,
+      { wrapper: wrapperFor(client) },
+    );
+
+    expect(await screen.findByText('Что изменить?')).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /Только это/ })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /Это и последующие/ })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /^Все/ })).toBeInTheDocument();
+
+    // Nothing is preselected: «Продолжить» must not be reachable by a mis-tap.
+    expect(screen.getByRole('button', { name: 'Продолжить' })).toBeDisabled();
+    // The form itself is not on screen yet.
+    expect(screen.queryByLabelText('Что нужно сделать')).toBeNull();
+
+    fireEvent.click(screen.getByRole('radio', { name: /Только это/ }));
+    expect(screen.getByRole('button', { name: 'Продолжить' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Продолжить' }));
+
+    expect(await screen.findByLabelText('Что нужно сделать')).toBeInTheDocument();
+  });
+
+  it('does not ask for a one-off task', async () => {
+    const client = makeClient();
+    render(
+      <TaskEditor
+        open
+        onOpenChange={vi.fn()}
+        series={series({ recurrence: recurrenceView({ rrule: null, preset: null, ends: null }) })}
+        occurrence={occurrence()}
+        members={[]}
+      />,
+      { wrapper: wrapperFor(client) },
+    );
+
+    expect(await screen.findByLabelText('Что нужно сделать')).toBeInTheDocument();
+    expect(screen.queryByText('Что изменить?')).toBeNull();
+    expect(screen.queryByRole('radio', { name: /Это и последующие/ })).toBeNull();
+  });
+
+  it('does not ask when creating a new task', async () => {
+    const client = makeClient();
+    render(<TaskEditor open onOpenChange={vi.fn()} members={[]} />, {
+      wrapper: wrapperFor(client),
+    });
+
+    expect(await screen.findByLabelText('Что нужно сделать')).toBeInTheDocument();
+    expect(screen.queryByText('Что изменить?')).toBeNull();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* 4. optimistic completion                                                    */
+/* -------------------------------------------------------------------------- */
+
+describe('one-tap completion', () => {
+  const filters = { from: '2026-09-01', to: '2026-09-30' };
+
+  it('rolls the list back when the request fails', async () => {
+    const client = makeClient();
+    client.setQueryData(taskKeys.list(filters), {
+      items: [occurrence()],
+      nextCursor: null,
+    });
+
+    let rejectRequest: (error: unknown) => void = () => undefined;
+    apiMock.post.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectRequest = reject;
+        }),
+    );
+
+    const { result } = renderHook(() => useCompleteOccurrence(), {
+      wrapper: wrapperFor(client),
+    });
+
+    act(() => {
+      result.current.mutate({ occurrenceId: OCCURRENCE_ID });
+    });
+
+    const statusNow = (): string | undefined =>
+      client.getQueryData<{ items: TaskOccurrenceResponse[] }>(taskKeys.list(filters))?.items[0]
+        ?.status;
+
+    // Optimistic: the tick lands before the network does.
+    await waitFor(() => {
+      expect(statusNow()).toBe('done');
+    });
+
+    act(() => {
+      rejectRequest(new ApiError({ code: 'CONFLICT', status: 409 }));
+    });
+
+    await waitFor(() => {
+      expect(result.current.isError).toBe(true);
+    });
+    // …and is taken back, because a chore that only *looks* done is worse than
+    // one that visibly failed.
+    expect(statusNow()).toBe('scheduled');
+    expect(
+      client.getQueryData<{ items: TaskOccurrenceResponse[] }>(taskKeys.list(filters))?.items[0]
+        ?.completedAt,
+    ).toBeNull();
+  });
+
+  it('keeps the optimistic state when the request succeeds', async () => {
+    const client = makeClient();
+    client.setQueryData(taskKeys.list(filters), { items: [occurrence()], nextCursor: null });
+    apiMock.post.mockResolvedValueOnce(occurrence({ status: 'done' }));
+
+    const { result } = renderHook(() => useCompleteOccurrence(), {
+      wrapper: wrapperFor(client),
+    });
+
+    act(() => {
+      result.current.mutate({ occurrenceId: OCCURRENCE_ID });
+    });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+    expect(
+      client.getQueryData<{ items: TaskOccurrenceResponse[] }>(taskKeys.list(filters))?.items[0]
+        ?.status,
+    ).toBe('done');
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* 5. permission-gated assignee controls                                       */
+/* -------------------------------------------------------------------------- */
+
+describe('assignee controls', () => {
+  const roster = [
+    {
+      id: OTHER_ID,
+      displayName: 'Миша',
+      avatarUrl: null,
+      color: null,
+      role: 'teen' as const,
+      status: 'active' as const,
+    },
+  ];
+
+  it('are hidden from a member without task:assign:any', async () => {
+    stubMe(['task:read:own', 'task:complete:own', 'task:update:own']);
+    const client = makeClient();
+
+    render(<AssigneeControl occurrence={occurrence({ assigneeId: OTHER_ID })} members={roster} />, {
+      wrapper: wrapperFor(client),
+    });
+
+    expect(await screen.findByText('Миша')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Сменить исполнителя/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Назначить/ })).toBeNull();
+  });
+
+  it('are shown to a member who holds task:assign:any', async () => {
+    stubMe(['task:read:any', 'task:assign:any', 'task:complete:any']);
+    const client = makeClient();
+
+    render(<AssigneeControl occurrence={occurrence({ assigneeId: OTHER_ID })} members={roster} />, {
+      wrapper: wrapperFor(client),
+    });
+
+    expect(await screen.findByRole('button', { name: /Сменить исполнителя/ })).toBeInTheDocument();
+  });
+
+  it('offers the unassigned chore to whoever may complete it', async () => {
+    stubMe(['task:read:own', 'task:complete:own']);
+    const client = makeClient();
+
+    render(<AssigneeControl occurrence={occurrence({ assigneeId: null })} members={roster} />, {
+      wrapper: wrapperFor(client),
+    });
+
+    expect(await screen.findByRole('button', { name: 'Возьму на себя' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Назначить/ })).toBeNull();
+  });
+});

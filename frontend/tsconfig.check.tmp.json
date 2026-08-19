@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": { "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.check.tmp.tsbuildinfo" },
+  "include": ["src"],
+  "exclude": ["src/features/shopping/shopping.test.tsx"]
+}

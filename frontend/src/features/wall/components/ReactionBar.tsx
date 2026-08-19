@@ -7,7 +7,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
 import { cn } from '@/shared/lib/utils';
 import { useReactionState, useToggleReaction } from '../hooks';
-import { REACTION_EMOJI, WALL_RU } from '../locale';
+import { REACTION_EMOJI, WALL_RU, reactorLabel } from '../locale';
 
 /**
  * Emoji reactions for any commentable target.
@@ -102,17 +102,3 @@ export function ReactionBar(props: {
   );
 }
 
-/**
- * Who is behind a chip.
- *
- * The summary contract carries `count` and "did I react", not the reactor ids,
- * so this says as much as is actually known. When the backend starts returning
- * reactor ids this is the one place that has to change.
- */
-export function reactorLabel(summary: ReactionSummary): string {
-  if (!summary.reacted) {
-    return summary.count > 0 ? WALL_RU.reactions.others(summary.count) : WALL_RU.reactions.nobody;
-  }
-  const others = summary.count - 1;
-  return others > 0 ? WALL_RU.reactions.youAndOthers(others) : WALL_RU.reactions.you;
-}

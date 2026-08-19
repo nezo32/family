@@ -57,10 +57,7 @@ export const MoneyInput = forwardRef<
           disabled={props.disabled ?? false}
           aria-invalid={props.invalid ?? false}
           {...(props['aria-describedby'] ? { 'aria-describedby': props['aria-describedby'] } : {})}
-          className={cn(
-            'h-12 pr-10 text-base tabular-nums md:text-base',
-            props.className,
-          )}
+          className={cn('h-12 pr-10 text-base tabular-nums md:text-base', props.className)}
         />
         <span
           aria-hidden

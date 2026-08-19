@@ -397,6 +397,9 @@ export async function enqueueToggle(input: EnqueueToggleInput): Promise<OutboxTo
  * and immediately ticks it. Two entries queue up. On flush the insert lands
  * first and the server hands back a real uuid — the toggle must follow the row,
  * not the ghost.
+ *
+ * The entry's **key does not change**, only its `itemId`. Rekeying mid-drain
+ * would strand the in-flight loop on an id that no longer exists in the store.
  */
 export async function remapItemId(fromId: string, toId: string): Promise<void> {
   if (fromId === toId) return;
@@ -404,8 +407,7 @@ export async function remapItemId(fromId: string, toId: string): Promise<void> {
   const entries = await driverRef.all();
   for (const entry of entries) {
     if (entry.kind !== 'toggle' || entry.itemId !== fromId) continue;
-    await driverRef.remove(entry.id);
-    await driverRef.put({ ...entry, id: toggleEntryId(toId), itemId: toId });
+    await driverRef.put({ ...entry, itemId: toId });
   }
 }
 
@@ -524,8 +526,15 @@ async function runFlush(handlers: OutboxHandlers): Promise<FlushResult> {
   let dropped = 0;
   let offline = false;
 
-  for (const batch of batchEntries(entries)) {
+  for (const staleBatch of batchEntries(entries)) {
     if (offline) break;
+
+    // Re-read immediately before sending. The batch we sent a moment ago may
+    // have rewritten a queued toggle's `itemId` (see `remapItemId`), and
+    // sending the pre-remap copy would post to an id the server never issued.
+    const byId = new Map((await driverRef.all()).map((entry) => [entry.id, entry]));
+    const batch = staleBatch.map((entry) => byId.get(entry.id) ?? entry);
+
     try {
       await send(handlers, batch);
       for (const entry of batch) await driverRef.remove(entry.id);

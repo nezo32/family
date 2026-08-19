@@ -64,7 +64,9 @@ export function ContributorBreakdown(props: {
               <span className="min-w-0 truncate text-sm font-medium">
                 {member?.displayName ?? '—'}
                 {contributor.userId === props.currentUserId ? (
-                  <span className="ml-1 text-xs font-normal text-muted-foreground">(вы)</span>
+                  <span className="ml-1 text-xs font-normal text-muted-foreground">
+                    {GOALS_RU.youSuffix}
+                  </span>
                 ) : null}
               </span>
               <span className="shrink-0 text-sm font-semibold tabular-nums">

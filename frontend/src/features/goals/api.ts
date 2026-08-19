@@ -68,7 +68,10 @@ export const goalKeys = {
 /* Goals                                                                       */
 /* -------------------------------------------------------------------------- */
 
-export function fetchGoals(params: GoalListParams, signal?: AbortSignal): Promise<GoalListResponse> {
+export function fetchGoals(
+  params: GoalListParams,
+  signal?: AbortSignal,
+): Promise<GoalListResponse> {
   return api.get<GoalListResponse>('/goals', {
     query: {
       scope: params.scope ?? 'all',
