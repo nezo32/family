@@ -220,3 +220,74 @@ escalation) -> `notification_deliveries` log. Channels: **Web Push (VAPID)** and
 - iOS requires the PWA to be **installed to the Home Screen** before
   `Notification.requestPermission()` works, and the call must come from a user
   gesture. Ask at a meaningful moment, never on first load.
+
+## D11 — Notifications must be *confirmed received*, not merely sent
+
+A `201` from a push service means "accepted for delivery" — nothing more. It does
+not mean the message reached the device, and it certainly does not mean a human
+saw it. For a family app where a missed "дать лекарство в 20:00" or "забрать
+Лизу из школы" has real consequences, tracking `sent` is not enough.
+
+Every delivery therefore carries four distinct timestamps, and they must never
+be collapsed into one another:
+
+| Column | Meaning | Written by |
+|---|---|---|
+| `sentAt` | We handed it to the push service / Telegram and it accepted. | The dispatcher |
+| `deliveredAt` | It **arrived on the device**. | The service worker's `push` handler, via an ack call |
+| `interactedAt` | The user **tapped the notification**. | The service worker's `notificationclick` handler |
+| `acknowledgedAt` | The user explicitly **confirmed the underlying action** ("Подтвердить"). | The app, for `high`/`critical` intents only |
+
+`deliveryStatus` gains `delivered`, `interacted` and `acknowledged` alongside the
+existing values, and only ever moves forward.
+
+### How each signal is obtained
+
+- **Device receipt.** The service worker already receives the `push` event
+  (this is why the Declarative Web Push payload sets `mutable: true` — see
+  `docs/research/ios-pwa-push.md`). After `showNotification` resolves, it POSTs
+  an ack for that `deliveryId`. The ack is fire-and-forget and **must never
+  block or fail the notification** — showing the notification is the one thing
+  iOS requires, and an ack failure must not cost us the subscription. If the ack
+  request fails, queue it in IndexedDB and flush on the next app foreground.
+- **Telegram** gives a genuinely better signal than Web Push: `sendMessage`
+  returns a `message_id` on real delivery, and a blocked user returns `403`
+  (which sets `canDm = false` rather than retrying forever). Treat a successful
+  `sendMessage` as `deliveredAt`.
+- **In-app** open of the notification centre or the linked entity sets
+  `interactedAt` for the matching delivery.
+
+### The enforcement loop — this is the point of the whole decision
+
+A dispatcher sweep looks for deliveries that were `sent` but never became
+`delivered` (or, for `critical`, never `acknowledged`) within a per-priority
+deadline, and escalates:
+
+1. **Re-deliver** on the same channel once, in case the device was simply off.
+2. **Fall back to another channel** for that user — Web Push failed, so try the
+   Telegram bot.
+3. **Escalate to another person** per `escalationPolicies` — if the assigned
+   parent has not acknowledged a `critical` reminder, tell the other adult.
+4. **Surface it in the UI**: the sender sees «Не доставлено» next to the item,
+   so a human can act rather than assuming it landed.
+
+Escalation deadlines by priority: `critical` 10 min, `high` 30 min, `normal` no
+escalation (the weekly digest catches it), `low` never.
+
+### Guardrails
+
+- Escalation must be **idempotent and capped** — at most one escalation chain
+  per intent, recorded on the intent, so a retried sweep cannot spam the family.
+- A user whose device is legitimately offline overnight must not trigger a 03:00
+  escalation: the sweep respects quiet hours exactly as the original delivery
+  did, and defers rather than escalating inside them.
+- Never escalate a `low`/`normal` notification. The cure would be worse than the
+  disease, and notification fatigue is the failure mode that kills these apps.
+
+### Subscription health
+
+Because iOS never fires `pushsubscriptionchange`, a subscription that stops
+delivering is otherwise invisible. A subscription with no `deliveredAt` across
+its last N sends is marked unhealthy, and the app shows the user
+«Уведомления отключились — включить снова?» on next open. This closes the loop
+that would otherwise let a family member silently stop receiving everything.
