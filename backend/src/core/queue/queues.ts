@@ -100,7 +100,42 @@ export async function enqueue<N extends JobName>(
   const opts = options?.jobId
     ? { ...options, jobId: safeJobId(options.jobId) }
     : options;
-  await getQueue(QUEUE_FOR_JOB[name]).add(name, payload, opts);
+  await withTimeout(
+    getQueue(QUEUE_FOR_JOB[name]).add(name, payload, opts),
+    ENQUEUE_TIMEOUT_MS,
+    `enqueue ${name}`,
+  );
+}
+
+/**
+ * How long an enqueue may take before we give up on it.
+ *
+ * Every caller enqueues *after* committing its domain write, and several wrap
+ * the call in a try/catch precisely so a queue outage cannot fail a request
+ * that already succeeded. That contract only holds if the promise settles —
+ * and it did not: BullMQ manages its own connection and reinstates ioredis's
+ * offline queue, so with `maxRetriesPerRequest: null` an unreachable Redis
+ * left `add()` pending forever and the HTTP request hung after the money was
+ * already in the ledger.
+ *
+ * Setting the option on the connection is not enough, so the guarantee is made
+ * here instead, where it is ours to make.
+ */
+const ENQUEUE_TIMEOUT_MS = 5_000;
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**

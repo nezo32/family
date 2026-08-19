@@ -3,6 +3,7 @@ import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from 'driz
 import type { PointsReason, SwapStatus } from '@family/shared';
 
 import type { Executor } from '../../core/db.js';
+import { ts } from '../../core/sql.js';
 import {
   decodeTimestampCursor,
   encodeTimestampCursor,
@@ -105,7 +106,12 @@ export async function findRotationById(ex: Executor, id: string): Promise<Rotati
 
 /** `SELECT ... FOR UPDATE`, so a concurrent materialization serialises behind us. */
 export async function lockRotation(ex: Executor, id: string): Promise<RotationRow | undefined> {
-  const [row] = await ex.select().from(rotations).where(eq(rotations.id, id)).limit(1).for('update');
+  const [row] = await ex
+    .select()
+    .from(rotations)
+    .where(eq(rotations.id, id))
+    .limit(1)
+    .for('update');
   return row;
 }
 
@@ -118,7 +124,10 @@ export async function listRotations(
     options.cursor
       ? or(
           lt(rotations.createdAt, options.cursor.createdAt),
-          and(eq(rotations.createdAt, options.cursor.createdAt), lt(rotations.id, options.cursor.id)),
+          and(
+            eq(rotations.createdAt, options.cursor.createdAt),
+            lt(rotations.id, options.cursor.id),
+          ),
         )
       : undefined,
   ].filter((f) => f !== undefined);
@@ -151,14 +160,14 @@ export async function updateRotation(
 
 /** Round-robin cursor write-back. Kept separate so a run can skip it entirely. */
 export async function setRotationCursor(ex: Executor, id: string, cursor: number): Promise<void> {
-  await ex
-    .update(rotations)
-    .set({ cursor, updatedAt: new Date() })
-    .where(eq(rotations.id, id));
+  await ex.update(rotations).set({ cursor, updatedAt: new Date() }).where(eq(rotations.id, id));
 }
 
 export async function deleteRotation(ex: Executor, id: string): Promise<boolean> {
-  const rows = await ex.delete(rotations).where(eq(rotations.id, id)).returning({ id: rotations.id });
+  const rows = await ex
+    .delete(rotations)
+    .where(eq(rotations.id, id))
+    .returning({ id: rotations.id });
   return rows.length > 0;
 }
 
@@ -275,7 +284,13 @@ export async function deleteBlackout(ex: Executor, id: string): Promise<boolean>
 
 export async function listBlackouts(
   ex: Executor,
-  options: { limit: number; cursor?: Cursor | undefined; userId?: string; includePast: boolean; now: Date },
+  options: {
+    limit: number;
+    cursor?: Cursor | undefined;
+    userId?: string;
+    includePast: boolean;
+    now: Date;
+  },
 ): Promise<UserBlackoutRow[]> {
   const filters = [
     options.userId ? eq(userBlackouts.userId, options.userId) : undefined,
@@ -422,7 +437,7 @@ export async function loadRotationRoster(
       select sum(pl.delta) as total
       from points_ledger pl
       where pl.user_id = rm.user_id
-        and pl.created_at >= ${windowStart}
+        and pl.created_at >= ${ts(windowStart)}
         and pl.reason in (${reasons})
     ) earned on true
     left join lateral (
@@ -431,7 +446,7 @@ export async function loadRotationRoster(
       join task_series s on s.id = o.series_id
       where o.assignee_id = rm.user_id
         and o.status = 'scheduled'
-        and o.due_at >= ${windowStart}
+        and o.due_at >= ${ts(windowStart)}
     ) committed on true
     left join lateral (
       select max(o2.starts_at) as at
@@ -551,8 +566,8 @@ export async function loadFairnessRows(
       from task_occurrences o
       where o.completed_by_id = u.id
         and o.status = 'done'
-        and o.completed_at >= ${window.from}
-        and o.completed_at < ${window.to}
+        and o.completed_at >= ${ts(window.from)}
+        and o.completed_at < ${ts(window.to)}
     ) done on true
     left join lateral (
       select sum(coalesce(o.points_override, s.points)) as pts
@@ -560,15 +575,15 @@ export async function loadFairnessRows(
       join task_series s on s.id = o.series_id
       where o.assignee_id = u.id
         and o.status = 'scheduled'
-        and o.due_at >= ${window.from}
-        and o.due_at < ${window.to}
+        and o.due_at >= ${ts(window.from)}
+        and o.due_at < ${ts(window.to)}
     ) sched on true
     left join lateral (
       select sum(pl.delta) as total
       from points_ledger pl
       where pl.user_id = u.id
-        and pl.created_at >= ${window.from}
-        and pl.created_at < ${window.to}
+        and pl.created_at >= ${ts(window.from)}
+        and pl.created_at < ${ts(window.to)}
         and pl.reason in (${reasons})
     ) earned on true
     left join lateral (
@@ -578,8 +593,8 @@ export async function loadFairnessRows(
         and o.assignee_id is not null
         and o.assignee_id <> u.id
         and o.status = 'done'
-        and o.completed_at >= ${window.from}
-        and o.completed_at < ${window.to}
+        and o.completed_at >= ${ts(window.from)}
+        and o.completed_at < ${ts(window.to)}
     ) cov on true
   `);
 
@@ -701,7 +716,10 @@ export async function markOccurrenceDone(
 }
 
 /** Reopen a completed occurrence. The ledger is corrected separately (D5). */
-export async function markOccurrenceScheduled(ex: Executor, occurrenceId: string): Promise<boolean> {
+export async function markOccurrenceScheduled(
+  ex: Executor,
+  occurrenceId: string,
+): Promise<boolean> {
   const rows = await ex
     .update(taskOccurrences)
     .set({ status: 'scheduled', completedById: null, completedAt: null })
@@ -720,9 +738,10 @@ export async function listFutureRotationOccurrences(
     .select({
       id: taskOccurrences.id,
       startsAt: taskOccurrences.startsAt,
-      points: sql<number>`coalesce(${taskOccurrences.pointsOverride}, ${taskSeries.points})`.mapWith(
-        Number,
-      ),
+      points:
+        sql<number>`coalesce(${taskOccurrences.pointsOverride}, ${taskSeries.points})`.mapWith(
+          Number,
+        ),
     })
     .from(taskOccurrences)
     .innerJoin(taskSeries, eq(taskSeries.id, taskOccurrences.seriesId))
@@ -860,10 +879,7 @@ export async function listLedger(
 /* Streaks                                                                     */
 /* -------------------------------------------------------------------------- */
 
-export async function findStreak(
-  ex: Executor,
-  userId: string,
-): Promise<UserStreakRow | undefined> {
+export async function findStreak(ex: Executor, userId: string): Promise<UserStreakRow | undefined> {
   const [row] = await ex.select().from(userStreaks).where(eq(userStreaks.userId, userId)).limit(1);
   return row;
 }
@@ -899,7 +915,15 @@ export async function listStreakEvents(
   ex: Executor,
   userId: string,
   options: { after: Date | null; until: Date; limit: number },
-): Promise<Array<{ occurrenceId: string; dueAt: Date; graceMinutes: number; completedAt: Date | null; status: string }>> {
+): Promise<
+  Array<{
+    occurrenceId: string;
+    dueAt: Date;
+    graceMinutes: number;
+    completedAt: Date | null;
+    status: string;
+  }>
+> {
   const filters = [
     eq(taskOccurrences.assigneeId, userId),
     lte(taskOccurrences.dueAt, options.until),
@@ -927,7 +951,9 @@ export async function listUsersWithResolvedWork(ex: Executor, since: Date): Prom
   const rows = await ex
     .selectDistinct({ userId: taskOccurrences.assigneeId })
     .from(taskOccurrences)
-    .where(and(gte(taskOccurrences.dueAt, since), inArray(taskOccurrences.status, ['done', 'skipped'])));
+    .where(
+      and(gte(taskOccurrences.dueAt, since), inArray(taskOccurrences.status, ['done', 'skipped'])),
+    );
   return rows.map((r) => r.userId).filter((id): id is string => id !== null);
 }
 
@@ -1098,7 +1124,10 @@ export async function listSwaps(
  * tally. `undefined` back means "already given" — a `409` for a human request,
  * and simply nothing for the auto-kudos on a covered chore.
  */
-export async function insertKudos(ex: Executor, values: NewKudosRow): Promise<KudosRow | undefined> {
+export async function insertKudos(
+  ex: Executor,
+  values: NewKudosRow,
+): Promise<KudosRow | undefined> {
   const [row] = await ex.insert(kudos).values(values).onConflictDoNothing().returning();
   return row;
 }

@@ -57,8 +57,11 @@ test('pass 2', async ({ page }, testInfo) => {
   await page.goto('/calendar');
   await settle(page);
   const other = mobile ? 'Месяц' : 'Список';
-  await page.getByRole('button', { name: other, exact: true }).first().click().catch(() => {});
-  await shot(page, `${t}-71-calendar-${mobile ? 'month' : 'agenda'}`);
+  const sw = page.locator('button', { hasText: other }).first();
+  console.log('switch visible', await sw.isVisible().catch(() => 'err'));
+  await sw.click({ timeout: 5000 }).catch((e) => { console.log('switch click failed', String(e).slice(0, 120)); });
+  await page.waitForTimeout(2000);
+  await page.screenshot({ path: path.join(OUT, `${t}-71-calendar-${mobile ? 'month' : 'agenda'}.png`), fullPage: true });
 
   // goal detail (longer settle so it is not a skeleton)
   await page.goto('/goals');

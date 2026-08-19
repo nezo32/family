@@ -1,4 +1,4 @@
-import type { GoalContributor, PublicUser } from '@family/shared';
+import { percentOf, type GoalContributor, type PublicUser } from '@family/shared';
 import { AvatarGroup, type AvatarUser } from '@/shared/components/UserAvatar';
 import { formatMoney } from '@/shared/lib/format';
 import { contributorsLabel, GOALS_RU } from '../locale';
@@ -57,7 +57,10 @@ export function ContributorBreakdown(props: {
     <ul className="space-y-3">
       {contributors.map((contributor) => {
         const member = props.roster.get(contributor.userId);
-        const share = total > 0 ? Math.round((Math.max(0, contributor.amount) / total) * 100) : 0;
+        // Same exact-integer formula as `goalProgressPercent` and the server:
+        // a third `Math.round(a / b * 100)` on a money figure is how «29 %» on
+        // one screen became «28 %» on another.
+        const share = percentOf(Math.max(0, contributor.amount), total);
         return (
           <li key={contributor.userId} className="space-y-1.5">
             <div className="flex items-baseline justify-between gap-3">

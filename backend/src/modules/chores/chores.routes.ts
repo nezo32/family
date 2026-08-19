@@ -276,12 +276,14 @@ const choresRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/chores/swaps/:id/respond',
     {
-      // Anyone with `task:update:own` may decline; the service requires
-      // `task:assign:any` to accept, because a handoff needs an adult.
+      // Either swap permission gets you in: declining an offer is not a
+      // handoff, so it needs no more standing than making one. Accepting does,
+      // and `swaps.service.ts` requires `chore:swap:accept` on that branch —
+      // where it can also see who is asking and about which chore.
       config: { anyPermission: ['chore:swap:accept', 'chore:swap:request'] },
       schema: {
         tags: ['chores'],
-        summary: 'Принять или отклонить обмен (принимает взрослый)',
+        summary: 'Принять или отклонить обмен',
         params: idParamsSchema,
         body: swapRespondSchema,
         response: { 200: swapResponseSchema },

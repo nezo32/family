@@ -121,7 +121,6 @@ describe('parseMoney', () => {
   ])('no longer silently coerces %s (was %i minor units)', (input) => {
     expect(parseMoney(input)).toBeNull();
   });
-
 });
 
 /**

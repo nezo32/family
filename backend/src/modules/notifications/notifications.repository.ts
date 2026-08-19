@@ -22,6 +22,7 @@ import {
 } from '@family/shared';
 
 import type { Executor } from '../../core/db.js';
+import { ts } from '../../core/sql.js';
 import { familySettings } from '../identity/identity.schema.js';
 import { users } from '../identity/users.schema.js';
 import {
@@ -708,7 +709,7 @@ export async function stampDeliveryReceipt(
   const column = notificationDeliveries[field];
   const rows = await x
     .update(notificationDeliveries)
-    .set({ [field]: sql`coalesce(${column}, ${at})` })
+    .set({ [field]: sql`coalesce(${column}, ${ts(at)})` })
     .where(eq(notificationDeliveries.id, id))
     .returning();
   return first(rows);

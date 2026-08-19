@@ -182,9 +182,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
         title: 'Задача выполнена',
         body: joinBody(
           `${actor(p)}: ${text(p, 'title', 'задача закрыта')}`,
-          points !== null && points > 0
-            ? `+${countRu(points, RU_PLURALS.point)}`
-            : null,
+          points !== null && points > 0 ? `+${countRu(points, RU_PLURALS.point)}` : null,
         ),
         navigate: route('/tasks', taskId),
       };

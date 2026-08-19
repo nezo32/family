@@ -247,7 +247,7 @@ describe('kudos notify exactly the person who was thanked', () => {
     const db = fakeDb({
       ...selectReturning([{ id: RECIPIENT, displayName: 'Мария', status: 'active' }]),
       transaction: async <T>(fn: (tx: Executor) => Promise<T>): Promise<T> => {
-        const result = await fn(db as unknown as Executor);
+        const result = await fn(db);
         order.push('commit');
         return result;
       },
@@ -439,7 +439,7 @@ describe('birthday greetings reach everyone except the birthday person', () => {
 });
 
 describe('registration tells the people who can approve, and nobody else', () => {
-  const ctx = { ip: '127.0.0.1', userAgent: 'vitest' };
+  const ctx = { ip: '127.0.0.1', userAgent: 'vitest', actorId: null };
   const applicant = userRow('child', {
     displayName: 'Бабушка Нина',
     status: 'pending_approval',

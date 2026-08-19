@@ -1,4 +1,19 @@
-import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, or, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  or,
+  sql,
+} from 'drizzle-orm';
 
 import type { CommentableEntityType, ReactionSummary } from '@family/shared';
 
@@ -245,8 +260,14 @@ export async function listComments(
     const { createdAt, id } = options.cursor;
     const predicate =
       order === 'asc'
-        ? or(gt(comments.createdAt, createdAt), and(eq(comments.createdAt, createdAt), gt(comments.id, id)))
-        : or(lt(comments.createdAt, createdAt), and(eq(comments.createdAt, createdAt), lt(comments.id, id)));
+        ? or(
+            gt(comments.createdAt, createdAt),
+            and(eq(comments.createdAt, createdAt), gt(comments.id, id)),
+          )
+        : or(
+            lt(comments.createdAt, createdAt),
+            and(eq(comments.createdAt, createdAt), lt(comments.id, id)),
+          );
     if (predicate) filters.push(predicate);
   }
 
@@ -501,10 +522,7 @@ export async function listPolls(exec: Executor, options: ListPollsOptions): Prom
   const filters = [];
 
   if (options.status === 'open') {
-    const open = and(
-      isNull(polls.closedAt),
-      or(isNull(polls.closesAt), gt(polls.closesAt, now)),
-    );
+    const open = and(isNull(polls.closedAt), or(isNull(polls.closesAt), gt(polls.closesAt, now)));
     if (open) filters.push(open);
   } else if (options.status === 'closed') {
     const closed = or(isNotNull(polls.closedAt), lte(polls.closesAt, now));
@@ -545,14 +563,13 @@ export async function loadPollVotes(
   pollIds: readonly string[],
 ): Promise<PollVoteRow[]> {
   if (pollIds.length === 0) return [];
-  return exec.select().from(pollVotes).where(inArray(pollVotes.pollId, [...pollIds]));
+  return exec
+    .select()
+    .from(pollVotes)
+    .where(inArray(pollVotes.pollId, [...pollIds]));
 }
 
-export async function deleteVotesOf(
-  tx: Executor,
-  pollId: string,
-  userId: string,
-): Promise<number> {
+export async function deleteVotesOf(tx: Executor, pollId: string, userId: string): Promise<number> {
   const rows = await tx
     .delete(pollVotes)
     .where(and(eq(pollVotes.pollId, pollId), eq(pollVotes.userId, userId)))

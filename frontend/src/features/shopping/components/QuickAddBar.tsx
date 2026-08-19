@@ -12,7 +12,8 @@ import { useProductSuggestions } from '../hooks';
  * Quick add — one field, one tap.
  *
  * «2 кг картошки», «молоко 3 шт», «хлеб», one item per line. The text is parsed
- * on the device (see `quick-add.ts`) so the rows appear instantly and identical
+ * on the device (`parseQuickAddText` from `@family/shared` — the *same*
+ * parser the server runs) so the rows appear instantly and identical
  * whether or not there is a connection; the parsed drafts, not the raw text,
  * are what the outbox carries.
  *

@@ -114,6 +114,16 @@ export const percentOf = sharedPercentOf;
  * `household.md` §5 — see `GOAL_ADMIN_PERMISSION` in the service for how it is
  * derived from the (fixed) permission catalog.
  */
+/**
+ * Values from a raw `sql` expression arrive as Postgres text, because the
+ * postgres-js driver removes the timestamp parsers. Anything aggregated with
+ * `max()`/`min()` therefore needs converting by hand.
+ */
+function toDate(value: string | Date | null | undefined): Date | null {
+  if (value == null) return null;
+  return value instanceof Date ? value : new Date(value);
+}
+
 export interface GoalViewer {
   readonly userId: string;
   readonly canReadAny: boolean;
@@ -493,7 +503,17 @@ export async function listContributors(x: Executor, goalId: string): Promise<Goa
       userId: goalTransactions.userId,
       amount: sql<string>`sum(${goalTransactions.delta})::bigint::text`,
       transactionCount: sql<number>`count(*)::int`,
-      lastContributedAt: sql<Date | null>`max(${goalTransactions.occurredAt})`,
+      /**
+       * Typed as a string, not a Date, and converted below.
+       *
+       * A raw `sql` expression has no Drizzle column behind it, and the
+       * postgres-js driver nulls postgres.js's own timestamp parsers (Drizzle
+       * normally does that conversion at the column level). So this arrives as
+       * the raw Postgres text however it is annotated — claiming `Date` here
+       * made `.toISOString()` throw in the route, 500ing a contribution that
+       * had already committed its ledger row.
+       */
+      lastContributedAt: sql<string | null>`max(${goalTransactions.occurredAt})`,
     })
     .from(goalTransactions)
     .where(eq(goalTransactions.goalId, goalId))
@@ -504,7 +524,7 @@ export async function listContributors(x: Executor, goalId: string): Promise<Goa
     userId: row.userId,
     amount: toMinorUnits(row.amount),
     transactionCount: toCount(row.transactionCount),
-    lastContributedAt: row.lastContributedAt ?? null,
+    lastContributedAt: toDate(row.lastContributedAt),
   }));
 }
 

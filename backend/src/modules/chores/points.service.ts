@@ -166,7 +166,7 @@ export class PointsService {
     const onTime = isOnTime(input.completedAt, input.dueAt, input.graceMinutes);
     const entries: PointsLedgerRow[] = [];
 
-    const basePoints = Math.max(input.points, 0);
+    let basePoints = Math.max(input.points, 0);
     if (basePoints > 0) {
       const row = await repo.insertLedgerEntry(ex, {
         userId: input.completedById,
@@ -175,9 +175,14 @@ export class PointsService {
         occurrenceId: input.occurrenceId,
       });
       if (row) entries.push(row);
+      // The partial unique index swallows a replay, returning no row. Reporting
+      // the points anyway told a child «+13 очков» while the ledger did not
+      // move — the two discretionary bonuses below already zeroed themselves,
+      // these two did not.
+      else basePoints = 0;
     }
 
-    const onTimeBonus = onTime ? onTimeBonusFor(basePoints) : 0;
+    let onTimeBonus = onTime ? onTimeBonusFor(basePoints) : 0;
     if (onTimeBonus > 0) {
       const row = await repo.insertLedgerEntry(ex, {
         userId: input.completedById,
@@ -186,6 +191,7 @@ export class PointsService {
         occurrenceId: input.occurrenceId,
       });
       if (row) entries.push(row);
+      else onTimeBonus = 0;
     }
 
     let coverBonus = 0;
@@ -249,7 +255,16 @@ export class PointsService {
       onTimeBonus,
       coverBonus,
       swapBonus,
-      total: basePoints + onTimeBonus + coverBonus + swapBonus,
+      /**
+       * Derived from the rows that were actually written, not from what we
+       * intended to write. A booking that loses the idempotency race must
+       * report zero, or the UI congratulates somebody for points the ledger
+       * never gained. Only the completer's own entries count — the swap
+       * sweetener's matching debit belongs to the other person.
+       */
+      total: entries
+        .filter((entry) => entry.userId === input.completedById)
+        .reduce((sum, entry) => sum + entry.delta, 0),
       entries,
     };
   }

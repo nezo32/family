@@ -37,7 +37,7 @@ import {
   parseAppleUserField,
 } from './apple.js';
 import { buildGoogleAuthorizationUrl, exchangeGoogleCode, newGoogleAuthSecrets } from './google.js';
-import { resolveOAuthIdentity, type OAuthProfile } from './linking.js';
+import { resolveOAuthIdentityAndNotify, type OAuthProfile } from './linking.js';
 import {
   buildTelegramAuthorizationUrl,
   exchangeTelegramCode,
@@ -171,7 +171,11 @@ async function resolveAndIssue(
   const db = getDb();
   // The user insert and the identity insert have to land together — half a
   // signup is an account nobody can ever sign into again.
-  const resolved = await db.transaction((tx) => resolveOAuthIdentity(tx, args));
+  // ...and the "somebody is waiting for approval" notification has to be
+  // dispatched *after* that transaction commits, which is what the wrapper does.
+  // Calling `resolveOAuthIdentity` directly writes the intent and drops the
+  // dispatch, so admins would silently never hear about an OAuth signup.
+  const resolved = await resolveOAuthIdentityAndNotify(db, args);
 
   // D3: no session below `active`. Not a limited one, not a scoped one.
   if (resolved.user.status !== 'active') return { user: resolved.user, session: null };

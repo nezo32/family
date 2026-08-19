@@ -61,7 +61,10 @@ describe('the cursor codec', () => {
     ['JSON with a non-string `v`', Buffer.from('{"v":2,"id":"a"}').toString('base64url')],
     ['a cursor with an empty id', Buffer.from('{"v":"x","id":""}').toString('base64url')],
     ['a JSON array', Buffer.from('[1,2]').toString('base64url')],
-    ['the old `iso|id` encoding', Buffer.from('2026-08-19T10:00:00.000Z|abc').toString('base64url')],
+    [
+      'the old `iso|id` encoding',
+      Buffer.from('2026-08-19T10:00:00.000Z|abc').toString('base64url'),
+    ],
     ['the old offset encoding', Buffer.from('50').toString('base64url')],
   ])('returns null rather than throwing on %s', (_label, raw) => {
     expect(decodeCursor(raw)).toBeNull();
@@ -193,7 +196,10 @@ describe('shopping item cursors', () => {
     ['an old offset cursor', Buffer.from('50').toString('base64url')],
     ['a `{ v, id }` cursor whose `v` is not the item key', encodeCursor({ v: 'x', id: 'a' })],
     ['a key tuple of the wrong length', encodeCursor({ v: '[true,"a"]', id: 'a' })],
-    ['a key tuple with a bad timestamp', encodeCursor({ v: '[false,"",false,true,0,"nope"]', id: 'a' })],
+    [
+      'a key tuple with a bad timestamp',
+      encodeCursor({ v: '[false,"",false,true,0,"nope"]', id: 'a' }),
+    ],
   ])('starts from the top on %s rather than 400-ing', (_label, raw) => {
     expect(shoppingRepo.decodeItemCursor(raw)).toBeNull();
   });

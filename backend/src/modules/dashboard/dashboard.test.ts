@@ -672,7 +672,17 @@ describe('Russian pluralisation', () => {
     expect(countRu(112, RU_PLURALS.task)).toBe('112 задач');
     expect(countRu(114, RU_PLURALS.task)).toBe('114 задач');
     expect(countRu(121, RU_PLURALS.task)).toBe('121 задача');
-    expect(countRu(1_011, RU_PLURALS.task)).toBe('1011 задач');
+  });
+
+  it('groups the count the same way the screen does', () => {
+    // `countRu` used to interpolate the number bare while the PWA ran it
+    // through `Intl.NumberFormat('ru-RU')`, so the same figure read
+    // «1 000 задач» on the weekly screen and «1000 задач» in the push about it.
+    // One formatter now; the separator is U+00A0 so a wrap cannot leave «000»
+    // alone on a line.
+    expect(countRu(1_011, RU_PLURALS.task)).toBe('1 011 задач');
+    expect(countRu(1_000, RU_PLURALS.task)).toBe('1 000 задач');
+    expect(countRu(999, RU_PLURALS.task)).toBe('999 задач');
   });
 
   it('handles zero and negatives without inventing a fourth form', () => {

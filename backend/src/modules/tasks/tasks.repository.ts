@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, or, sql, type SQL } from 'drizzle-orm';
 
 import type { Executor } from '../../core/db.js';
+import { nowSql, ts } from '../../core/sql.js';
 import {
   decodeCursor,
   encodeCursor,
@@ -139,7 +140,9 @@ export interface ResolvedOccurrence {
 
 /** `now` as a bound parameter when the caller pins the clock, else `now()`. */
 function nowExpr(now: Date | undefined): SQL {
-  return now === undefined ? sql`now()` : sql`${now}::timestamptz`;
+  // `ts()` and not a bare `${now}`: a Date interpolated into a raw template
+  // reaches postgres.js unconverted and throws at bind time. See core/sql.ts.
+  return now === undefined ? nowSql : ts(now);
 }
 
 /**
@@ -174,8 +177,9 @@ function occurrenceSelection(now: Date | undefined) {
     isOverdue: overdueExpr(now),
     title: sql<string>`coalesce(${taskOccurrences.titleOverride}, ${taskSeries.title})`,
     notes: sql<string | null>`coalesce(${taskOccurrences.notesOverride}, ${taskSeries.notes})`,
-    points:
-      sql<number>`coalesce(${taskOccurrences.pointsOverride}, ${taskSeries.points})`.mapWith(Number),
+    points: sql<number>`coalesce(${taskOccurrences.pointsOverride}, ${taskSeries.points})`.mapWith(
+      Number,
+    ),
     category: taskSeries.category,
     visibility: taskSeries.visibility,
     timezone: taskSeries.timezone,
@@ -225,10 +229,7 @@ export async function insertSeries(ex: Executor, values: NewTaskSeriesRow): Prom
   return row;
 }
 
-export async function findSeriesById(
-  ex: Executor,
-  id: string,
-): Promise<TaskSeriesRow | undefined> {
+export async function findSeriesById(ex: Executor, id: string): Promise<TaskSeriesRow | undefined> {
   const [row] = await ex.select().from(taskSeries).where(eq(taskSeries.id, id)).limit(1);
   return row;
 }
@@ -284,10 +285,7 @@ export async function listOccurrenceIds(ex: Executor, seriesId: string): Promise
  * concurrent edit and the nightly materializer serialise on the same row rather
  * than interleaving a schedule change with an expansion of the old rule.
  */
-export async function lockSeriesById(
-  ex: Executor,
-  id: string,
-): Promise<TaskSeriesRow | undefined> {
+export async function lockSeriesById(ex: Executor, id: string): Promise<TaskSeriesRow | undefined> {
   const [row] = await ex
     .select()
     .from(taskSeries)
@@ -339,10 +337,12 @@ export async function countOccurrences(
     .select({
       total: sql<number>`count(*)`.mapWith(Number),
       done: sql<number>`count(*) filter (where ${taskOccurrences.status} = 'done')`.mapWith(Number),
-      skipped:
-        sql<number>`count(*) filter (where ${taskOccurrences.status} = 'skipped')`.mapWith(Number),
-      exceptions:
-        sql<number>`count(*) filter (where ${taskOccurrences.isException})`.mapWith(Number),
+      skipped: sql<number>`count(*) filter (where ${taskOccurrences.status} = 'skipped')`.mapWith(
+        Number,
+      ),
+      exceptions: sql<number>`count(*) filter (where ${taskOccurrences.isException})`.mapWith(
+        Number,
+      ),
     })
     .from(taskOccurrences)
     .where(eq(taskOccurrences.seriesId, seriesId));
@@ -442,11 +442,7 @@ export async function findOccurrenceRow(
   ex: Executor,
   id: string,
 ): Promise<TaskOccurrenceRow | undefined> {
-  const [row] = await ex
-    .select()
-    .from(taskOccurrences)
-    .where(eq(taskOccurrences.id, id))
-    .limit(1);
+  const [row] = await ex.select().from(taskOccurrences).where(eq(taskOccurrences.id, id)).limit(1);
   return row;
 }
 
@@ -807,14 +803,14 @@ export async function autoCancelStale(
     where s.id = o.series_id
       and o.status = 'scheduled'
       and s.auto_cancel_after_days is not null
-      and o.due_at + make_interval(days => s.auto_cancel_after_days) < ${now}
+      and o.due_at + make_interval(days => s.auto_cancel_after_days) < ${ts(now)}
       and o.id in (
         select o2.id
         from ${taskOccurrences} o2
         join ${taskSeries} s2 on s2.id = o2.series_id
         where o2.status = 'scheduled'
           and s2.auto_cancel_after_days is not null
-          and o2.due_at + make_interval(days => s2.auto_cancel_after_days) < ${now}
+          and o2.due_at + make_interval(days => s2.auto_cancel_after_days) < ${ts(now)}
         limit ${limit}
       )
     returning o.id as "id", o.series_id as "seriesId"

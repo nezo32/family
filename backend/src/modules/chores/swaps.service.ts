@@ -31,12 +31,13 @@ import { isBlackedOut } from './rotation.js';
  * ## Who may accept
  *
  * A teen or child may *request* a swap freely — that is the participation the
- * app wants. Accepting is a handoff of responsibility between two people, so it
- * needs an adult: the service requires `task:assign:any` to accept. There is no
- * `chore:swap:approve` string in the shared permission catalog, and inventing
- * one would put the backend and `@family/shared` out of sync (D4 says the
- * catalog is the single source of truth), so the adult-level assignment
- * permission is what gates it.
+ * app wants. Accepting is gated on `chore:swap:accept`, which every active
+ * member holds: taking on a chore somebody offered is volunteering for work,
+ * not escaping it, so it needs no adult gatekeeper. Fairness still
+ * self-corrects because points follow whoever actually does the job (D5).
+ *
+ * Acting on a swap addressed to *somebody else* is a different act and still
+ * requires `task:assign:any`.
  *
  * Declining and cancelling need no such gate: withdrawing an offer or saying
  * "не могу" is not a handoff.

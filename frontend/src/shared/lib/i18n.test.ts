@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { PLURALS, plural, pluralForm, pluralize } from './i18n';
+import { PLURALS, formatCountRu, plural, pluralForm, pluralize } from './i18n';
+import { SHOPPING_RU } from '@/features/shopping/locale';
+import { contributorsLabel, daysLeftLabel } from '@/features/goals/locale';
+import { taskCount } from '@/features/today/locale';
+import { memberCount } from '@/features/family/locale';
 
 /**
  * Russian pluralization.
@@ -83,5 +87,56 @@ describe('pluralize', () => {
   it('groups thousands the Russian way', () => {
     // Intl uses a narrow no-break space as the group separator for ru-RU.
     expect(pluralize(1234, TASKS).replace(/\s/g, ' ')).toBe('1 234 задачи');
+  });
+});
+
+/**
+ * The consolidation itself.
+ *
+ * This rule was written out six times: here, `features/shopping/locale.ts`,
+ * `features/goals/locale.ts`, `notifications/render.ts`,
+ * `dashboard/digest.service.ts` and `core/recurrence/engine.ts`. They agreed on
+ * every integer, so nothing looked broken — but two of them exported a function
+ * called `plural` taking `(n, one, few, many)` while this one takes
+ * `(n, forms)`, so a line moved between the two files compiled and printed
+ * nonsense; and the count was formatted two ways, «1 000 задач» on screen and
+ * «1000 задач» in the push about the same figure.
+ */
+describe('one pluraliser, one count format', () => {
+  it('is the same table the server renders notifications and the digest from', () => {
+    // `PLURALS` is `RU_PLURALS` from `@family/shared` — not a copy of it.
+    expect(PLURALS.task).toEqual(['задача', 'задачи', 'задач']);
+    // Case-aware, which is what made the digest's tuple form the one that won.
+    expect(plural(21, PLURALS.task)).toBe('задача');
+    expect(plural(21, PLURALS.taskAccusative)).toBe('задачу');
+  });
+
+  it('formats every count through one formatter', () => {
+    expect(formatCountRu(1_000)).toBe('1\u00a0000');
+    expect(pluralize(1_000, PLURALS.task)).toBe(`${formatCountRu(1_000)} задач`);
+  });
+
+  it('routes every feature that used to inline its own tuple', () => {
+    // shopping — used to export a `plural(n, one, few, many)` that *shadowed*
+    // the shared name with a different arity.
+    expect(SHOPPING_RU.quickAddCount(21)).toBe(
+      `Добавим ${pluralize(21, PLURALS.lineItemAccusative)}`,
+    );
+    expect(SHOPPING_RU.counters(2, 11)).toBe(`2 из ${pluralize(11, PLURALS.lineItem)}`);
+
+    // goals — used to export its own `pluralRu(count, one, few, many)`.
+    expect(daysLeftLabel(11)).toBe(pluralize(11, PLURALS.day));
+    expect(contributorsLabel(2)).toBe(pluralize(2, PLURALS.member));
+
+    // today / family — used to inline the tuples at the call site.
+    expect(taskCount(5)).toBe(pluralize(5, PLURALS.task));
+    expect(memberCount(3)).toBe(pluralize(3, PLURALS.member));
+  });
+
+  it('exposes exactly one arity, so a copy-pasted call cannot compile to nonsense', () => {
+    // `plural` takes a tuple. The three-positional-string form is gone from the
+    // codebase entirely; this is the shape every call site now uses.
+    expect(plural(1, PLURALS.change)).toBe('изменение');
+    expect(pluralForm(1)).toBe(0);
   });
 });

@@ -141,32 +141,40 @@ describe.skipIf(!hasTestDb)('queue job ids (integration)', () => {
    * says.
    */
   it('rejects rather than hangs when Redis is unreachable', async () => {
-    const { Queue } = await import('bullmq');
-    const { Redis } = await import('ioredis');
+    // Exercises the real `enqueue()`, because that is where the guarantee is
+    // made. A bare `queue.add()` against a dead Redis genuinely does hang
+    // forever -- BullMQ manages its own connection and reinstates ioredis's
+    // offline queue, so setting `enableOfflineQueue: false` on ours is not
+    // enough. `enqueue()` bounds it with an explicit timeout instead.
+    const { resetConfigForTests } = await import('../config.js');
+    const { closeQueues, enqueue } = await import('./queues.js');
+    const { closeRedis } = await import('../redis.js');
 
-    // Port 6399 has nothing on it. Same options as `createBullConnection`.
-    const connection = new Redis('redis://127.0.0.1:6399', {
-      lazyConnect: false,
-      enableReadyCheck: true,
-      retryStrategy: (times: number) => Math.min(times * 200, 5_000),
-      maxRetriesPerRequest: null,
-    });
-    connection.on('error', () => {});
-    const queue = new Queue('probe-outage', { connection });
+    const originalUrl = process.env.REDIS_URL;
+    await closeQueues();
+    await closeRedis();
+    process.env.REDIS_URL = 'redis://127.0.0.1:6399'; // nothing listens here
+    resetConfigForTests();
 
+    const started = Date.now();
     const settled = await Promise.race([
-      queue
-        .add('notification.dispatch', { intentId: 'x' }, { jobId: 'a-b-c' })
+      enqueue('notification.dispatch', { intentId: 'x' })
         .then(() => 'resolved' as const)
         .catch(() => 'rejected' as const),
       new Promise<'hung'>((resolve) => {
-        setTimeout(() => resolve('hung'), 2_000).unref?.();
+        setTimeout(() => resolve('hung'), 15_000).unref?.();
       }),
     ]);
+    const elapsed = Date.now() - started;
 
-    await queue.close().catch(() => {});
-    connection.disconnect();
+    await closeQueues().catch(() => {});
+    await closeRedis().catch(() => {});
+    if (originalUrl === undefined) delete process.env.REDIS_URL;
+    else process.env.REDIS_URL = originalUrl;
+    resetConfigForTests();
 
-    expect(settled).not.toBe('hung');
-  });
+    // A committed domain write must never be followed by a request that hangs.
+    expect(settled).toBe('rejected');
+    expect(elapsed).toBeLessThan(12_000);
+  }, 30_000);
 });

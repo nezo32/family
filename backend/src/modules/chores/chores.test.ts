@@ -921,11 +921,21 @@ describe('assignment is written once at materialization and frozen (D5)', () => 
 /* -------------------------------------------------------------------------- */
 
 describe('cursor encoding', () => {
-  it('round-trips and rejects rubbish', async () => {
+  it('round-trips', async () => {
     const actual = await vi.importActual<typeof RealChoresRepo>('./chores.repository.js');
     const row = { createdAt: T0, id: OCCURRENCE };
     expect(actual.decodeCursor(actual.encodeCursor(row))).toEqual(row);
-    expect(() => actual.decodeCursor('not-a-cursor')).toThrow();
+  });
+
+  it('restarts pagination on rubbish instead of throwing', async () => {
+    // This used to `throw badRequest('Malformed cursor')` while events, goals
+    // and notifications quietly served page one for the same input. The codec
+    // is `core/pagination.ts` now and forgiving everywhere: a cursor is a token
+    // we issued, so a stale one is our redeploy, not the user's mistake.
+    const actual = await vi.importActual<typeof RealChoresRepo>('./chores.repository.js');
+    expect(actual.decodeCursor('not-a-cursor')).toBeUndefined();
+    expect(actual.decodeCursor('')).toBeUndefined();
+    expect(actual.decodeCursor(undefined)).toBeUndefined();
   });
 });
 

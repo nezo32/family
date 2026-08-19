@@ -51,8 +51,7 @@ export const SHOPPING_RU = {
   quickAddPlaceholder: '2 кг картошки\nмолоко 3 шт\nхлеб',
   quickAddHint: 'По одному товару в строке. Можно с количеством: «2 кг картошки».',
   quickAddSubmit: 'Добавить',
-  quickAddCount: (n: number) =>
-    `Добавим ${pluralize(n, PLURALS.lineItemAccusative)}`,
+  quickAddCount: (n: number) => `Добавим ${pluralize(n, PLURALS.lineItemAccusative)}`,
   quickAddNothing: 'Пока нечего добавить',
   frequent: 'Часто покупаем',
   suggestions: 'Подсказки',
@@ -62,8 +61,7 @@ export const SHOPPING_RU = {
   offlineDescription: 'Изменения сохранены на телефоне и уйдут сами, когда появится связь.',
   queuedTitle: 'Ждут отправки',
   queuedDescription: 'Отправим, когда откроете приложение со связью.',
-  queuedCount: (n: number) =>
-    `${pluralize(n, PLURALS.change)} не отправлено`,
+  queuedCount: (n: number) => `${pluralize(n, PLURALS.change)} не отправлено`,
   notSent: 'не отправлено',
   retryNow: 'Отправить сейчас',
   syncing: 'Отправляем…',

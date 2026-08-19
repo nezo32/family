@@ -75,6 +75,7 @@ import {
   ESCALATION_DEADLINE_MINUTES,
   NOTIFICATION_LIMITS,
   NOTIFICATION_TYPES,
+  NOTIFICATION_TYPE_DEFAULT_PRIORITY,
   isForwardDeliveryStatus,
   nextEscalationState,
   requiredAckSignal,
@@ -109,7 +110,10 @@ import {
 import {
   ackDelivery,
   clampAckTimestamp,
+  DEFAULT_ESCALATION_POLICIES,
   emitIntent,
+  ensureDefaultEscalationPolicies,
+  ESCALATION_FALLBACK_ROLES,
   escalateIntent,
   isSubscriptionUnhealthy,
   runPushHealthCheck,
@@ -803,6 +807,125 @@ describe('escalation (D11)', () => {
     expect(nextEscalationState('channel_fallback')).toBe('person_escalated');
     expect(nextEscalationState('person_escalated')).toBe('exhausted');
     expect(nextEscalationState('exhausted')).toBeNull();
+  });
+
+  /**
+   * The third rung reads `escalation_policies`. Nothing ever wrote to that
+   * table — no INSERT, no seed, no route — so «escalate to another person» was
+   * a permanent no-op for every type the product actually emits.
+   */
+  it('seeds the default policies on an empty table, and never again', async () => {
+    vi.mocked(repo.countEscalationPolicies).mockResolvedValue(0);
+    vi.mocked(repo.insertEscalationPolicies).mockImplementation((_x, values) =>
+      Promise.resolve(values as unknown as Awaited<ReturnType<typeof repo.insertEscalationPolicies>>),
+    );
+
+    expect(await ensureDefaultEscalationPolicies(db)).toBe(DEFAULT_ESCALATION_POLICIES.length);
+    expect(DEFAULT_ESCALATION_POLICIES.length).toBeGreaterThan(0);
+
+    // A family that retargeted or disabled a policy must not have it undone by
+    // the next restart, so a non-empty table is left completely alone.
+    vi.mocked(repo.countEscalationPolicies).mockResolvedValue(1);
+    vi.mocked(repo.insertEscalationPolicies).mockClear();
+    expect(await ensureDefaultEscalationPolicies(db)).toBe(0);
+    expect(repo.insertEscalationPolicies).not.toHaveBeenCalled();
+  });
+
+  it('only seeds types that can actually escalate, and only to adults', () => {
+    for (const policy of DEFAULT_ESCALATION_POLICIES) {
+      // `ESCALATION_DEADLINE_MINUTES` is null for normal/low, so a policy on a
+      // quiet type could never fire — it would be configuration that lies.
+      const priority = NOTIFICATION_TYPE_DEFAULT_PRIORITY[policy.type];
+      expect(ESCALATION_DEADLINE_MINUTES[priority]).not.toBeNull();
+      expect(policy.afterMinutes).toBeGreaterThan(0);
+      // Escalating to a child is noise at best: the fan-out would drop them and
+      // the escalation would silently reach nobody.
+      expect(ESCALATION_FALLBACK_ROLES).toContain(policy.escalateToRole);
+    }
+
+    // Every default targets a role rather than a person, so a policy cannot be
+    // orphaned by one member leaving the family.
+    expect(DEFAULT_ESCALATION_POLICIES.every((p) => p.escalateToRole)).toBe(true);
+  });
+
+  it('escalates to the policy target, skipping whoever already ignored it', async () => {
+    arrangeAwake();
+    const sent = delivery({
+      id: 'del-1',
+      status: 'sent',
+      channel: 'push',
+      sentAt: new Date('2026-08-19T10:00:00Z'), // two hours ago
+    });
+    vi.mocked(repo.getIntent).mockResolvedValue(
+      intent({ priority: 'critical', escalationState: 'channel_fallback' }),
+    );
+    vi.mocked(repo.intentHasSignal).mockResolvedValue(false);
+    vi.mocked(repo.listDeliveriesForIntent).mockResolvedValue([sent]);
+    vi.mocked(repo.advanceEscalationState).mockResolvedValue(true);
+    vi.mocked(repo.listEnabledEscalationPolicies).mockResolvedValue([
+      {
+        id: 'pol-1',
+        type: 'system_alert',
+        afterMinutes: 15,
+        escalateToRole: 'owner',
+        escalateToUserId: null,
+        enabled: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ]);
+    vi.mocked(repo.insertIntent).mockResolvedValue(
+      intent({ id: 'intent-2' }),
+    );
+
+    expect(await escalateIntent(db, 'intent-1', now)).toBe('person_escalated');
+
+    const [, values] = vi.mocked(repo.insertIntent).mock.calls[0] ?? [];
+    expect(values?.audience).toEqual({ roles: ['owner'] });
+    // A new intent, never a second delivery on the old one — and prefixed so it
+    // can never escalate in turn.
+    expect(values?.dedupeKey).toBe('escalation:intent-1:0');
+    expect(values?.priority).toBe('critical');
+  });
+
+  it('waits for the policy\u2019s own patience budget before handing over', async () => {
+    arrangeAwake();
+    const sent = delivery({
+      id: 'del-1',
+      status: 'sent',
+      channel: 'push',
+      // 20 minutes ago: past the 10-minute critical deadline, but nowhere near
+      // the policy's 240-minute budget.
+      sentAt: new Date('2026-08-19T11:40:00Z'),
+    });
+    vi.mocked(repo.getIntent).mockResolvedValue(
+      intent({ priority: 'critical', escalationState: 'channel_fallback' }),
+    );
+    vi.mocked(repo.intentHasSignal).mockResolvedValue(false);
+    vi.mocked(repo.listDeliveriesForIntent).mockResolvedValue([sent]);
+    vi.mocked(repo.advanceEscalationState).mockResolvedValue(true);
+    vi.mocked(repo.listEnabledEscalationPolicies).mockResolvedValue([
+      {
+        id: 'pol-1',
+        type: 'member_pending_approval',
+        afterMinutes: 240,
+        escalateToRole: 'owner',
+        escalateToUserId: null,
+        enabled: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ]);
+    vi.mocked(repo.insertIntent).mockResolvedValue(
+      intent({ id: 'intent-2' }),
+    );
+
+    await escalateIntent(db, 'intent-1', now);
+
+    // The policy is not due, so the hardcoded adult fallback carries it — the
+    // point of the fallback is that a critical event still reaches somebody.
+    const [, values] = vi.mocked(repo.insertIntent).mock.calls[0] ?? [];
+    expect(values?.audience).toEqual({ roles: [...ESCALATION_FALLBACK_ROLES] });
   });
 });
 

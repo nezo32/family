@@ -78,8 +78,7 @@ export const FAMILY_RU = {
 /* Counted phrases                                                             */
 /* -------------------------------------------------------------------------- */
 
-export const memberCount = (n: number): string =>
-  pluralize(n, PLURALS.member);
+export const memberCount = (n: number): string => pluralize(n, PLURALS.member);
 export const choreCount = (n: number): string => pluralize(n, PLURALS.chore);
 export const pointCount = (n: number): string => pluralize(n, PLURALS.point);
 export const dayCount = (n: number): string => pluralize(n, PLURALS.day);

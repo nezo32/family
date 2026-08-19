@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { Db } from '../../core/db.js';
@@ -312,8 +312,14 @@ describe.skipIf(!TEST_DATABASE_URL)('ShoppingService against Postgres', () => {
 
   afterAll(async () => {
     if (!TEST_DATABASE_URL) return;
+    // Clean up by *owner*, not by the one shared list id: individual tests
+    // create their own lists to stay isolated, and a teardown that only knows
+    // about `listId` leaves rows behind that then block the user delete with a
+    // foreign-key violation — a failure that looks nothing like its cause.
+    const testUserIds = [actor.id, shopper.id];
+    await db.delete(shoppingItems).where(inArray(shoppingItems.requestedById, testUserIds));
     await db.delete(shoppingItems).where(eq(shoppingItems.listId, listId));
-    await db.delete(shoppingLists).where(eq(shoppingLists.id, listId));
+    await db.delete(shoppingLists).where(inArray(shoppingLists.createdById, testUserIds));
     await db.delete(productCatalog).where(sql`${productCatalog.name} like 'тест-%'`);
     await db.delete(users).where(eq(users.id, actor.id));
     await db.delete(users).where(eq(users.id, shopper.id));
@@ -424,8 +430,13 @@ describe.skipIf(!TEST_DATABASE_URL)('ShoppingService against Postgres', () => {
   it('raises an urgent-item notification only while somebody is shopping', async () => {
     notified.length = 0;
 
-    // Nobody has bought anything on this list yet in the last hour.
-    const quiet = await service.addItem(actor, listId, {
+    // Its own list, deliberately. The premise below is "nobody has bought
+    // anything here recently", and an earlier test in this file buys an item on
+    // the shared `listId` -- so on the shared list this passed in isolation and
+    // failed in file order, which is the worst way for a test to be wrong.
+    const ownList = await service.createList(actor, { name: `Тест-срочное ${randomUUID()}` });
+
+    const quiet = await service.addItem(actor, ownList.id, {
       name: 'тест-соль',
       isUrgent: true,
       clientId: randomUUID(),
@@ -435,7 +446,7 @@ describe.skipIf(!TEST_DATABASE_URL)('ShoppingService against Postgres', () => {
     // Now somebody ticks something off: the trip is live.
     await service.toggleItem(shopper, quiet.item.id, { bought: true });
 
-    await service.addItem(actor, listId, {
+    await service.addItem(actor, ownList.id, {
       name: 'тест-перец',
       isUrgent: true,
       clientId: randomUUID(),

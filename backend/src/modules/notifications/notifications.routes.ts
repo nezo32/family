@@ -91,7 +91,9 @@ const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
       schema: {
         tags: ['notifications'],
         summary: 'In-app notification inbox (the bell)',
-        querystring: cursorPaginationSchema.extend({ unreadOnly: queryBooleanSchema.default(false) }),
+        querystring: cursorPaginationSchema.extend({
+          unreadOnly: queryBooleanSchema.default(false),
+        }),
         response: { 200: paginatedSchema(inAppNotificationSchema) },
       },
     },
