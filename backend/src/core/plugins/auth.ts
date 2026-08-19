@@ -105,6 +105,14 @@ export const authPlugin = fp(
     app.decorateRequest('scope', null);
 
     app.addHook('onRequest', async (request) => {
+      /**
+       * An unmatched URL has no route and therefore no access config. Without
+       * this guard the deny-by-default branch below would turn every 404 into a
+       * 403, which both leaks nothing useful and directly contradicts D4's rule
+       * that a missing resource must look missing.
+       */
+      if (request.is404) return;
+
       const access = accessConfigOf(request);
       if (access.public) return;
 

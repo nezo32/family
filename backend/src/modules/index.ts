@@ -9,21 +9,23 @@ import type { FastifyPluginAsync } from 'fastify';
  * registration order.
  *
  * Owned by the lead. Module agents write their own `*.routes.ts`; the lead
- * uncomments the corresponding line here as each module lands, so that a
+ * enables the corresponding line here as each module lands, so that a
  * half-finished module never breaks everyone else's typecheck.
  */
 
 type ModuleLoader = () => Promise<{ default: FastifyPluginAsync }>;
 
 const MODULE_LOADERS: ModuleLoader[] = [
-  // () => import('./identity/auth.routes.js'),
-  // () => import('./identity/users.routes.js'),
+  () => import('./identity/auth.routes.js'),
+  () => import('./identity/oauth/oauth.routes.js'),
+  () => import('./identity/users.routes.js'),
+  () => import('./goals/goals.routes.js'),
+  () => import('./shopping/shopping.routes.js'),
+  () => import('./wall/wall.routes.js'),
+  // Enabled as each module lands:
   // () => import('./tasks/tasks.routes.js'),
   // () => import('./events/events.routes.js'),
   // () => import('./chores/chores.routes.js'),
-  // () => import('./goals/goals.routes.js'),
-  // () => import('./shopping/shopping.routes.js'),
-  // () => import('./wall/wall.routes.js'),
   // () => import('./notifications/notifications.routes.js'),
   // () => import('./dashboard/dashboard.routes.js'),
 ];

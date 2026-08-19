@@ -25,10 +25,11 @@
     "resolveJsonModule": true,
     "allowImportingTsExtensions": false,
 
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["src/*"]
-    }
+    // No path aliases on purpose. `tsc` does not rewrite aliases at emit and
+    // there is no `imports` field or tsc-alias in the build, so an aliased
+    // import would compile cleanly and then fail with ERR_MODULE_NOT_FOUND
+    // inside the container only. Backend code uses relative imports with the
+    // explicit `.js` extension (NodeNext).
   },
   "include": ["src/**/*.ts", "scripts/**/*.ts", "drizzle.config.ts", "vitest.config.ts", "eslint.config.js"],
   "exclude": ["node_modules", "dist"]

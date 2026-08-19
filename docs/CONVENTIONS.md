@@ -30,7 +30,13 @@ Read together with `docs/DECISIONS.md` (binding) and `docs/PLAN.md` (context).
 5. ESM only. Relative imports inside a package **must** carry the `.js`
    extension in `backend/` and `packages/shared/` (NodeNext resolution).
    `frontend/` uses bundler resolution — no extension there.
-6. Path alias `@/` maps to `src/` in both `backend` and `frontend`.
+6. **Import style differs by package, deliberately:**
+   - `backend/` and `packages/shared/` — **relative imports with an explicit
+     `.js` extension**, and **no path aliases**. `tsc` does not rewrite aliases
+     at emit, so an aliased import compiles fine and then dies with
+     `ERR_MODULE_NOT_FOUND` inside the production container only. The alias is
+     removed from `backend/tsconfig.json` so this fails at compile time instead.
+   - `frontend/` — `@/` maps to `src/`; Vite resolves it at build time.
 
 ## Backend conventions
 
@@ -50,6 +56,11 @@ Read together with `docs/DECISIONS.md` (binding) and `docs/PLAN.md` (context).
 - Every route declares a zod `schema` (body/params/querystring/response) so
   OpenAPI is generated automatically.
 - Every route declares **either** a permission guard **or** `config: { public: true }`.
+- **A bodyless `POST` arrives as `null`, not `undefined`.** Optional request
+  bodies must therefore be `.nullish()`, never `.optional()`, or Fastify
+  rejects a legitimate empty POST with a validation error.
+- Do not turn a missing resource into a `403`. Outside the caller's read scope
+  the answer is `404` (D4) — a `403` confirms the row exists.
 
 ## Frontend conventions
 
