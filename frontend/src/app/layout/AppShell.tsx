@@ -3,6 +3,8 @@ import { Outlet, useLocation, useNavigation } from 'react-router-dom';
 import { LoadingScreen } from '@/shared/components/LoadingScreen';
 import { setFamilyTimeZone } from '@/shared/lib/format';
 import { useMe } from '@/shared/auth/use-me';
+import { InstallPrompt } from '@/features/auth/components/InstallPrompt';
+import { useShoppingSync } from '@/features/shopping/hooks';
 import { BottomTabBar } from './BottomTabBar';
 import { DesktopSidebar } from './DesktopSidebar';
 import { TopAppBar } from './TopAppBar';
@@ -29,6 +31,16 @@ export function AppShell() {
   const { data: me } = useMe();
   const positions = useRef(new Map<string, number>());
   const previousKey = useRef<string | null>(null);
+
+  /**
+   * The offline outbox drains from here, not from the shopping screen. iOS has
+   * no Background Sync, so the only moments our code runs are `online` and the
+   * app coming to the foreground — and the family member who added milk on the
+   * bus will very often reopen the app on Сегодня, not on Покупки. Started here
+   * the queue flushes on any tab; started in the feature it would sit unsent
+   * until somebody happened to open the shopping list.
+   */
+  useShoppingSync();
 
   // Times and dates are rendered in the family timezone, not the device one (D2).
   useEffect(() => {
@@ -59,6 +71,14 @@ export function AppShell() {
           aria-busy={navigation.state === 'loading'}
         >
           <div className="mx-auto w-full max-w-3xl xl:max-w-5xl">
+            {/*
+              Self-suppressing: nothing renders when already installed, when the
+              user has not engaged yet, or for two weeks after a dismissal. It
+              lives in the shell because push on iOS is unreachable until the
+              app is on the Home Screen, so the prompt has to be able to appear
+              wherever the user happens to be.
+            */}
+            <InstallPrompt className="mb-4" />
             <Suspense fallback={<LoadingScreen />}>
               <Outlet />
             </Suspense>

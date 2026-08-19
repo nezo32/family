@@ -6,7 +6,6 @@ import {
   dispatchIntent,
   escalateIntent,
   runPushHealthCheck,
-  runWeeklyDigest,
 } from './notifications.service.js';
 
 /**
@@ -88,14 +87,13 @@ export function registerNotificationJobs(): void {
   });
 
   /**
-   * Hourly tick; the per-user weekday/time filtering happens in the handler
-   * against each user's own timezone, so one cron entry serves a family spread
-   * across timezones.
+   * `scheduler.weekly-digest` is deliberately NOT registered here. The dashboard
+   * module owns it (`dashboard.jobs.ts`): its send-once claim is keyed on the
+   * ISO week rather than a date plus a 23-hour window, so editing your preferred
+   * weekday cannot produce two digests in one week, and a worker that misses a
+   * tick does not silently skip the week. `registerJobHandler` throws on
+   * duplicates, so registering it in both places would kill the worker at boot.
    */
-  registerJobHandler('scheduler.weekly-digest', async () => {
-    const sent = await runWeeklyDigest(getDb());
-    if (sent > 0) logger.info({ sent }, 'weekly digests emitted');
-  });
 }
 
 registerNotificationJobs();

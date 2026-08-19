@@ -214,12 +214,7 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
     },
     async (request) =>
       toDetail(
-        await service.updateSeries(
-          getDb(),
-          actorOf(request.auth),
-          request.params.id,
-          request.body,
-        ),
+        await service.updateSeries(getDb(), actorOf(request.auth), request.params.id, request.body),
       ),
   );
 
@@ -322,8 +317,7 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
         response: { 200: eventOccurrenceResponseSchema },
       },
     },
-    async (request) =>
-      service.cancelOccurrence(getDb(), actorOf(request.auth), request.params.id),
+    async (request) => service.cancelOccurrence(getDb(), actorOf(request.auth), request.params.id),
   );
 
   app.put(
@@ -369,8 +363,7 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
         response: { 200: eventTodayResponseSchema },
       },
     },
-    async (request) =>
-      service.getToday(getDb(), actorOf(request.auth), request.query.timezone),
+    async (request) => service.getToday(getDb(), actorOf(request.auth), request.query.timezone),
   );
 
   /* ---------------------------- the ICS feed ------------------------------ */
@@ -445,7 +438,10 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
       reply.header('Content-Disposition', 'inline; filename="family.ics"');
 
       const ifNoneMatch = request.headers['if-none-match'];
-      if (typeof ifNoneMatch === 'string' && ifNoneMatch.split(',').some((t) => t.trim() === feed.etag)) {
+      if (
+        typeof ifNoneMatch === 'string' &&
+        ifNoneMatch.split(',').some((t) => t.trim() === feed.etag)
+      ) {
         return reply.code(304).send();
       }
 

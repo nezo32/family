@@ -3,7 +3,6 @@ import {
   asc,
   desc,
   eq,
-  exists,
   gt,
   gte,
   inArray,
@@ -20,6 +19,13 @@ import type { EventSourceKind, Rsvp } from '@family/shared';
 
 import type { Executor } from '../../core/db.js';
 import { internal } from '../../core/errors.js';
+import {
+  materializeThroughPort,
+  type MaterializeOptions,
+  type MaterializeResult,
+  type MaterializerPort,
+  type SeriesSnapshot,
+} from '../../core/recurrence/materializer.js';
 import { auditLog, familySettings } from '../identity/identity.schema.js';
 import { users } from '../identity/users.schema.js';
 import {
@@ -173,11 +179,11 @@ export function occurrenceVisibleTo(viewerId: string): SQL {
     eq(eventSeries.createdById, viewerId),
     and(
       eq(eventSeries.visibility, 'restricted'),
-      exists(
-        sql`select 1 from ${eventAttendees}
-            where ${eventAttendees.occurrenceId} = ${eventOccurrences.id}
-              and ${eventAttendees.userId} = ${viewerId}`,
-      ),
+      sql`exists (
+        select 1 from ${eventAttendees}
+        where ${eventAttendees.occurrenceId} = ${eventOccurrences.id}
+          and ${eventAttendees.userId} = ${viewerId}
+      )`,
     ),
   );
   if (clause === undefined) throw internal('occurrenceVisibleTo produced an empty predicate');
@@ -191,12 +197,12 @@ export function seriesVisibleTo(viewerId: string): SQL {
     eq(eventSeries.createdById, viewerId),
     and(
       eq(eventSeries.visibility, 'restricted'),
-      exists(
-        sql`select 1 from ${eventOccurrences}
-            join ${eventAttendees} on ${eventAttendees.occurrenceId} = ${eventOccurrences.id}
-            where ${eventOccurrences.seriesId} = ${eventSeries.id}
-              and ${eventAttendees.userId} = ${viewerId}`,
-      ),
+      sql`exists (
+        select 1 from ${eventOccurrences}
+        join ${eventAttendees} on ${eventAttendees.occurrenceId} = ${eventOccurrences.id}
+        where ${eventOccurrences.seriesId} = ${eventSeries.id}
+          and ${eventAttendees.userId} = ${viewerId}
+      )`,
     ),
   );
   if (clause === undefined) throw internal('seriesVisibleTo produced an empty predicate');
@@ -212,10 +218,7 @@ export function seriesVisibleTo(viewerId: string): SQL {
  * anchor zone inherits this, and the ICS feed labels itself with it.
  */
 export async function getFamilyTimezone(x: Executor): Promise<string> {
-  const [row] = await x
-    .select({ timezone: familySettings.timezone })
-    .from(familySettings)
-    .limit(1);
+  const [row] = await x.select({ timezone: familySettings.timezone }).from(familySettings).limit(1);
   return row?.timezone ?? 'Europe/Moscow';
 }
 
@@ -452,11 +455,11 @@ export async function listOccurrencesInLocalRange(
   }
   if (filters.attendeeId !== undefined) {
     where.push(
-      exists(
-        sql`select 1 from ${eventAttendees}
-            where ${eventAttendees.occurrenceId} = ${eventOccurrences.id}
-              and ${eventAttendees.userId} = ${filters.attendeeId}`,
-      ),
+      sql`exists (
+        select 1 from ${eventAttendees}
+        where ${eventAttendees.occurrenceId} = ${eventOccurrences.id}
+          and ${eventAttendees.userId} = ${filters.attendeeId}
+      )`,
     );
   }
 
@@ -493,11 +496,11 @@ export async function listOccurrences(
   }
   if (query.attendeeId !== undefined) {
     where.push(
-      exists(
-        sql`select 1 from ${eventAttendees}
-            where ${eventAttendees.occurrenceId} = ${eventOccurrences.id}
-              and ${eventAttendees.userId} = ${query.attendeeId}`,
-      ),
+      sql`exists (
+        select 1 from ${eventAttendees}
+        where ${eventAttendees.occurrenceId} = ${eventOccurrences.id}
+          and ${eventAttendees.userId} = ${query.attendeeId}
+      )`,
     );
   }
   if (query.cursor !== undefined) {
@@ -616,6 +619,143 @@ export async function cancelFutureOccurrences(
     )
     .returning({ id: eventOccurrences.id });
   return rows.length;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Materialization                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A typed Drizzle implementation of the core {@link MaterializerPort}.
+ *
+ * The algorithm — the watermark, the `ON CONFLICT DO NOTHING` idempotency, the
+ * exception protection — is entirely the core one; only the four SQL statements
+ * are ours. Two reasons to supply them:
+ *
+ * 1. **It is the seam the core module was built for.** `materializeThroughPort`
+ *    exists precisely so a domain can bring its own persistence.
+ *
+ * 2. **`createMaterializerPort` cannot bind a `Date`.** It composes raw
+ *    `sql` fragments and hands `Date` objects to `db.execute()`; drizzle-orm
+ *    0.44 passes an untyped param straight through, and postgres.js's Bind
+ *    step then throws `The "string" argument must be of type string ... Received
+ *    an instance of Date`. Going through the query builder means the column
+ *    types are known, so `timestamptz` values are serialised properly.
+ *    **Flagged for the lead** — `task_occurrences` will hit the identical bug
+ *    the moment the tasks module materializes against a real database.
+ */
+export function createEventMaterializerPort(x: Executor): MaterializerPort {
+  return {
+    async lockSeries(seriesId: string): Promise<SeriesSnapshot | null> {
+      const row = await lockSeriesById(x, seriesId);
+      if (row === null) return null;
+      return {
+        id: row.id,
+        rule: {
+          rrule: row.rrule,
+          dtstartLocal: row.dtstartLocal,
+          timezone: row.timezone,
+          rdatesLocal: row.rdatesLocal,
+          exdatesLocal: row.exdatesLocal,
+        },
+        // For events the wall-clock offset from the start is the duration.
+        offsetMinutes: row.durationMinutes,
+        seriesEndsAt: row.seriesEndsAt,
+        materializedThrough: row.materializedThrough,
+        archivedAt: row.archivedAt,
+      };
+    },
+
+    async insertOccurrences(occurrences, extras): Promise<number> {
+      if (occurrences.length === 0) return 0;
+      // Events have no frozen per-occurrence columns to decorate (that is the
+      // tasks module's `assignee_id` / `assigned_via` pair, D5), so a decorator
+      // here would be silently dropped. Refuse instead.
+      if (extras.some((extra) => Object.keys(extra).length > 0)) {
+        throw internal('The event materializer port does not support decorators');
+      }
+
+      let inserted = 0;
+      const rows = occurrences.map((o) => ({
+        seriesId: o.seriesId,
+        occurrenceKey: o.occurrenceKey,
+        startsAt: o.startsAt,
+        endsAt: o.derivedAt,
+        localDate: o.localDate,
+        startsLocal: o.startsLocal,
+      }));
+
+      for (const batch of chunk(rows, INSERT_CHUNK)) {
+        // The whole idempotency guarantee: a key that already exists is left
+        // exactly as the user last edited it (§2).
+        const written = await x
+          .insert(eventOccurrences)
+          .values(batch)
+          .onConflictDoNothing({
+            target: [eventOccurrences.seriesId, eventOccurrences.occurrenceKey],
+          })
+          .returning({ id: eventOccurrences.id });
+        inserted += written.length;
+      }
+      return inserted;
+    },
+
+    async advanceWatermark(seriesId: string, through: Date): Promise<void> {
+      // Conditional, so the watermark only ever moves forward even if two
+      // passes race.
+      await x
+        .update(eventSeries)
+        .set({ materializedThrough: through })
+        .where(
+          and(
+            eq(eventSeries.id, seriesId),
+            or(
+              isNull(eventSeries.materializedThrough),
+              lt(eventSeries.materializedThrough, through),
+            ),
+          ),
+        );
+    },
+
+    async listDueSeriesIds(horizon: Date, limit: number): Promise<string[]> {
+      const rows = await x
+        .select({ id: eventSeries.id })
+        .from(eventSeries)
+        .where(
+          and(
+            isNull(eventSeries.archivedAt),
+            isNotNull(eventSeries.rrule),
+            or(
+              isNull(eventSeries.materializedThrough),
+              lt(eventSeries.materializedThrough, horizon),
+            ),
+            or(
+              isNull(eventSeries.seriesEndsAt),
+              isNull(eventSeries.materializedThrough),
+              gt(eventSeries.seriesEndsAt, eventSeries.materializedThrough),
+            ),
+          ),
+        )
+        .orderBy(asc(sql`${eventSeries.materializedThrough} nulls first`), asc(eventSeries.id))
+        .limit(limit);
+      return rows.map((r) => r.id);
+    },
+  };
+}
+
+/**
+ * Materialize one event series through the port above.
+ *
+ * Takes the caller's `Executor`, which is how "eagerly on every series write,
+ * inside the same transaction as the write" is expressed: pass the open `Tx`
+ * and the occurrences commit or roll back with the series row.
+ */
+export function materializeEventSeries(
+  x: Executor,
+  seriesId: string,
+  options: MaterializeOptions = {},
+): Promise<MaterializeResult> {
+  return materializeThroughPort(createEventMaterializerPort(x), seriesId, options);
 }
 
 /* -------------------------------------------------------------------------- */

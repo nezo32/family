@@ -39,6 +39,7 @@ import {
   type OccurrenceDecorator,
 } from '../../core/recurrence/materializer.js';
 import { PointsService } from '../chores/points.service.js';
+import { loadRotationSnapshot } from '../chores/chores.service.js';
 import { RotationRun, type RotationSnapshot } from '../chores/rotation.js';
 import { emitIntent } from '../notifications/notifications.service.js';
 import { deleteCommentsFor } from '../wall/comments.service.js';
@@ -441,12 +442,10 @@ export interface SwapPort {
  * them, so they are answered directly rather than left unimplemented — skipping
  * the §9 validation would be worse than the coupling.
  *
- * `loadSnapshot` returns `null`: the debt query it needs
- * (`loadRotationRoster`) lives in the chores **repository**, and reproducing it
- * here would duplicate the fairness maths — the one thing that must have
- * exactly one implementation. Until the chores module exposes it through a
- * service, a rotated series falls back to `defaultAssigneeId`, and the
- * fallback is visible in `assigned_via`.
+ * `loadSnapshot` delegates to `chores.service.loadRotationSnapshot`, so the
+ * fairness maths keeps exactly one implementation. A rotation id that no longer
+ * resolves yields `null` and the series falls back to `defaultAssigneeId` —
+ * visible in `assigned_via`, never silent.
  */
 export function createDefaultRotationPort(): RotationPort {
   return {
@@ -456,8 +455,13 @@ export function createDefaultRotationPort(): RotationPort {
       );
       return rows.length > 0;
     },
-    loadSnapshot() {
-      return Promise.resolve(null);
+    loadSnapshot(ex, rotationId, options) {
+      // Delegates to the chores **service**, not its repository (D8). Tasks
+      // still drives `RotationRun` itself, because `committed` debt accumulates
+      // across the occurrences of one materialization pass and only the
+      // materializer knows that order — but the fairness query that produces
+      // the snapshot has exactly one implementation, over in chores.
+      return loadRotationSnapshot(ex, rotationId, options);
     },
     async saveCursor(ex, rotationId, cursor) {
       await ex.execute(sql`update rotations set cursor = ${cursor} where id = ${rotationId}`);

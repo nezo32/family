@@ -200,6 +200,15 @@ export class ChoresService implements RotationPort {
     return (await repo.findRotationById(ex, rotationId)) !== undefined;
   }
 
+  /** @see loadRotationSnapshot */
+  async loadRotationSnapshot(
+    ex: Executor,
+    rotationId: string,
+    options: { now: Date; through?: Date; windowDays?: number },
+  ): Promise<RotationSnapshot | null> {
+    return loadRotationSnapshot(ex, rotationId, options);
+  }
+
   async openAssignmentRun(
     ex: Executor,
     rotationId: string,
@@ -814,3 +823,40 @@ export function toKudosResponse(row: KudosRow): KudosResponse {
 
 /** Re-exported for the tasks module so it never has to reach into `rotation.ts`. */
 export type { RotationCandidate, RotationSnapshot };
+
+/**
+ * Build the fairness snapshot for a rotation.
+ *
+ * This exists so the **tasks** module can drive `RotationRun` itself during
+ * materialization — it has to, because `committed` debt accumulates across
+ * the occurrences of a single pass and only the materializer knows that
+ * order. Tasks may not reach into `chores.repository` (D8), and duplicating
+ * `loadRotationRoster` there would fork the fairness maths, which is the one
+ * calculation that must have exactly one implementation.
+ *
+ * Returns `null` for an unknown rotation rather than throwing: `rotation_id`
+ * carries no foreign key (a real FK would make the tasks/chores import cycle
+ * bidirectional), so a dangling id is a data condition the caller handles,
+ * not an exception.
+ */
+export async function loadRotationSnapshot(
+  ex: Executor,
+  rotationId: string,
+  options: { now: Date; through?: Date; windowDays?: number },
+): Promise<RotationSnapshot | null> {
+  const rotation = await repo.findRotationById(ex, rotationId);
+  if (!rotation) return null;
+
+  const { now } = options;
+  const through =
+    options.through ?? new Date(now.getTime() + DEFAULT_RUN_HORIZON_DAYS * MS_PER_DAY);
+
+  const members = await repo.loadRotationRoster(ex, rotationId, {
+    now,
+    through,
+    windowDays: options.windowDays ?? rotation.balanceWindowDays,
+  });
+
+  return { strategy: rotation.strategy, cursor: rotation.cursor, members };
+}
+

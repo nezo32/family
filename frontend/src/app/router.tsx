@@ -82,22 +82,34 @@ const authenticatedRoutes: RouteObject[] = [
   {
     path: ROUTES.tasks,
     element: <RequirePermission perm="task:read" />,
-    children: [{ index: true, lazy: page(() => import('@/features/tasks/pages/TasksPage')) }],
+    children: [
+      { index: true, lazy: page(() => import('@/features/tasks/pages/TasksPage')) },
+      { path: ':taskId', lazy: page(() => import('@/features/tasks/pages/TaskDetailPage')) },
+    ],
   },
   {
     path: ROUTES.calendar,
     element: <RequirePermission perm="event:read" />,
-    children: [{ index: true, lazy: page(() => import('@/features/calendar/pages/CalendarPage')) }],
+    children: [
+      { index: true, lazy: page(() => import('@/features/calendar/pages/CalendarPage')) },
+      { path: ':eventId', lazy: page(() => import('@/features/calendar/pages/EventDetailPage')) },
+    ],
   },
   {
     path: ROUTES.goals,
     element: <RequirePermission perm="goal:read" />,
-    children: [{ index: true, lazy: page(() => import('@/features/goals/pages/GoalsPage')) }],
+    children: [
+      { index: true, lazy: page(() => import('@/features/goals/pages/GoalsPage')) },
+      { path: ':goalId', lazy: page(() => import('@/features/goals/pages/GoalDetailPage')) },
+    ],
   },
   {
     path: ROUTES.shopping,
     element: <RequirePermission perm="shopping:read" />,
-    children: [{ index: true, lazy: page(() => import('@/features/shopping/pages/ShoppingPage')) }],
+    children: [
+      { index: true, lazy: page(() => import('@/features/shopping/pages/ShoppingPage')) },
+      { path: ':listId', lazy: page(() => import('@/features/shopping/pages/ListPage')) },
+    ],
   },
   {
     path: ROUTES.wall,
@@ -149,7 +161,16 @@ const topLevelRoutes: RouteObject[] = [
       {
         path: ROUTES.login,
         element: <RedirectIfAuthenticated />,
-        children: [{ index: true, lazy: page(() => import('@/features/auth/pages/LoginPage')) }],
+        children: [
+          { index: true, lazy: page(() => import('@/features/auth/pages/LoginPage')) },
+        ],
+      },
+      {
+        path: ROUTES.register,
+        element: <RedirectIfAuthenticated />,
+        children: [
+          { index: true, lazy: page(() => import('@/features/auth/pages/RegisterPage')) },
+        ],
       },
       {
         path: ROUTES.authPending,

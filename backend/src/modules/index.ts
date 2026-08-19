@@ -22,12 +22,11 @@ const MODULE_LOADERS: ModuleLoader[] = [
   () => import('./goals/goals.routes.js'),
   () => import('./shopping/shopping.routes.js'),
   () => import('./wall/wall.routes.js'),
-  // Enabled as each module lands:
-  // () => import('./tasks/tasks.routes.js'),
-  // () => import('./events/events.routes.js'),
+  () => import('./tasks/tasks.routes.js'),
+  () => import('./events/events.routes.js'),
   () => import('./chores/chores.routes.js'),
   () => import('./notifications/notifications.routes.js'),
-  // () => import('./dashboard/dashboard.routes.js'),
+  () => import('./dashboard/dashboard.routes.js'),
 ];
 
 export const registerModules: FastifyPluginAsync = async (app) => {

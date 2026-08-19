@@ -20,7 +20,6 @@ import type { AuthContext } from '../../core/auth/context.js';
 import type { Db, Executor } from '../../core/db.js';
 import { badRequest, conflict, forbidden, notFound } from '../../core/errors.js';
 import { recurrenceEngine, type SeriesRule } from '../../core/recurrence/engine.js';
-import { EVENT_TARGET, materializeSeries } from '../../core/recurrence/materializer.js';
 import * as repo from './events.repository.js';
 import type { EventOccurrenceRow, EventSeriesRow } from './events.schema.js';
 import {
@@ -397,7 +396,7 @@ async function materializeAndInvite(
   attendeeIds: readonly string[],
   fromKey?: string,
 ): Promise<void> {
-  await materializeSeries(x, EVENT_TARGET, seriesId);
+  await repo.materializeEventSeries(x, seriesId);
   if (attendeeIds.length === 0) return;
   const occurrenceIds = await repo.listOccurrenceIdsOfSeries(x, seriesId, fromKey);
   await repo.addAttendees(x, occurrenceIds, attendeeIds);
@@ -531,14 +530,10 @@ async function applyThisOnly(
   if (input.isAllDay !== undefined) patch.isAllDayOverride = input.isAllDay;
 
   if (input.durationMinutes !== undefined || input.isAllDay !== undefined) {
-    const allDay = input.isAllDay ?? (target.occurrence.isAllDayOverride ?? series.isAllDay);
+    const allDay = input.isAllDay ?? target.occurrence.isAllDayOverride ?? series.isAllDay;
     const requested = input.durationMinutes ?? series.durationMinutes;
     const minutes = allDay ? allDayDurationMinutes(requested) : requested;
-    const times = resolveOccurrenceTimes(
-      target.occurrence.startsLocal,
-      minutes,
-      series.timezone,
-    );
+    const times = resolveOccurrenceTimes(target.occurrence.startsLocal, minutes, series.timezone);
     patch.endsAt = times.endsAt;
   }
 
@@ -700,8 +695,7 @@ async function splitSeries(
     supersedesSeriesId: series.id,
   });
 
-  const attendeeIds =
-    input.attendeeIds ?? (await repo.listSeriesAttendeeIds(x, series.id));
+  const attendeeIds = input.attendeeIds ?? (await repo.listSeriesAttendeeIds(x, series.id));
   await materializeAndInvite(x, successor.id, attendeeIds);
 
   const fresh = (await repo.findSeriesById(x, successor.id)) ?? successor;
@@ -759,11 +753,7 @@ export async function deleteSeries(
           rrule: truncated,
           seriesEndsAt: recurrenceEngine.seriesEndsAt({ ...rule, rrule: truncated }),
         });
-        await repo.deleteFutureScheduledOccurrences(
-          tx,
-          series.id,
-          anchor.occurrence.occurrenceKey,
-        );
+        await repo.deleteFutureScheduledOccurrences(tx, series.id, anchor.occurrence.occurrenceKey);
         return { archived: false, deleted: false };
       }
 
@@ -829,7 +819,7 @@ export async function updateOccurrence(
     }
 
     const isAllDay =
-      (input.isAllDayOverride ?? row.occurrence.isAllDayOverride) ?? row.series.isAllDay;
+      input.isAllDayOverride ?? row.occurrence.isAllDayOverride ?? row.series.isAllDay;
     const movedTo = input.startsLocal ?? row.occurrence.startsLocal;
     const startLocal = isAllDay ? toMidnight(movedTo) : movedTo;
     const requested = input.durationMinutes ?? row.series.durationMinutes;
@@ -849,12 +839,7 @@ export async function updateOccurrence(
 
     const updated = await repo.updateOccurrenceRow(tx, id, patch);
     const attendees = await repo.loadAttendees(tx, [id]);
-    return toOccurrenceResponse(
-      updated,
-      row.series,
-      attendees.get(id) ?? [],
-      actor.userId,
-    );
+    return toOccurrenceResponse(updated, row.series, attendees.get(id) ?? [], actor.userId);
   });
 }
 
@@ -917,8 +902,7 @@ export async function getToday(
   actor: AuthContext,
   timezoneOverride?: string,
 ): Promise<EventTodayResponse> {
-  const timezone =
-    timezoneOverride ?? actor.timezone ?? (await repo.getFamilyTimezone(db));
+  const timezone = timezoneOverride ?? actor.timezone ?? (await repo.getFamilyTimezone(db));
   const today = localDateIn(new Date(), timezone);
   const tomorrow = addLocalDays(today, 1);
   const horizon = addLocalDays(today, 30);

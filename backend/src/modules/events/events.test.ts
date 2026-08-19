@@ -790,15 +790,36 @@ describe('visibility', () => {
 /* -------------------------------------------------------------------------- */
 
 describe('route registration', () => {
-  it('registers every route with an access declaration and no path conflicts', async () => {
-    const { buildApp } = await import('../../app.js');
+  /**
+   * A bare instance carrying only the plugins this suite is about: the access
+   * declarations and the error mapping. `buildApp()` already registers the
+   * events module through `modules/index.ts`, so registering it again there
+   * would collide — and its global rate limiter needs a Redis this suite has no
+   * business depending on.
+   */
+  async function bareApp() {
+    const { fastify } = await import('fastify');
+    const { serializerCompiler, validatorCompiler } = await import('fastify-type-provider-zod');
+    const { errorHandlerPlugin } = await import('../../core/plugins/error-handler.js');
+    const { authPlugin } = await import('../../core/plugins/auth.js');
     const { default: eventsRoutes } = await import('./events.routes.js');
 
+    const app = fastify({ logger: false });
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+    await app.register(errorHandlerPlugin);
+    await app.register(authPlugin);
+    return { app, eventsRoutes };
+  }
+
+  it('is wired into the module registry with no path conflicts', async () => {
+    const { buildApp } = await import('../../app.js');
+
+    // `onReady` in core/plugins/auth.ts throws if any registered route declares
+    // neither a permission guard nor `public: true` (D4 deny-by-default), and
+    // find-my-way throws on a duplicate path — so a clean `ready()` proves both
+    // for the whole app, this module included.
     const app = await buildApp();
-    // `onReady` in core/plugins/auth.ts throws if any route declares neither a
-    // permission guard nor `public: true` (D4 deny-by-default), and find-my-way
-    // throws on a duplicate path — so a clean `ready()` proves both.
-    await app.register(eventsRoutes, { prefix: '/api' });
     await app.ready();
 
     const routes = app.printRoutes({ commonPrefix: false });
@@ -810,24 +831,29 @@ describe('route registration', () => {
   });
 
   it('declares exactly the guards documented in EVENT_ROUTE_ACCESS', async () => {
-    const { buildApp } = await import('../../app.js');
+    // `onRoute` only fires for routes registered *after* the hook is added, and
+    // `buildApp()` has already registered every module by the time it returns.
+    // So collect the declarations on a bare instance carrying just this plugin —
+    // route registration never runs a handler, so no app plumbing is needed.
+    const { fastify } = await import('fastify');
+    const { serializerCompiler, validatorCompiler } = await import('fastify-type-provider-zod');
     const { default: eventsRoutes } = await import('./events.routes.js');
 
-    const app = await buildApp();
+    const probe = fastify({ logger: false });
+    probe.setValidatorCompiler(validatorCompiler);
+    probe.setSerializerCompiler(serializerCompiler);
+
     const seen = new Map<string, Record<string, unknown>>();
-    app.addHook('onRoute', (route) => {
-      if (!route.url.startsWith('/api/events')) return;
+    probe.addHook('onRoute', (route) => {
       const methods = Array.isArray(route.method) ? route.method : [route.method];
       for (const method of methods) {
         if (method === 'HEAD') continue;
-        seen.set(
-          `${method} ${route.url.replace('/api', '')}`,
-          (route.config ?? {}) as Record<string, unknown>,
-        );
+        seen.set(`${method} ${route.url}`, (route.config ?? {}) as Record<string, unknown>);
       }
     });
-    await app.register(eventsRoutes, { prefix: '/api' });
-    await app.ready();
+
+    await probe.register(eventsRoutes);
+    await probe.ready();
 
     for (const [key, expected] of Object.entries(EVENT_ROUTE_ACCESS)) {
       const config = seen.get(key);
@@ -840,37 +866,27 @@ describe('route registration', () => {
     for (const key of seen.keys()) {
       expect(Object.keys(EVENT_ROUTE_ACCESS)).toContain(key);
     }
-    await app.close();
+    await probe.close();
   });
 
-  it('answers 401 to an unauthenticated caller on a guarded route', async () => {
-    const { buildApp } = await import('../../app.js');
-    const { default: eventsRoutes } = await import('./events.routes.js');
-
-    const app = await buildApp();
+  it('guards every route but the feed, which answers 404 to a bad token', async () => {
+    const { app, eventsRoutes } = await bareApp();
     await app.register(eventsRoutes, { prefix: '/api' });
     await app.ready();
 
-    const response = await app.inject({ method: 'GET', url: '/api/events/series' });
-    expect(response.statusCode).toBe(401);
-    await app.close();
-  });
+    // A guarded route demands a bearer token…
+    const guarded = await app.inject({ method: 'GET', url: '/api/events/series' });
+    expect(guarded.statusCode).toBe(401);
 
-  it('lets the ICS feed past the bearer guard and answers 404 to a bad token', async () => {
-    const { buildApp } = await import('../../app.js');
-    const { default: eventsRoutes } = await import('./events.routes.js');
-
-    const app = await buildApp();
-    await app.register(eventsRoutes, { prefix: '/api' });
-    await app.ready();
-
-    const response = await app.inject({
+    // …while the feed reaches its handler with no Authorization header at all,
+    // and answers 404 — not 401 — to a forged link, so a scanner learns nothing.
+    const feed = await app.inject({
       method: 'GET',
       url: '/api/events/feed.ics?token=obviously-not-a-real-token',
     });
-    // 404, not 401: the route is public (a calendar client cannot send a bearer
-    // token) and a forged link must not confirm that a feed lives here.
-    expect(response.statusCode).toBe(404);
+    expect(feed.statusCode).toBe(404);
+    expect(JSON.parse(feed.payload)).toMatchObject({ error: { code: 'NOT_FOUND' } });
+
     await app.close();
   });
 });

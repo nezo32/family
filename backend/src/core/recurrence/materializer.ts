@@ -1,4 +1,4 @@
-import { sql, type SQLChunk } from 'drizzle-orm';
+import { sql, type SQL, type SQLChunk } from 'drizzle-orm';
 
 import type { Executor } from '../db.js';
 import { AppError } from '../errors.js';
@@ -329,6 +329,25 @@ function chunk<T>(items: readonly T[], size: number): T[][] {
   return out;
 }
 
+/**
+ * Bind a value into a raw `sql` fragment.
+ *
+ * `drizzle-orm@0.44` hands raw-SQL parameters straight to postgres.js without
+ * the per-column encoders a typed query builder would apply, and postgres.js
+ * refuses a JS `Date` in a Bind message — it throws
+ * `The "string" argument must be of type string ... Received an instance of Date`.
+ * Every `timestamptz` in this file therefore goes over the wire as an ISO-8601
+ * string with an explicit cast, which Postgres parses identically.
+ *
+ * Without this the materializer throws on the first insert against a real
+ * database, meaning no task or event occurrence is ever created — the tests
+ * pass because they run against an in-memory port.
+ */
+function bind(value: ExtraColumnValue | Date | null | undefined): SQL {
+  if (value instanceof Date) return sql`${value.toISOString()}::timestamptz`;
+  return sql`${value ?? null}`;
+}
+
 /** The thin Postgres implementation of {@link MaterializerPort}. */
 export function createMaterializerPort(
   exec: Executor,
@@ -393,11 +412,11 @@ export function createMaterializerPort(
           const values: SQLChunk[] = [
             sql`${o.seriesId}`,
             sql`${o.occurrenceKey}`,
-            sql`${o.startsAt}`,
-            sql`${o.derivedAt}`,
+            bind(o.startsAt),
+            bind(o.derivedAt),
             sql`${o.localDate}`,
             sql`${o.startsLocal}`,
-            ...extraColumns.map((name) => sql`${extra[name] ?? null}`),
+            ...extraColumns.map((name) => bind(extra[name])),
           ];
           return sql`(${sql.join(values, sql`, `)})`;
         });
@@ -417,9 +436,9 @@ export function createMaterializerPort(
     async advanceWatermark(seriesId: string, through: Date): Promise<void> {
       await exec.execute(sql`
         update ${seriesTable}
-        set materialized_through = ${through}
+        set materialized_through = ${bind(through)}
         where id = ${seriesId}
-          and (materialized_through is null or materialized_through < ${through})
+          and (materialized_through is null or materialized_through < ${bind(through)})
       `);
     },
 
@@ -429,7 +448,7 @@ export function createMaterializerPort(
         from ${seriesTable}
         where archived_at is null
           and rrule is not null
-          and (materialized_through is null or materialized_through < ${horizon})
+          and (materialized_through is null or materialized_through < ${bind(horizon)})
           and (
             series_ends_at is null
             or materialized_through is null

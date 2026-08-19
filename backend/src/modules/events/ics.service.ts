@@ -55,15 +55,18 @@ export const CRLF = '\r\n';
  * special in the property-name/value separator, and escaping it breaks Outlook.
  */
 export function escapeText(value: string): string {
-  return value
-    .replace(/\\/g, '\\\\')
-    .replace(/;/g, '\\;')
-    .replace(/,/g, '\\,')
-    .replace(/\r\n|\r|\n/g, '\\n')
-    // Control characters are not valid in a TEXT value and are the usual
-    // vehicle for line injection from a user-supplied title. TAB is legal and
-    // is kept; everything else below U+0020, plus DEL, is dropped.
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
+  return (
+    value
+      .replace(/\\/g, '\\\\')
+      .replace(/;/g, '\\;')
+      .replace(/,/g, '\\,')
+      .replace(/\r\n|\r|\n/g, '\\n')
+      // Control characters are not valid in a TEXT value and are the usual
+      // vehicle for line injection from a user-supplied title. TAB is legal and
+      // is kept; everything else below U+0020, plus DEL, is dropped.
+      // eslint-disable-next-line no-control-regex -- dropping them is the point
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+  );
 }
 
 /** True when the buffer ends in an odd run of `\`, i.e. mid-escape-sequence. */
@@ -272,7 +275,11 @@ function alarmLines(event: IcsEvent): string[] {
 }
 
 export function eventLines(event: IcsEvent): string[] {
-  const lines: string[] = ['BEGIN:VEVENT', `UID:${event.uid}`, `DTSTAMP:${formatUtcStamp(event.dtstamp)}`];
+  const lines: string[] = [
+    'BEGIN:VEVENT',
+    `UID:${event.uid}`,
+    `DTSTAMP:${formatUtcStamp(event.dtstamp)}`,
+  ];
 
   if (event.isAllDay) {
     // The whole point: a date range in the family's own calendar, with an

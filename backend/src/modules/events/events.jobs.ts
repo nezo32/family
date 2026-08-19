@@ -113,26 +113,12 @@ export function registerEventJobs(): void {
   });
 
   /**
-   * Every five minutes.
-   *
-   * **Note for the lead:** `scheduler.reminders` is a single queue name shared
-   * with the tasks module ("задача скоро"), and `registerJobHandler` refuses a
-   * duplicate. Whichever module loads second would otherwise crash the worker
-   * at boot, so this registration is guarded and {@link runEventReminders} is
-   * exported. When `tasks.jobs.ts` lands, register `scheduler.reminders` once
-   * in one place and call both sweeps from it.
+   * `scheduler.reminders` is deliberately NOT registered here. Tasks and events
+   * share the one sweep, and `registerJobHandler` refuses a duplicate — the
+   * module that loaded second used to lose the race and silently stop
+   * reminding anyone. `modules/jobs.ts` now registers it once and calls both
+   * sweeps, which is also the only way to guarantee neither is skipped.
    */
-  try {
-    registerJobHandler('scheduler.reminders', async () => {
-      const emitted = await runEventReminders(getDb());
-      if (emitted > 0) logger.info({ emitted }, 'event reminders emitted');
-    });
-  } catch (err) {
-    logger.warn(
-      { err },
-      'scheduler.reminders already has a handler — call runEventReminders() from it',
-    );
-  }
 }
 
 registerEventJobs();

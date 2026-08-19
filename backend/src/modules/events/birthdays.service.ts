@@ -1,6 +1,5 @@
 import type { Db, Executor } from '../../core/db.js';
 import { recurrenceEngine } from '../../core/recurrence/engine.js';
-import { EVENT_TARGET, materializeSeries } from '../../core/recurrence/materializer.js';
 import * as repo from './events.repository.js';
 import type { EventSeriesRow } from './events.schema.js';
 import { localDateIn } from './events.service.js';
@@ -189,7 +188,7 @@ export async function syncBirthdayForUser(
       sourceKind: BIRTHDAY_SOURCE_KIND,
       sourceRef: user.id,
     });
-    await materializeSeries(x, EVENT_TARGET, created.id);
+    await repo.materializeEventSeries(x, created.id);
     return 'created';
   }
 
@@ -216,7 +215,7 @@ export async function syncBirthdayForUser(
       existing.id,
       `${localDateIn(new Date(), timezone)}T00:00:00`,
     );
-    await materializeSeries(x, EVENT_TARGET, existing.id);
+    await repo.materializeEventSeries(x, existing.id);
   }
 
   return 'updated';
