@@ -1,4 +1,5 @@
 export { ConfirmDialog, useConfirm, type ConfirmOptions } from './ConfirmDialog';
+export { EditScopeDialog, type EditScopeStrings } from './EditScopeDialog';
 export { EmptyState } from './EmptyState';
 export { ErrorState } from './ErrorState';
 export { InlineSpinner, LoadingScreen } from './LoadingScreen';

@@ -58,7 +58,7 @@ describe.skipIf(!hasTestDb)('money invariants (integration)', () => {
       },
     });
     expect([200, 201]).toContain(response.statusCode);
-    return (response.json() as { id: string }).id;
+    return (response.json<{ id: string }>()).id;
   }
 
   /** `SUM(delta)` straight off the table — the number the API must agree with. */
@@ -90,7 +90,7 @@ describe.skipIf(!hasTestDb)('money invariants (integration)', () => {
       token: adult.accessToken,
     });
     expectStatus(response, 200);
-    const items = (response.json() as { items: { id: string; currentAmount: number }[] }).items;
+    const items = (response.json<{ items: { id: string; currentAmount: number }[] }>()).items;
     const found = items.find((g) => g.id === goalId);
     if (!found) throw new Error(`goal ${goalId} is not in the list`);
     return found.currentAmount;
@@ -149,7 +149,7 @@ describe.skipIf(!hasTestDb)('money invariants (integration)', () => {
       token: adult.accessToken,
     });
     expectStatus(list, 200);
-    const items = (list.json() as { items: { delta: number }[] }).items;
+    const items = (list.json<{ items: { delta: number }[] }>()).items;
     expect(items.reduce((a, t) => a + t.delta, 0)).toBe(expected);
   });
 
@@ -295,10 +295,10 @@ describe.skipIf(!hasTestDb)('money invariants (integration)', () => {
       });
       expectStatus(response, 200);
 
-      const body = response.json() as {
+      const body = response.json<{
         currentAmount: number;
         contributors?: { userId: string; amount: number; lastContributedAt: string | null }[];
-      };
+      }>();
       expect(body.currentAmount).toBe(100_00);
       expect(body.contributors?.[0]?.userId).toBe(adult.id);
       // An ISO-8601 instant, which is what the response schema promises.

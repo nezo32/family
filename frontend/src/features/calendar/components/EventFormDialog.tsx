@@ -43,7 +43,7 @@ import {
 } from '../calendar-model';
 import { useCreateEvent, useEventSeries, useFamilyTimeZone, useUpdateEvent } from '../hooks';
 import { CALENDAR_RU } from '../locale';
-import { EditScopeDialog } from './EditScopeDialog';
+import { EditScopeDialog } from '@/shared/components';
 import { RecurrenceBuilder } from './RecurrenceBuilder';
 
 /**
@@ -547,7 +547,8 @@ export function EventFormDialog(props: EventFormDialogProps) {
       <EditScopeDialog
         open={scopeOpen}
         onOpenChange={setScopeOpen}
-        mode="edit"
+        intent="edit"
+        strings={CALENDAR_RU.scope}
         isPending={update.isPending}
         onConfirm={(scope) => {
           if (pendingValues) submit(pendingValues, scope);

@@ -1,4 +1,4 @@
-import { and, asc, eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { pointsLedger } from '../chores/chores.schema.js';
@@ -80,7 +80,7 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
       },
     });
     expect([200, 201]).toContain(response.statusCode);
-    return (response.json() as { id: string }).id;
+    return (response.json<{ id: string }>()).id;
   }
 
   async function occurrencesOf(seriesId: string) {
@@ -348,7 +348,7 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
       },
     });
     expectStatus(split, 200);
-    const successorId = (split.json() as { id: string }).id;
+    const successorId = (split.json<{ id: string }>()).id;
     expect(successorId).not.toBe(seriesId);
 
     // The successor points back at the closed original, so history stays
@@ -408,7 +408,7 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
         },
       });
       expect([200, 201]).toContain(response.statusCode);
-      return (response.json() as { id: string }).id;
+      return (response.json<{ id: string }>()).id;
     }
 
     it('assigns deterministically and freezes the assignment across a second pass', async () => {
@@ -528,7 +528,7 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
         token: adult.accessToken,
       });
       expectStatus(response, 200);
-      expect((response.json() as { items: unknown[] }).items).toHaveLength(5);
+      expect((response.json<{ items: unknown[] }>()).items).toHaveLength(5);
     });
 
     it('serves GET /tasks/today', async () => {
@@ -549,7 +549,7 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
         token: adult.accessToken,
       });
       expectStatus(response, 200);
-      expect((response.json() as { items: unknown[] }).items).toHaveLength(5);
+      expect((response.json<{ items: unknown[] }>()).items).toHaveLength(5);
     });
 
     it('derives isOverdue from the clock and the grace window', async () => {
@@ -573,7 +573,7 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
         token: adult.accessToken,
       });
       expectStatus(response, 200);
-      expect((response.json() as { isOverdue: boolean }).isOverdue).toBe(true);
+      expect((response.json<{ isOverdue: boolean }>()).isOverdue).toBe(true);
     });
   });
 
@@ -605,7 +605,7 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
         },
       });
       expect([200, 201]).toContain(create.statusCode);
-      const rotationId = (create.json() as { id: string }).id;
+      const rotationId = (create.json<{ id: string }>()).id;
 
       const response = await request(h.app, {
         method: 'GET',

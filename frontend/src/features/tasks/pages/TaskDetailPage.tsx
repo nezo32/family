@@ -34,7 +34,7 @@ import {
   useUncompleteOccurrence,
 } from '../hooks';
 import { AssigneeControl } from '../components/AssigneeControl';
-import { EditScopeDialog } from '../components/EditScopeDialog';
+import { EditScopeDialog } from '@/shared/components';
 import { TaskEditor } from '../components/TaskEditor';
 import { SwapRequestButton } from '../components/SwapPanel';
 import { TaskDetailSkeleton } from '../components/Skeletons';
@@ -305,6 +305,7 @@ export default function TaskDetailPage() {
         open={deleteScopeOpen}
         onOpenChange={setDeleteScopeOpen}
         intent="delete"
+        strings={TASKS_RU.scope}
         onConfirm={(scope) => {
           setDeleteScopeOpen(false);
           runDelete(scope);

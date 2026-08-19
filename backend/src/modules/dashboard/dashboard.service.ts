@@ -21,6 +21,7 @@ import { notFound } from '../../core/errors.js';
 import { eventOccurrences, eventSeries } from '../events/events.schema.js';
 import { pointsLedger } from '../chores/chores.schema.js';
 import { goalMilestones, goalTransactions, savingsGoals } from '../goals/goals.schema.js';
+import { canReadAnyGoal } from '../goals/goals.service.js';
 import { familySettings } from '../identity/identity.schema.js';
 import { users } from '../identity/users.schema.js';
 import { notificationDeliveries } from '../notifications/notifications.schema.js';
@@ -882,12 +883,16 @@ export function resolveAccess(actor: DashboardActor): TodayAccess {
     fairness: actor.can('task:read:any'),
     approvals: actor.can('member:approve'),
     // `visibility = 'private'` narrows *further* than the permission matrix:
-    // it limits reads to the goal's owner plus owner/admin
-    // (`docs/architecture/household.md` §5). An ordinary adult holds every
-    // `goal:*` permission and still must not see another adult's private goal,
-    // so this cannot key off a `goal:` permission at all — `member:update:any`
-    // is the catalog's owner/admin marker.
-    everyGoal: actor.can('member:update:any'),
+    // it limits reads to the goal's owner plus the `:any`-equivalent authority
+    // (`docs/architecture/household.md` §5). An ordinary adult holds `goal:read`
+    // and still must not see another adult's private goal.
+    //
+    // Deferred to `goals.service` rather than spelled out here: the moneybox
+    // owns the rule, the goals list applies the same predicate in SQL, and the
+    // wall applies it to comment threads. Three copies of "who is the family
+    // administrator" is how the tile ends up showing a goal the goals screen
+    // hides — and how a `permission_denies` entry stops being honoured.
+    everyGoal: canReadAnyGoal(actor),
   };
 }
 

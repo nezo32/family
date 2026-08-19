@@ -16,6 +16,7 @@ import { useMe } from '@/shared/auth/use-me';
 import { signOut } from '@/shared/api/refresh';
 import { ROUTES } from '@/shared/lib/routes';
 import { COMMON, NAV_LABELS } from '@/shared/lib/i18n';
+import { NOTIFICATIONS_RU } from '@/features/notifications/locale';
 import { cn } from '@/shared/lib/utils';
 import { ROLE_LABELS_RU } from '@family/shared';
 import { THEME_LABELS_RU, useTheme, type ThemeMode } from '../theme-provider';
@@ -30,8 +31,12 @@ import { NAV_ITEMS, isNavItemActive } from './nav-items';
  * room for it itself.
  */
 export function TopAppBar(props: {
-  /** Unread notification count; `undefined` hides the badge. */
+  /**
+   * Unread notification count. Supplied by `AppShell` from
+   * `GET /api/notifications/unread-count`; `undefined` hides the badge.
+   */
   unreadCount?: number;
+  /** Opens the inbox sheet. `AppShell` owns the open state. */
   onOpenNotifications?: () => void;
 }) {
   const location = useLocation();
@@ -55,8 +60,8 @@ export function TopAppBar(props: {
           size="icon"
           aria-label={
             unread > 0
-              ? `${NAV_LABELS.notifications}: ${String(unread)} новых`
-              : NAV_LABELS.notifications
+              ? NOTIFICATIONS_RU.unreadAria(unread)
+              : NOTIFICATIONS_RU.openAria
           }
           onClick={props.onOpenNotifications}
           className="relative"

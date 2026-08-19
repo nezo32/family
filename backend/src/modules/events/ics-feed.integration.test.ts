@@ -49,7 +49,7 @@ describe.skipIf(!hasTestDb)('ICS feed (integration)', () => {
       token: user.accessToken,
     });
     expectStatus(response, 200);
-    return response.json() as { token: string; url: string };
+    return response.json<{ token: string; url: string }>();
   }
 
   async function createEvent(title: string): Promise<string> {
@@ -74,7 +74,7 @@ describe.skipIf(!hasTestDb)('ICS feed (integration)', () => {
       },
     });
     expect([200, 201]).toContain(response.statusCode);
-    return (response.json() as { id: string }).id;
+    return (response.json<{ id: string }>()).id;
   }
 
   /* -------------------------- a tiny ICS reader ------------------------- */
@@ -194,7 +194,7 @@ describe.skipIf(!hasTestDb)('ICS feed (integration)', () => {
       payload: {},
     });
     expectStatus(rotate, 200);
-    const rotated = (rotate.json() as { token: string }).token;
+    const rotated = (rotate.json<{ token: string }>()).token;
     expect(rotated).not.toBe(original);
 
     // The new link works…

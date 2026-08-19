@@ -1,8 +1,10 @@
 import {
+  canManageRole,
   effectivePermissions,
   PERMISSIONS,
-  ROLE_RANK,
+  resolveScope,
   type Permission,
+  type PermissionScope,
   type Role,
 } from '@family/shared';
 
@@ -29,8 +31,12 @@ export interface AuthContext {
   /**
    * Resolves an `own`/`any` pair: `'any'` when the caller may act on every row,
    * `'own'` when limited to their own, `null` when denied entirely.
+   *
+   * Delegates to `resolveScope` in `@family/shared`, which is also what the
+   * PWA's `useCan().scopeFor` calls — the two used to be separate inlinings
+   * that had already drifted apart.
    */
-  scopeFor(base: string): 'any' | 'own' | null;
+  scopeFor(base: string): PermissionScope;
   /** A role may only manage roles strictly below its own rank. */
   canManageRole(target: Role): boolean;
 }
@@ -70,12 +76,11 @@ export function buildAuthContext(user: UserRow): AuthContext {
 
     can: (permission) => permissions.has(permission),
     canAny: (...list) => list.some((p) => permissions.has(p)),
-    scopeFor: (base) => {
-      if (permissions.has(`${base}:any` as Permission)) return 'any';
-      if (permissions.has(`${base}:own` as Permission)) return 'own';
-      return null;
-    },
-    canManageRole: (target) => ROLE_RANK[user.role] > ROLE_RANK[target],
+    scopeFor: (base) => resolveScope(permissions, base),
+    // Rank comparison lives with `ROLE_RANK` in `@family/shared`; re-deriving it
+    // here in a file that already imported the ranks was one `>=` away from
+    // letting an admin demote another admin.
+    canManageRole: (target) => canManageRole(user.role, target),
   };
 }
 

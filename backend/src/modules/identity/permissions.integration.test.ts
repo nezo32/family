@@ -142,8 +142,8 @@ describe.skipIf(!hasTestDb)('permissions (integration)', () => {
       });
       expectStatus(asChild, 200);
 
-      const childBody = asChild.json() as Record<string, unknown>;
-      const adultBody = asAdult.json() as Record<string, unknown>;
+      const childBody = asChild.json<Record<string, unknown>>();
+      const adultBody = asAdult.json<Record<string, unknown>>();
 
       // The adult's payload carries the section; the child's must not — and
       // must not carry it as an empty husk either, because "goals: []" still
@@ -168,7 +168,7 @@ describe.skipIf(!hasTestDb)('permissions (integration)', () => {
         },
       });
       expect([200, 201]).toContain(created.statusCode);
-      const goalId = (created.json() as { id: string }).id;
+      const goalId = (created.json<{ id: string }>()).id;
 
       // The author still sees it.
       const mine = await request(h.app, {

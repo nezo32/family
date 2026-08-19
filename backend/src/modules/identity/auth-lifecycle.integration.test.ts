@@ -17,7 +17,6 @@ import {
   resetDatabase,
   startHarness,
   type Harness,
-  type TestUser,
 } from '../../test/harness.js';
 import { refreshTokens } from './identity.schema.js';
 import { users } from './users.schema.js';
@@ -60,10 +59,10 @@ describe.skipIf(!hasTestDb)('auth lifecycle (integration)', () => {
       });
       expectStatus(response, 200);
 
-      const body = response.json() as {
-        session: unknown | null;
+      const body = response.json<{
+        session: unknown;
         pending: { status: string; ticket: string } | null;
-      };
+      }>();
 
       // 1. No session in the body.
       expect(body.session).toBeNull();
@@ -201,7 +200,7 @@ describe.skipIf(!hasTestDb)('auth lifecycle (integration)', () => {
       expect(['teen', 'child']).toContain(row?.role);
 
       const winner = a.statusCode === 200 ? a : b;
-      expect((winner.json() as { role: string }).role).toBe(row?.role);
+      expect((winner.json<{ role: string }>()).role).toBe(row?.role);
     });
 
     it('kills a suspended user: the access token stops working and every family is revoked', async () => {
@@ -292,7 +291,7 @@ describe.skipIf(!hasTestDb)('auth lifecycle (integration)', () => {
 
       for (const response of responses) {
         expectStatus(response, 200);
-        expect((response.json() as { accessToken: string }).accessToken).toBeTruthy();
+        expect((response.json<{ accessToken: string }>()).accessToken).toBeTruthy();
       }
 
       // No fork: exactly one successor generation was minted, not five.

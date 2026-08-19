@@ -54,6 +54,11 @@ export const forbidden = (message = 'Insufficient permissions', context?: Record
 /**
  * Use this — not `forbidden` — whenever the caller is outside the *read* scope
  * for a resource. Returning 403 would confirm the resource exists (D4).
+ *
+ * `what` is an **English** noun: it is interpolated into an English sentence
+ * and `AppError.message` is developer-facing (D7) — the client renders the
+ * Russian text it keys off `error.code`. A Russian noun here produces the
+ * half-translated `"Событие not found"`, which is worse than either language.
  */
 export const notFound = (what = 'Resource') => new AppError('NOT_FOUND', `${what} not found`);
 

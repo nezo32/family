@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Db } from '../../core/db.js';
 import type { AssignmentRun } from './chores.service.js';
+import type { ChoreIntent } from './swaps.service.js';
 import type * as RealChoresRepo from './chores.repository.js';
 import {
   materializeThroughPort,
@@ -514,18 +515,32 @@ describe('completeChore', () => {
 /* -------------------------------------------------------------------------- */
 
 describe('swaps', () => {
-  const emitted: Array<{ type: string }> = [];
+  /**
+   * Records the **whole** intent, not just its type.
+   *
+   * The stub used to keep `type` alone, which is exactly why nobody noticed
+   * that the emitter hardcoded `priority: 'normal'` for a `high` type and
+   * spelled an open offer's audience `{}`. An assertion that cannot see the
+   * audience cannot catch a notification sent to the wrong people.
+   */
+  const emitted: ChoreIntent[] = [];
+  /** Set by the emitter, cleared per test: did anything reach the queue? */
+  let dispatched = 0;
   const service = () =>
     new ChoresService(fakeDb, {
       now: () => T0,
       emitIntent: (_ex, intent) => {
-        emitted.push({ type: intent.type });
-        return Promise.resolve();
+        emitted.push(intent);
+        return Promise.resolve(() => {
+          dispatched += 1;
+          return Promise.resolve();
+        });
       },
     });
 
   beforeEach(() => {
     emitted.length = 0;
+    dispatched = 0;
     store.members.push(
       { rotationId: ROTATION, userId: TEEN, weight: '1.00', position: 0, active: true },
       { rotationId: ROTATION, userId: CHILD, weight: '1.00', position: 1, active: true },
@@ -547,7 +562,11 @@ describe('swaps', () => {
     // Defaults to the chore's own deadline: an offer that outlives the chore is
     // noise.
     expect(swap.expiresAt).toBe(new Date(T0.getTime() + 3_600_000).toISOString());
-    expect(emitted).toEqual([{ type: 'chore_swap_requested' }]);
+    expect(emitted.map((e) => e.type)).toEqual(['chore_swap_requested']);
+    // Directed at exactly one person — never the whole family.
+    expect(emitted[0]?.audience).toEqual({ users: [CHILD] });
+    // Enqueued, and only after the transaction returned.
+    expect(dispatched).toBe(1);
   });
 
   it('surfaces the one-pending-per-occurrence index as a clean 409', async () => {

@@ -116,4 +116,57 @@ describe.skipIf(!hasTestDb)('queue job ids (integration)', () => {
     const error = await tryEnqueue(`deliver:${crypto.randomUUID()}:1757260800000`);
     expect(error?.message ?? null).toBeNull();
   });
+
+  /**
+   * KNOWN FAILURE — documents a real bug, do not relax.
+   *
+   * `core/redis.ts:createBullConnection` sets `maxRetriesPerRequest: null`,
+   * which BullMQ requires for its blocking commands. The side effect is that a
+   * command issued while the connection is down is **queued indefinitely**
+   * rather than rejected.
+   *
+   * `goals.service.ts:352` is written as if that were not true:
+   *
+   *   > A queue outage must not fail a committed money write. … we log and move
+   *   > on.
+   *
+   * The `try/catch` around `enqueue` is dead code — `queue.add()` never
+   * rejects, it simply never settles. A Redis outage therefore hangs the HTTP
+   * request forever *after* the money has committed, holding a connection open
+   * until the client gives up. The same shape sits in `deliver()` and in the
+   * escalation ladder.
+   *
+   * The fix is `enableOfflineQueue: false` on the queue's connection (or an
+   * explicit timeout around `add`), so the catch block can do what its comment
+   * says.
+   */
+  it('rejects rather than hangs when Redis is unreachable', async () => {
+    const { Queue } = await import('bullmq');
+    const { Redis } = await import('ioredis');
+
+    // Port 6399 has nothing on it. Same options as `createBullConnection`.
+    const connection = new Redis('redis://127.0.0.1:6399', {
+      lazyConnect: false,
+      enableReadyCheck: true,
+      retryStrategy: (times: number) => Math.min(times * 200, 5_000),
+      maxRetriesPerRequest: null,
+    });
+    connection.on('error', () => {});
+    const queue = new Queue('probe-outage', { connection });
+
+    const settled = await Promise.race([
+      queue
+        .add('notification.dispatch', { intentId: 'x' }, { jobId: 'a-b-c' })
+        .then(() => 'resolved' as const)
+        .catch(() => 'rejected' as const),
+      new Promise<'hung'>((resolve) => {
+        setTimeout(() => resolve('hung'), 2_000).unref?.();
+      }),
+    ]);
+
+    await queue.close().catch(() => {});
+    connection.disconnect();
+
+    expect(settled).not.toBe('hung');
+  });
 });

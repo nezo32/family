@@ -17,6 +17,13 @@ import { Button, buttonVariants } from "@/shared/ui/button"
 
 // Localised in place rather than at every call site: every calendar in this app
 // is Russian and starts the week on Monday (D7 / shared/lib/i18n.ts).
+//
+// `weekStartsOn` here is react-day-picker's **0-based** axis: 0 = воскресенье,
+// 6 = суббота. The `/api/me` contract (`family.weekStartsOn`) is **ISO**:
+// 1 = понедельник … 7 = воскресенье. The two agree on 1–6 and disagree on
+// exactly one value, so passing the contract value straight through works for
+// every family except a Sunday-start one. Convert with `toDayPickerWeekStart()`
+// from `shared/auth/week-start.ts` before it reaches this prop.
 
 function Calendar({
   className,

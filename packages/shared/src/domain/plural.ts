@@ -125,4 +125,6 @@ export const RU_PLURALS = {
   hour: ['час', 'часа', 'часов'],
   minute: ['минута', 'минуты', 'минут'],
   year: ['год', 'года', 'лет'],
+  /** Occurrences of a repeating thing — «Каждый день, 5 раз». */
+  times: ['раз', 'раза', 'раз'],
 } as const satisfies Record<string, PluralForms>;

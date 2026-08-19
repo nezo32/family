@@ -437,7 +437,7 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
       const userId = await service.authenticateFeedToken(db, request.query.token);
       // 404, not 401: a revoked or forged link must not confirm that a feed
       // exists at this URL, and no calendar client shows the difference anyway.
-      if (userId === null) throw notFound('Календарь');
+      if (userId === null) throw notFound('Calendar feed');
 
       const feed = await service.buildFeedForUser(db, userId);
 

@@ -85,52 +85,28 @@ import {
 /** U+00A0. Russian typography groups digits with it, and never with a comma. */
 export const NBSP = String.fromCharCode(0x00a0);
 
-/** `[одна, две, пять]` — the three Russian numeric agreement forms. */
-export type PluralForms = readonly [one: string, few: string, many: string];
-
 /**
- * Russian numeric agreement.
+ * Russian numeric agreement — one implementation, in `@family/shared`.
  *
- * The rule most implementations get wrong is the **11–14 exception**: those
- * take the `many` form despite ending in 1, 2, 3 or 4. `11 задач`, not
- * `11 задача`; `112 задач`, not `112 задачи`. Everything else keys off the last
- * digit, which is why 21 goes back to `one` (`21 задача`).
+ * The rule and the word table both used to live here, and were the *best* of
+ * the six copies in the repo: the only one modelling grammatical case
+ * («21 задача на неделе» vs «вы закрыли 21 задачу»). So this form won and moved
+ * to `@family/shared/domain/plural.ts`; the whole app reads it now.
+ *
+ * One behaviour changed here as a result: `countRu` formats the count with
+ * `Intl.NumberFormat('ru-RU')` like the UI always did, so a four-figure count
+ * reads «1 011 задач» in the digest instead of «1011 задач». The digest and the
+ * screen it summarises no longer print the same number two ways.
+ *
+ * The key formerly called `RU_PLURALS.goal` here — «копилка» — is now
+ * `RU_PLURALS.moneybox`, because `goal` in the shared table is the abstract
+ * «цель» the goals screen uses for its headings. Same words, unambiguous names.
  */
-export function pluralRu(count: number, forms: PluralForms): string {
-  const abs = Math.abs(Math.trunc(count));
-  const lastTwo = abs % 100;
-  if (lastTwo >= 11 && lastTwo <= 14) return forms[2];
-  const last = abs % 10;
-  if (last === 1) return forms[0];
-  if (last >= 2 && last <= 4) return forms[1];
-  return forms[2];
-}
+import { countRu, formatCountRu, pluralRu, RU_PLURALS } from '@family/shared';
+import type { PluralForms } from '@family/shared';
 
-/** `countRu(3, RU_PLURALS.task)` → `'3 задачи'`. */
-export function countRu(count: number, forms: PluralForms): string {
-  return `${count} ${pluralRu(count, forms)}`;
-}
-
-export const RU_PLURALS = {
-  task: ['задача', 'задачи', 'задач'],
-  /**
-   * Accusative — «Вы закрыли 21 задачу», not «21 задача». Russian numerals
-   * govern the case of the noun, so a single "task" form cannot serve both
-   * «21 задача на неделе» and «закрыли 21 задачу»; conflating them is the
-   * second-most-common Russian pluralisation bug after the 11–14 exception.
-   */
-  taskAccusative: ['задачу', 'задачи', 'задач'],
-  event: ['событие', 'события', 'событий'],
-  birthday: ['день рождения', 'дня рождения', 'дней рождения'],
-  purchase: ['покупка', 'покупки', 'покупок'],
-  urgent: ['срочная', 'срочные', 'срочных'],
-  point: ['балл', 'балла', 'баллов'],
-  announcement: ['объявление', 'объявления', 'объявлений'],
-  /** Indeclinable — all three forms are identical, and that is correct. */
-  thanks: ['спасибо', 'спасибо', 'спасибо'],
-  year: ['год', 'года', 'лет'],
-  goal: ['копилка', 'копилки', 'копилок'],
-} as const satisfies Record<string, PluralForms>;
+export { countRu, formatCountRu, pluralRu, RU_PLURALS };
+export type { PluralForms };
 
 /** Nominative weekday names, indexed by ISO weekday (1 = Monday). */
 export const WEEKDAY_RU: Readonly<Record<number, string>> = {
@@ -777,14 +753,18 @@ function buildShopping(data: DigestData): SectionResult {
   const { neededCount, urgentCount, items } = data.shopping;
   if (neededCount > 0) {
     const urgentPart =
-      urgentCount > 0 ? `, из них ${urgentCount} ${pluralRu(urgentCount, RU_PLURALS.urgent)}` : '';
+      urgentCount > 0
+        ? `, из них ${formatCountRu(urgentCount)} ${pluralRu(urgentCount, RU_PLURALS.urgent)}`
+        : '';
     lines.push(`В списках ${countRu(neededCount, RU_PLURALS.purchase)}${urgentPart}.`);
   }
   for (const item of items.filter((i) => i.isUrgent).slice(0, 5)) {
     lines.push(`Срочно: ${item.name} (${item.listName})`);
   }
   const highlights =
-    urgentCount > 0 ? [`${urgentCount} ${pluralRu(urgentCount, RU_PLURALS.urgent)} покупка`] : [];
+    urgentCount > 0
+      ? [`${formatCountRu(urgentCount)} ${pluralRu(urgentCount, RU_PLURALS.urgent)} покупка`]
+      : [];
   return { block: block('shopping', lines), highlights: urgentCount > 0 ? highlights : [] };
 }
 

@@ -14,7 +14,7 @@ import { COMMON } from '@/shared/lib/i18n';
 import { birthdayAge, occurrenceColor } from '../calendar-model';
 import { useDeleteEvent, useEventSeries, useSetRsvp } from '../hooks';
 import { CALENDAR_RU } from '../locale';
-import { EditScopeDialog } from './EditScopeDialog';
+import { EditScopeDialog } from '@/shared/components';
 
 const RSVP_CHOICES: { value: Rsvp; label: string }[] = [
   { value: 'yes', label: CALENDAR_RU.rsvpYes },
@@ -264,7 +264,8 @@ export function EventDetailSheet(props: {
       <EditScopeDialog
         open={scopeOpen}
         onOpenChange={setScopeOpen}
-        mode="delete"
+        intent="delete"
+        strings={CALENDAR_RU.scope}
         isPending={remove.isPending}
         onConfirm={doDelete}
       />

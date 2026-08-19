@@ -13,6 +13,7 @@ import type { Executor } from '../../core/db.js';
 import { badRequest, forbidden, notFound } from '../../core/errors.js';
 import { eventAttendees, eventOccurrences, eventSeries } from '../events/events.schema.js';
 import { savingsGoals } from '../goals/goals.schema.js';
+import { canReadGoal } from '../goals/goals.service.js';
 import { taskOccurrences, taskSeries } from '../tasks/tasks.schema.js';
 import * as repo from './wall.repository.js';
 import { polls, posts, type CommentRow } from './wall.schema.js';
@@ -72,9 +73,12 @@ export interface EntityRef {
  *
  * Registered per entity type so a module can take ownership of its own rule
  * later (`registerEntityAccessResolver`) without this file growing a special
- * case. The defaults below read the other modules' **schemas** — never their
- * repositories or services (D8) — because the check has to happen before the
- * comment rows are touched at all.
+ * case. The defaults below read the other modules' **schemas** and query them
+ * here — never through their repositories or services (D8) — because the check
+ * has to happen before the comment rows are touched at all. The one thing they
+ * do borrow is a module's *pure* predicate over a row already in hand
+ * (`goals.service.canReadGoal`): duplicating a visibility rule is how the
+ * comment thread ends up more readable than the thing it is attached to.
  */
 export type EntityAccessResolver = (
   exec: Executor,
@@ -168,8 +172,20 @@ const eventResolver: EntityAccessResolver = async (exec, entityId, auth) => {
 
 /**
  * Children hold no `goal:*` permission at all, so they never get here (D4 /
- * household.md §5), and a `private` goal is readable only by its owner, its
- * creator and owner/admin.
+ * household.md §5), and a `private` goal is readable only by its owner and the
+ * `:any`-equivalent authority.
+ *
+ * The verdict is `goals.service.canReadGoal` rather than a second copy of the
+ * rule. This resolver used to spell it `auth.role === 'owner' || auth.role ===
+ * 'admin'`, which was wrong twice over: D4 forbids branching on the role
+ * string, and a role comparison reads straight past `permission_denies` — an
+ * admin explicitly denied `goal:read` still read every comment on every private
+ * goal. `canReadGoal` is the pure mirror of the SQL filter the goals list uses,
+ * so a comment thread is now visible exactly when the goal it hangs off is.
+ *
+ * `canReadGoal` is a pure predicate over the row this function already fetched;
+ * importing it does not break the rule above about not calling other modules'
+ * repositories, and it is the only way the two answers cannot drift.
  */
 const goalResolver: EntityAccessResolver = async (exec, entityId, auth) => {
   if (!auth.can('goal:read')) return false;
@@ -178,20 +194,13 @@ const goalResolver: EntityAccessResolver = async (exec, entityId, auth) => {
     .select({
       visibility: savingsGoals.visibility,
       ownerId: savingsGoals.ownerId,
-      createdById: savingsGoals.createdById,
     })
     .from(savingsGoals)
     .where(and(eq(savingsGoals.id, entityId), isNull(savingsGoals.deletedAt)))
     .limit(1);
   if (!row) return false;
 
-  if (row.visibility !== 'private') return true;
-  return (
-    row.ownerId === auth.userId ||
-    row.createdById === auth.userId ||
-    auth.role === 'owner' ||
-    auth.role === 'admin'
-  );
+  return canReadGoal(auth, row);
 };
 
 registerEntityAccessResolver('post', postResolver);

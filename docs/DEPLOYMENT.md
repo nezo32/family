@@ -71,32 +71,7 @@ The bot doubles as the **second notification channel**, and it is the more
 reliable of the two — `sendMessage` returns a real delivery confirmation, which
 Web Push never does. Worth configuring even if nobody signs in with Telegram.
 
-### 2.3 Apple — **costs $99/year**, ~30 minutes
-
-Only do this if you actually want the «Войти через Apple» button. Everything
-else works without it, and the app hides the button when it is unconfigured.
-
-1. Join the **Apple Developer Program** ($99/year) — there is no free tier for
-   Sign in with Apple.
-2. **Certificates, IDs & Profiles → Identifiers → App ID**, enable *Sign in with
-   Apple*.
-3. **Identifiers → Services ID**, e.g. `su.nezo.family.web`. Enable *Sign in
-   with Apple* → Configure:
-   - Domain: `nezo.su`
-   - Return URL: `https://nezo.su/api/auth/apple/callback`
-   - Download the domain-verification file and serve it at
-     `https://nezo.su/.well-known/apple-developer-domain-association.txt`
-4. **Keys → new key**, enable *Sign in with Apple*, download the `.p8`.
-   **It downloads exactly once.**
-
-```bash
-base64 -w0 AuthKey_XXXXXXXXXX.p8   # -> APPLE_PRIVATE_KEY_BASE64
-```
-
-**You get:** `APPLE_CLIENT_ID` (the **Services ID**, not the App ID),
-`APPLE_TEAM_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY_BASE64`.
-
-### 2.4 GHCR pull token — free, 2 minutes
+### 2.3 GHCR pull token — free, 2 minutes
 
 The VDI pulls images from GitHub Container Registry. Either:
 
@@ -248,7 +223,6 @@ after many deploys — `docker.yml` tags by SHA, so they accumulate.
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google Cloud Console | for Google sign-in |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME` | @BotFather | for Telegram sign-in **and** the fallback notification channel |
 | `TELEGRAM_CLIENT_SECRET` | @BotFather | OIDC flow only |
-| `APPLE_CLIENT_ID`, `APPLE_TEAM_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY_BASE64` | Apple Developer ($99/yr) | for Apple sign-in |
 
 `VAPID_SUBJECT` **must** be a real, resolvable `mailto:` or `https://` — Apple
 rejects anything else with `403 BadJwtToken`, which breaks push on every iPhone

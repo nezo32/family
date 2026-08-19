@@ -13,7 +13,7 @@ import { notify } from '@/shared/lib/toast';
 import { TASKS_RU } from '../locale';
 import { isRecurring, toRecurrenceSpec } from '../recurrence';
 import { useCreateSeries, useUpdateSeries } from '../hooks';
-import { EditScopeDialog } from './EditScopeDialog';
+import { EditScopeDialog } from '@/shared/components';
 import { TaskForm, type TaskFormSubmit } from './TaskForm';
 
 /**
@@ -99,6 +99,7 @@ export function TaskEditor(props: {
         open={props.open}
         onOpenChange={props.onOpenChange}
         intent="edit"
+        strings={TASKS_RU.scope}
         onConfirm={setScope}
       />
     );

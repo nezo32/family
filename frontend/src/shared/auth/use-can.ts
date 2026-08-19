@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { resolveScope } from '@family/shared';
 import type { Permission } from '@family/shared';
 import { useMe } from './use-me';
 
@@ -101,11 +102,21 @@ export function evaluate(
   return false;
 }
 
+/**
+ * Resolve a scoped permission pair — `@family/shared`'s `resolveScope`, which
+ * is the same function `AuthContext.scopeFor` calls on the server.
+ *
+ * The inlined version this replaces had a **third branch**: a bare `base` held
+ * verbatim also returned `'any'`. The server has never done that, so any caller
+ * relying on it would have rendered a control the API answers with 403 — and
+ * for `goal:read` (which exists both bare and as `goal:read:any`) it would have
+ * told a teen they may read every goal in the house. The server's answer wins.
+ *
+ * If you want a plain "may I?" on an unscoped permission, that is `can(base)`,
+ * which still looks the string up verbatim.
+ */
 export function resolveScopeFor(permissions: ReadonlySet<string>, base: string): PermissionScope {
-  if (permissions.has(`${base}:any`)) return 'any';
-  if (permissions.has(`${base}:own`)) return 'own';
-  if (permissions.has(base)) return 'any';
-  return null;
+  return resolveScope(permissions, base);
 }
 
 export function useCan(): UseCanResult {

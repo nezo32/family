@@ -9,7 +9,6 @@ Everything needed to run the Family App locally and on the self-hosted VDI.
 - [Secrets you must generate](#secrets-you-must-generate)
   - [VAPID keys (Web Push)](#vapid-keys-web-push)
   - [Google OAuth](#google-oauth)
-  - [Apple Sign in](#apple-sign-in)
   - [Telegram](#telegram)
 - [First user — `BOOTSTRAP_OWNER_EMAIL`](#first-user--bootstrap_owner_email)
 - [Backups](#backups)
@@ -187,28 +186,6 @@ re-subscribe. Generate once, back them up, do not rotate casually.
 The client secret is still required alongside PKCE for a Web client — this is
 not optional for Google, whatever the PKCE spec implies.
 
-### Apple Sign in
-
-1. Apple Developer → _Identifiers_ → an **App ID**, then a **Services ID**
-   (the Services ID is your `APPLE_CLIENT_ID`).
-2. Return URL: `https://<APP_DOMAIN>/api/auth/apple/callback` — Apple rejects
-   plain HTTP and rejects any host that is not a registered domain, so this
-   cannot be tested against `localhost`.
-3. _Keys_ → new key with **Sign in with Apple** enabled → download the `.p8`
-   **once**; it cannot be downloaded again.
-
-```bash
-base64 -w0 AuthKey_XXXXXXXXXX.p8   # -> APPLE_PRIVATE_KEY_BASE64
-```
-
-Also set `APPLE_TEAM_ID` and `APPLE_KEY_ID`. The client secret is an ES256 JWT
-the backend generates at runtime from that key; there is no static secret to
-paste.
-
-Apple's callback is a **cross-site form POST**, which is why the OAuth
-transaction store is a Postgres table and not a cookie (D3). Nothing in the
-infra layer needs to change for it — but do not add a `SameSite=Strict` cookie
-anywhere in the proxy.
 
 ### Telegram
 
@@ -239,11 +216,6 @@ that lands in `pending_approval` and needs the owner to let them in.
 Notes:
 
 - Telegram never provides an email, so the bootstrap sign-in must be Google or
-  Apple. (An Apple private-relay address works but is a poor choice — it is
-  hard to type and never reusable.)
-- Leave the variable set after bootstrap; it is a no-op once an owner exists.
-- Getting this wrong means a stack that nobody can log into. Check it before you
-  bring the stack up, not after.
 
 ---
 

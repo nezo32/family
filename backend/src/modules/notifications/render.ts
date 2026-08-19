@@ -1,4 +1,4 @@
-import { NOTIFICATION_TYPES, type NotificationType } from '@family/shared';
+import { countRu, NOTIFICATION_TYPES, RU_PLURALS, type NotificationType } from '@family/shared';
 
 /**
  * Notification copy — `(type, payload) → { title, body, navigate }`, in Russian.
@@ -88,15 +88,15 @@ export function truncate(value: string, max: number): string {
   return `${cut.trimEnd()}…`;
 }
 
-/**
- * Russian plural agreement comes from `@family/shared`.
+/*
+ * Russian plural agreement comes from `@family/shared` — `countRu(n, forms)`.
  *
- * This file used to carry its own `plural(n, one, few, many)` — the fourth of
- * six copies of the same rule, and one of two using the positional arity that
- * shadowed the tuple form everything else uses. Re-exported under the local
- * name so the call sites below read the same as before.
+ * This file used to carry its own `plural(n, one, few, many)`: the fourth of
+ * six copies of the same rule, and one of the two using the positional arity
+ * that shadowed the tuple form everything else uses. It was exported and had no
+ * consumers outside this file, so it is simply gone rather than re-exported —
+ * a second name for the shared function is how the drift started.
  */
-export { pluralRu as plural } from '@family/shared';
 
 /** Money arrives as integer minor units (D6) — never a float. */
 function money(payload: NotificationPayload, key: string): string | null {
@@ -183,7 +183,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
         body: joinBody(
           `${actor(p)}: ${text(p, 'title', 'задача закрыта')}`,
           points !== null && points > 0
-            ? `+${points} ${pluralRu(points, RU_PLURALS.point)}`
+            ? `+${countRu(points, RU_PLURALS.point)}`
             : null,
         ),
         navigate: route('/tasks', taskId),
@@ -251,7 +251,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
         title: 'День рождения',
         body: joinBody(
           `Сегодня празднует ${name}`,
-          age !== null && age > 0 ? `${age} ${pluralRu(age, RU_PLURALS.year)}` : null,
+          age !== null && age > 0 ? countRu(age, RU_PLURALS.year) : null,
         ),
         navigate: '/calendar',
       };
@@ -373,8 +373,8 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
         title: 'Итоги недели',
         body:
           joinBody(
-            tasks !== null ? `${tasks} ${plural(tasks, 'задача', 'задачи', 'задач')}` : null,
-            events !== null ? `${events} ${plural(events, 'событие', 'события', 'событий')}` : null,
+            tasks !== null ? countRu(tasks, RU_PLURALS.task) : null,
+            events !== null ? countRu(events, RU_PLURALS.event) : null,
             text(p, 'summary'),
           ) || 'Сводка за неделю готова',
         navigate: '/digest',

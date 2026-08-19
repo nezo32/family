@@ -15,6 +15,7 @@ import type {
 
 import type { Db, Executor } from '../../core/db.js';
 import { badRequest, conflict, forbidden, notFound } from '../../core/errors.js';
+import { dispatchAfterCommit } from '../notifications/notifications.service.js';
 import type {
   ExtraColumnValue,
   OccurrenceDecorator,
@@ -569,7 +570,7 @@ export class ChoresService implements RotationPort {
   async giveKudos(actor: ChoreActor, input: KudosCreate): Promise<KudosResponse> {
     if (input.toUserId === actor.id) throw badRequest('Нельзя поблагодарить самого себя');
 
-    const row = await this.db.transaction(async (tx) => {
+    const { row, dispatch } = await this.db.transaction(async (tx) => {
       const inserted = await repo.insertKudos(tx, {
         fromUserId: actor.id,
         toUserId: input.toUserId,
@@ -579,7 +580,7 @@ export class ChoresService implements RotationPort {
       });
       if (!inserted) throw conflict('Вы уже отправили такую благодарность');
 
-      await this.emitIntent(tx, {
+      const dispatch = await this.emitIntent(tx, {
         type: 'kudos_received',
         actorId: actor.id,
         entityType: inserted.occurrenceId === null ? null : 'task_occurrence',
@@ -588,17 +589,21 @@ export class ChoresService implements RotationPort {
         payload: {
           kudosId: inserted.id,
           fromUserId: actor.id,
+          actorName: actor.displayName,
           fromUserName: actor.displayName,
           toUserId: inserted.toUserId,
           emoji: inserted.emoji,
           message: inserted.message,
           occurrenceId: inserted.occurrenceId,
         },
+        // One recipient — the person being thanked. `kudos_received` requires no
+        // permission, so nothing downstream would narrow an over-broad audience.
         audience: { users: [inserted.toUserId] },
       });
-      return inserted;
+      return { row: inserted, dispatch };
     });
 
+    await dispatchAfterCommit([dispatch]);
     return toKudosResponse(row);
   }
 

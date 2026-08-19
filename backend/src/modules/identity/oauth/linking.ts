@@ -3,8 +3,13 @@ import { and, eq, sql } from 'drizzle-orm';
 import type { OAuthProvider } from '@family/shared';
 
 import { getConfig } from '../../../core/config.js';
-import type { Executor } from '../../../core/db.js';
+import type { Db, Executor } from '../../../core/db.js';
 import { AppError } from '../../../core/errors.js';
+import {
+  dispatchAfterCommit,
+  emitIntent,
+  rolesWithPermission,
+} from '../../notifications/notifications.service.js';
 import { familySettings, userIdentities, type OAuthIntent } from '../identity.schema.js';
 import { users, type UserRow } from '../users.schema.js';
 
@@ -217,6 +222,18 @@ export interface ResolvedIdentity {
    * so "no session below active" is enforced in one place, not two.
    */
   user: UserRow;
+  /**
+   * Enqueues the fan-out for anything this resolution emitted — today, the
+   * `member_pending_approval` intent a brand-new OAuth signup raises.
+   *
+   * **Call it after the transaction commits**, never inside: `dispatchIntent`
+   * treats a not-yet-visible intent as "nothing to do", and nothing ever
+   * re-dispatches an intent that failed to fan out. `resolveOAuthIdentityAndNotify`
+   * does both halves in the right order — prefer it to calling this by hand.
+   *
+   * A no-op for a plain login or a link.
+   */
+  dispatchNotifications: () => Promise<void>;
 }
 
 function fallbackDisplayName(profile: OAuthProfile): string {
@@ -334,7 +351,13 @@ export async function resolveOAuthIdentity(
     const [user] = await db.select().from(users).where(eq(users.id, decision.userId)).limit(1);
     if (!user) throw new AppError('NOT_FOUND', 'Linked user no longer exists');
 
-    return { outcome: 'login', userId: decision.userId, identityId: decision.identityId, user };
+    return {
+      outcome: 'login',
+      userId: decision.userId,
+      identityId: decision.identityId,
+      user,
+      dispatchNotifications: noDispatch,
+    };
   }
 
   if (decision.kind === 'attach') {
@@ -353,7 +376,13 @@ export async function resolveOAuthIdentity(
     const [user] = await db.select().from(users).where(eq(users.id, decision.userId)).limit(1);
     if (!user) throw new AppError('NOT_FOUND', 'User no longer exists');
 
-    return { outcome: 'linked', userId: decision.userId, identityId: identity.id, user };
+    return {
+      outcome: 'linked',
+      userId: decision.userId,
+      identityId: identity.id,
+      user,
+      dispatchNotifications: noDispatch,
+    };
   }
 
   /* create — a brand new, admin-gated account. */
@@ -388,5 +417,71 @@ export async function resolveOAuthIdentity(
     .returning({ id: userIdentities.id });
   if (!identity) throw new AppError('INTERNAL_ERROR', 'Could not create the identity');
 
-  return { outcome: 'created', userId: created.id, identityId: identity.id, user: created };
+  /**
+   * A signup through Google/Apple/Telegram lands in `pending_approval` exactly
+   * like a password signup, and until now nobody was told about either. The
+   * person is locked out of the family app until an admin happens to open the
+   * members screen — so the admins get the same `high`-priority
+   * `member_pending_approval` the password path raises.
+   *
+   * The bootstrap owner (`decision.asOwner`) is already `active` and needs no
+   * approval, so it emits nothing.
+   */
+  const dispatchNotifications = created.status === 'active'
+    ? noDispatch
+    : await emitOAuthPendingApproval(db, created, profile.provider);
+
+  return {
+    outcome: 'created',
+    userId: created.id,
+    identityId: identity.id,
+    user: created,
+    dispatchNotifications,
+  };
+}
+
+/** Nothing to enqueue — a login and a link raise no intents. */
+const noDispatch = (): Promise<void> => Promise.resolve();
+
+async function emitOAuthPendingApproval(
+  x: Executor,
+  user: UserRow,
+  provider: OAuthProvider,
+): Promise<() => Promise<void>> {
+  const intent = await emitIntent(x, {
+    type: 'member_pending_approval',
+    // By permission, not by role name: the catalog decides who may approve.
+    audience: { roles: rolesWithPermission('member:approve') },
+    actorId: user.id,
+    entityType: 'user',
+    entityId: user.id,
+    // A replayed callback creates no second applicant, so it tells nobody twice.
+    dedupeKey: `member_pending_approval:${user.id}`,
+    payload: {
+      userId: user.id,
+      displayName: user.displayName,
+      actorName: user.displayName,
+      provider,
+      status: user.status,
+    },
+  });
+  return intent.dispatch;
+}
+
+/**
+ * `resolveOAuthIdentity` in its own transaction, with the fan-out enqueued
+ * **after** that transaction commits.
+ *
+ * The user insert, the identity insert and the notification intent have to land
+ * together — half a signup is an account nobody can sign into again, and an
+ * intent that outlives a rolled-back signup would page an admin about a person
+ * who does not exist. The queue is touched only once all three are durable.
+ */
+export async function resolveOAuthIdentityAndNotify(
+  db: Db,
+  params: { profile: OAuthProfile; intent: OAuthIntent; sessionUserId: string | null },
+): Promise<ResolvedIdentity> {
+  const resolved = await db.transaction((tx) => resolveOAuthIdentity(tx, params));
+  await dispatchAfterCommit([resolved.dispatchNotifications]);
+  return resolved;
 }

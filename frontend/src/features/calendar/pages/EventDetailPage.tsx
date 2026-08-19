@@ -24,7 +24,7 @@ import {
   useSeriesOccurrences,
 } from '../hooks';
 import { CALENDAR_RU } from '../locale';
-import { EditScopeDialog } from '../components/EditScopeDialog';
+import { EditScopeDialog } from '@/shared/components';
 import { EventDetailSheet } from '../components/EventDetailSheet';
 import { EventFormDialog } from '../components/EventFormDialog';
 import { EventRow } from '../components/EventRow';
@@ -248,7 +248,8 @@ export default function EventDetailPage() {
       <EditScopeDialog
         open={scopeOpen}
         onOpenChange={setScopeOpen}
-        mode="delete"
+        intent="delete"
+        strings={CALENDAR_RU.scope}
         isPending={remove.isPending}
         onConfirm={doDelete}
       />

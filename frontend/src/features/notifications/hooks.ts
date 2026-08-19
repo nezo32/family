@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import {
   useInfiniteQuery,
   useMutation,
@@ -339,29 +339,4 @@ export function useDeliveryReceipts(
     enabled: intentId !== null,
     staleTime: 15_000,
   });
-}
-
-/* -------------------------------------------------------------------------- */
-/* opening a notification                                                      */
-/* -------------------------------------------------------------------------- */
-
-/**
- * What a tap on a row does: mark it read, then navigate if it points anywhere.
- *
- * Deliberately **not** an acknowledgement. Opening a critical notification is
- * `interacted`, and D11 is explicit that it does not stop the ladder — only the
- * «Подтвердить» button does.
- */
-export function useOpenNotification(
-  navigate: (to: string) => void,
-): (notification: InAppNotification) => void {
-  const markReadMutation = useMarkRead();
-
-  return useCallback(
-    (notification: InAppNotification) => {
-      if (notification.readAt === null) markReadMutation.mutate({ ids: [notification.id] });
-      if (notification.link) navigate(notification.link);
-    },
-    [markReadMutation, navigate],
-  );
 }

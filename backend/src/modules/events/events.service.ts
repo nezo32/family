@@ -363,7 +363,7 @@ async function loadVisibleSeries(
 ): Promise<EventSeriesRow> {
   const series = await repo.findVisibleSeries(x, id, viewerId);
   // 404, never 403: the caller must not be able to tell "hidden" from "absent".
-  if (!series) throw notFound('Событие');
+  if (!series) throw notFound('Event');
   return series;
 }
 
@@ -373,7 +373,7 @@ async function loadVisibleOccurrence(
   viewerId: string,
 ): Promise<repo.OccurrenceWithSeries> {
   const row = await repo.findVisibleOccurrence(x, id, viewerId);
-  if (!row) throw notFound('Событие');
+  if (!row) throw notFound('Event');
   return row;
 }
 
@@ -495,7 +495,7 @@ export async function updateSeries(
     assertNotGenerated(visible);
 
     const series = await repo.lockSeriesById(tx, id);
-    if (!series) throw notFound('Событие');
+    if (!series) throw notFound('Event');
 
     switch (input.scope) {
       case 'this':
@@ -521,7 +521,7 @@ async function applyThisOnly(
 ): Promise<void> {
   if (input.occurrenceId === undefined) throw badRequest('occurrenceId обязателен');
   const target = await repo.findOccurrenceById(x, input.occurrenceId);
-  if (!target || target.occurrence.seriesId !== series.id) throw notFound('Экземпляр события');
+  if (!target || target.occurrence.seriesId !== series.id) throw notFound('Event occurrence');
 
   const patch: repo.OccurrencePatch = { isException: true };
   if (input.title !== undefined) patch.titleOverride = input.title;
@@ -644,7 +644,7 @@ async function splitSeries(
 ): Promise<SeriesDetail> {
   if (input.occurrenceId === undefined) throw badRequest('occurrenceId обязателен');
   const anchor = await repo.findOccurrenceById(x, input.occurrenceId);
-  if (!anchor || anchor.occurrence.seriesId !== series.id) throw notFound('Экземпляр события');
+  if (!anchor || anchor.occurrence.seriesId !== series.id) throw notFound('Event occurrence');
 
   const anchorKey = anchor.occurrence.occurrenceKey;
   const rule = ruleOf(series);
@@ -714,7 +714,7 @@ export async function deleteSeries(
     assertCanMutate(actor, visible, 'event:delete');
 
     const series = await repo.lockSeriesById(tx, id);
-    if (!series) throw notFound('Событие');
+    if (!series) throw notFound('Event');
     const now = new Date();
 
     switch (input.scope) {
@@ -722,7 +722,7 @@ export async function deleteSeries(
         if (input.occurrenceId === undefined) throw badRequest('occurrenceId обязателен');
         const target = await repo.findOccurrenceById(tx, input.occurrenceId);
         if (!target || target.occurrence.seriesId !== series.id) {
-          throw notFound('Экземпляр события');
+          throw notFound('Event occurrence');
         }
         // State preserved, calendar clean: cancel the row AND add an EXDATE, so
         // a later re-materialization cannot resurrect the slot.
@@ -740,7 +740,7 @@ export async function deleteSeries(
         if (input.occurrenceId === undefined) throw badRequest('occurrenceId обязателен');
         const anchor = await repo.findOccurrenceById(tx, input.occurrenceId);
         if (!anchor || anchor.occurrence.seriesId !== series.id) {
-          throw notFound('Экземпляр события');
+          throw notFound('Event occurrence');
         }
         const rule = ruleOf(series);
         if (rule.rrule === null) {
@@ -784,7 +784,7 @@ export async function getOccurrence(
 ): Promise<EventOccurrenceResponse> {
   const row = await loadVisibleOccurrence(db, id, actor.userId);
   const [mapped] = await hydrate(db, [row], actor.userId);
-  if (!mapped) throw notFound('Событие');
+  if (!mapped) throw notFound('Event');
   return mapped;
 }
 

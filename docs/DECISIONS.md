@@ -67,18 +67,24 @@ Write a test for each.
 | Provider | Flow |
 |---|---|
 | Google | OIDC authorization code + PKCE. `client_secret` is **still required** alongside PKCE for a Web client. Accept **both** `https://accounts.google.com` and `accounts.google.com` as `iss`. |
-| Apple | OIDC authorization code, `response_mode=form_post`. Client secret is an **ES256 JWT generated at runtime** from the `.p8` (Apple caps `exp` at 15 777 000 s). Name/email arrive **only on first authorization**, in the unsigned `user` POST field — persist immediately or lose them forever. |
 | Telegram | **OIDC at `https://oauth.telegram.org`** (the hash-based Login Widget is legacy/archived). Scopes `openid profile telegram:bot_access`. The bot-access scope is how we DM admins about pending signups. Legacy widget + Mini App `initData` verifiers are implemented as fallbacks. |
+
+**Sign in with Apple is deliberately not supported.** It requires a paid Apple
+Developer membership, and the family does not need a third provider. Do not
+reintroduce it without asking. (This is unrelated to the iOS PWA support in
+`docs/research/ios-pwa-push.md`, which stays — that is Safari and Apple's push
+service, not Apple as an identity provider.)
 
 ### The OAuth transaction store — non-negotiable
 
 `state -> { nonce, code_verifier, intent, link_user_id, redirect_after }` lives in
 a **Postgres table with a 10-minute TTL, deleted on use**. Not in a cookie.
 
-*Why:* Apple's `form_post` callback is a **cross-site POST**, and `SameSite=Lax`
-cookies are not sent on cross-site POSTs. A cookie-based state store fails for
-Apple only, only in production. The server-side store also fixes the same class
-of bug for the installed iOS PWA.
+*Why:* the callback often arrives **cross-site** (Telegram's widget and Mini App
+flows POST from another origin), and `SameSite=Lax` cookies are not sent on a
+cross-site POST — so a cookie-based state store fails in production only, for
+one provider only. The server-side store also fixes the same class of bug for
+the installed iOS PWA, where the OAuth round trip leaves the standalone app.
 
 ### Identity model
 
@@ -87,8 +93,8 @@ of bug for the installed iOS PWA.
 - The join key is **always `(provider, provider_sub)`**. Email is never a key.
 - `UNIQUE (provider, provider_user_id)` and `UNIQUE (user_id, provider)`.
 - **Never auto-link on email match.** Even when both sides are verified, show
-  "sign in with your existing method, then link from Settings". Apple private
-  relay addresses are never eligible for linking.
+  "sign in with your existing method, then link from Settings". Addresses from any provider-issued relay
+  service are never eligible for linking.
 - Linking provider B requires an authenticated session and `intent='link'` in
   the transaction row.
 - Unbind is guarded by `SELECT ... FOR UPDATE` + a last-login-method check.

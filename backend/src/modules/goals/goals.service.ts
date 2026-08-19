@@ -1,5 +1,3 @@
-import { sql } from 'drizzle-orm';
-
 import { ROLE_PERMISSIONS, ROLES } from '@family/shared';
 import type {
   CreateContribution,
@@ -12,6 +10,7 @@ import type {
   ListGoalsQuery,
   ListGoalTransactionsQuery,
   Permission,
+  Role,
   UpdateGoal,
   UpdateMilestone,
 } from '@family/shared';
@@ -19,9 +18,10 @@ import type {
 import type { Db, Executor } from '../../core/db.js';
 import { badRequest, conflict, forbidden, internal, notFound } from '../../core/errors.js';
 import {
-  notificationIntents,
-  type NewNotificationIntentRow,
-} from '../notifications/notifications.schema.js';
+  dispatchAfterCommit,
+  emitIntent,
+  type NotificationAudience,
+} from '../notifications/notifications.service.js';
 import type { GoalMilestoneRow, GoalTransactionRow, SavingsGoalRow } from './goals.schema.js';
 import * as repo from './goals.repository.js';
 
@@ -248,14 +248,15 @@ export function detectCrossings(input: CrossingInput): CrossingResult {
 /* -------------------------------------------------------------------------- */
 
 /**
- * TODO(notifications): the notifications module currently ships only its
- * schema — there is no `notifications.service.ts` to call. This is a deliberate
- * seam, not a permanent home: when the intent API lands, delete
- * `stageIntents`/`flushIntents` and call it instead. The shape below is exactly
- * `notification_intents`, so the swap is mechanical.
+ * The money module's notification vocabulary.
  *
- * Cross-module rule (D8): this touches the notifications **schema**, never a
- * notifications repository or service internal.
+ * Emission itself belongs to `notifications.service.ts` — this file only
+ * decides *what happened* and *who may hear about it*. The priority is
+ * deliberately absent: it comes from `NOTIFICATION_TYPE_DEFAULT_PRIORITY`, so a
+ * product decision about how loud a goal event is lives in the catalog rather
+ * than in three literals here that can drift from it.
+ *
+ * Cross-module rule (D8): a *service* call, never a repository or schema one.
  */
 export type GoalIntentType = 'goal_contribution' | 'goal_milestone_reached' | 'goal_reached';
 
@@ -265,10 +266,9 @@ export interface GoalIntent {
   readonly entityType: 'goal' | 'goal_milestone';
   readonly entityId: string;
   readonly dedupeKey: string;
-  readonly priority: 'low' | 'normal' | 'high';
   readonly payload: Record<string, unknown>;
   /** Who may be told. See {@link audienceFor}. */
-  readonly audience: Record<string, unknown>;
+  readonly audience: NotificationAudience;
 }
 
 /**
@@ -278,7 +278,7 @@ export interface GoalIntent {
  * expects — but deriving it anyway means granting a role `goal:read` tomorrow
  * automatically starts notifying it, with no second list to forget.
  */
-export const GOAL_READER_ROLES: string[] = ROLES.filter((role) =>
+export const GOAL_READER_ROLES: Role[] = ROLES.filter((role) =>
   ROLE_PERMISSIONS[role].includes('goal:read'),
 );
 
@@ -293,7 +293,7 @@ export const GOAL_READER_ROLES: string[] = ROLES.filter((role) =>
 export function audienceFor(goal: {
   ownerId: string | null;
   visibility: string;
-}): Record<string, unknown> {
+}): NotificationAudience {
   if (goal.visibility !== 'household' && goal.ownerId !== null) {
     return { users: [goal.ownerId] };
   }
@@ -305,80 +305,44 @@ export function intentDedupeKey(type: GoalIntentType, entityId: string): string 
   return `${type}:${entityId}`;
 }
 
-interface QueuedIntent {
-  intentId: string;
-  dedupeKey: string;
-}
+/** The queue hand-off `stageIntents` defers until the money write has committed. */
+type QueuedIntent = () => Promise<void>;
 
 /**
  * Writes the intent rows **inside the caller's transaction**, so an intent can
  * never outlive a rolled-back ledger write.
  *
- * `ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING` means a
- * duplicate loses the race and returns nothing — so it is never queued either.
+ * `emitIntent` arbitrates on the partial unique index over `dedupe_key`, so a
+ * duplicate loses the race, writes nothing and hands back a no-op `dispatch` —
+ * it is therefore never queued either.
  */
 async function stageIntents(x: Executor, intents: readonly GoalIntent[]): Promise<QueuedIntent[]> {
-  if (intents.length === 0) return [];
-
-  const values: NewNotificationIntentRow[] = intents.map((intent) => ({
-    type: intent.type,
-    actorId: intent.actorId,
-    entityType: intent.entityType,
-    entityId: intent.entityId,
-    payload: intent.payload,
-    audience: intent.audience,
-    dedupeKey: intent.dedupeKey,
-    priority: intent.priority,
-  }));
-
-  const rows = await x
-    .insert(notificationIntents)
-    .values(values)
-    .onConflictDoNothing({
-      target: notificationIntents.dedupeKey,
-      // The unique index is partial; Postgres needs the predicate to infer it.
-      where: sql`dedupe_key is not null`,
-    })
-    .returning({ id: notificationIntents.id, dedupeKey: notificationIntents.dedupeKey });
-
-  return rows.flatMap((row) =>
-    row.dedupeKey ? [{ intentId: row.id, dedupeKey: row.dedupeKey }] : [],
-  );
+  const queued: QueuedIntent[] = [];
+  for (const intent of intents) {
+    const result = await emitIntent(x, {
+      type: intent.type,
+      audience: intent.audience,
+      actorId: intent.actorId,
+      entityType: intent.entityType,
+      entityId: intent.entityId,
+      payload: intent.payload,
+      dedupeKey: intent.dedupeKey,
+    });
+    if (!result.deduped) queued.push(result.dispatch);
+  }
+  return queued;
 }
 
 /**
  * Hands the staged intents to BullMQ **after** the transaction commits.
  *
- * The `jobId` is the intent's dedupe key, so a retried request that somehow got
- * past the unique index still cannot enqueue a second dispatch: BullMQ silently
- * drops an add with an existing id.
- *
- * A queue outage must not fail a committed money write. The intent rows are
- * durable, so the dispatcher can pick them up later; we log and move on.
+ * A queue outage must not fail a committed money write, which is exactly what
+ * `dispatchAfterCommit` guarantees: the intent rows are durable and idempotent
+ * on their dedupe key, so the worst case is a late notification, never a lost
+ * contribution.
  */
 async function flushIntents(queued: readonly QueuedIntent[]): Promise<void> {
-  if (queued.length === 0) return;
-
-  // Imported lazily on purpose: `core/queue/queues.js` pulls in BullMQ, ioredis
-  // and the shared logger at module load. Keeping it out of the static graph
-  // means reading a goal, running the money unit tests or generating OpenAPI
-  // never opens a Redis socket — only an actual notification does.
-  const { enqueue } = await import('../../core/queue/queues.js');
-
-  for (const item of queued) {
-    try {
-      await enqueue(
-        'notification.dispatch',
-        { intentId: item.intentId },
-        { jobId: item.dedupeKey },
-      );
-    } catch (error) {
-      console.warn(
-        `[goals] failed to enqueue notification dispatch for intent ${item.intentId}:`,
-        error instanceof Error ? error.message : error,
-      );
-    }
-  }
+  await dispatchAfterCommit(queued);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -838,7 +802,6 @@ async function applyCrossings(
       entityType: 'goal_milestone',
       entityId: milestone.id,
       dedupeKey: intentDedupeKey('goal_milestone_reached', milestone.id),
-      priority: 'normal',
       audience,
       payload: {
         goalId: goal.id,
@@ -862,7 +825,6 @@ async function applyCrossings(
         entityType: 'goal',
         entityId: goal.id,
         dedupeKey: intentDedupeKey('goal_reached', goal.id),
-        priority: 'high',
         audience,
         payload: {
           goalId: goal.id,
@@ -944,7 +906,6 @@ async function recordLedgerEntry(
         entityType: 'goal',
         entityId: goal.id,
         dedupeKey: intentDedupeKey('goal_contribution', inserted.row.id),
-        priority: 'low',
         audience: audienceFor(goal),
         payload: {
           goalId: goal.id,

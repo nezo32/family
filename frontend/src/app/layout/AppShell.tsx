@@ -1,10 +1,11 @@
-import { Suspense, useEffect, useRef } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Outlet, useLocation, useNavigation } from 'react-router-dom';
 import { LoadingScreen } from '@/shared/components/LoadingScreen';
 import { setFamilyTimeZone } from '@/shared/lib/format';
 import { useMe } from '@/shared/auth/use-me';
 import { InstallPrompt } from '@/features/auth/components/InstallPrompt';
 import { useShoppingSync } from '@/features/shopping/hooks';
+import { NotificationsPanel, useUnreadCount } from '@/features/notifications';
 import { BottomTabBar } from './BottomTabBar';
 import { DesktopSidebar } from './DesktopSidebar';
 import { TopAppBar } from './TopAppBar';
@@ -33,6 +34,18 @@ export function AppShell() {
   const previousKey = useRef<string | null>(null);
 
   /**
+   * The bell lives in `TopAppBar`, but its state lives here: the panel is a
+   * sibling of the app bar rather than a child of it, so closing it does not
+   * depend on the header staying mounted, and the badge query is shared by the
+   * shell instead of re-fetched per header render.
+   */
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const unread = useUnreadCount();
+  const openNotifications = useCallback(() => {
+    setNotificationsOpen(true);
+  }, []);
+
+  /**
    * The offline outbox drains from here, not from the shopping screen. iOS has
    * no Background Sync, so the only moments our code runs are `online` and the
    * app coming to the foreground — and the family member who added milk on the
@@ -44,10 +57,12 @@ export function AppShell() {
 
   // Times and dates are rendered in the family timezone, not the device one (D2).
   useEffect(() => {
-    // The family zone is the authority; `user.timezone` is the member's own
-    // override and is nullable ("inherit the family's").
-    setFamilyTimeZone(me?.user.timezone ?? me?.family.timezone);
-  }, [me?.user.timezone, me?.family.timezone]);
+    // The family zone is the authority for *rendering* (D2): a parent in
+    // Bangkok must read the time the family at home will sit down to dinner.
+    // `user.timezone` is the member's own override, nullable in the contract
+    // ("inherit the family's"), and is only the fallback here.
+    setFamilyTimeZone(me?.family.timezone ?? me?.user.timezone);
+  }, [me?.family.timezone, me?.user.timezone]);
 
   useEffect(() => {
     // Remember where we were leaving from.
@@ -65,7 +80,7 @@ export function AppShell() {
       <DesktopSidebar />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopAppBar />
+        <TopAppBar unreadCount={unread.data ?? 0} onOpenNotifications={openNotifications} />
 
         <main
           id="main"
@@ -89,6 +104,8 @@ export function AppShell() {
 
         <BottomTabBar />
       </div>
+
+      <NotificationsPanel open={notificationsOpen} onOpenChange={setNotificationsOpen} />
     </div>
   );
 }

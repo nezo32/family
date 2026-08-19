@@ -157,7 +157,7 @@ export function expectStatus(response: LightMyRequestResponse, expected: number)
 
 export function errorCode(response: LightMyRequestResponse): string | undefined {
   try {
-    return (response.json() as { error?: { code?: string } }).error?.code;
+    return (response.json<{ error?: { code?: string } }>()).error?.code;
   } catch {
     return undefined;
   }
@@ -221,7 +221,7 @@ export async function login(
   });
   expectStatus(response, 200);
 
-  const body = response.json() as { accessToken: string; user: { id: string } };
+  const body = response.json<{ accessToken: string; user: { id: string } }>();
   const cookie = await refreshCookieOf(response);
   if (!cookie) throw new Error('login set no refresh cookie');
 
@@ -242,9 +242,9 @@ export async function createOwner(app: FastifyInstance): Promise<TestUser> {
   });
   expectStatus(response, 200);
 
-  const body = response.json() as {
+  const body = response.json<{
     session: { accessToken: string; user: { id: string; role: Role } } | null;
-  };
+  }>();
   if (!body.session) {
     throw new Error('the first registration must receive a session — is the database empty?');
   }
@@ -280,7 +280,7 @@ export async function createMember(
   });
   expectStatus(response, 200);
 
-  const pending = response.json() as { pending: { ticket: string } | null };
+  const pending = response.json<{ pending: { ticket: string } | null }>();
   if (!pending.pending) throw new Error('a non-bootstrap registration must not receive a session');
 
   const list = await request(app, {
@@ -289,7 +289,7 @@ export async function createMember(
     token: approver.accessToken,
   });
   expectStatus(list, 200);
-  const items = (list.json() as { items: { id: string; displayName: string }[] }).items;
+  const items = (list.json<{ items: { id: string; displayName: string }[] }>()).items;
   const target = items.find((m) => m.displayName === displayName);
   if (!target) throw new Error(`registered member ${displayName} is not pending`);
 
@@ -327,7 +327,7 @@ export async function pendingIdOf(
     token: approver.accessToken,
   });
   expectStatus(list, 200);
-  const items = (list.json() as { items: { id: string; displayName: string }[] }).items;
+  const items = (list.json<{ items: { id: string; displayName: string }[] }>()).items;
   const found = items.find((m) => m.displayName === displayName);
   if (!found) throw new Error(`no pending member named ${displayName}`);
   return found.id;

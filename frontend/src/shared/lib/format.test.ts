@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { formatMoney, parseMoney, progressPercent, initials, formatDuration } from './format';
+import {
+  formatMoney,
+  parseMoney,
+  percentOf,
+  ringPercent,
+  initials,
+  formatDuration,
+} from './format';
 
 /**
  * Money.
@@ -98,18 +105,75 @@ describe('parseMoney', () => {
     expect(parseMoney('1,2,3')).toBeNull();
   });
 
-});
-
-describe('progressPercent', () => {
-  it('clamps to 0–100', () => {
-    expect(progressPercent(0, 100000)).toBe(0);
-    expect(progressPercent(50000, 100000)).toBe(50);
-    expect(progressPercent(150000, 100000)).toBe(100);
-    expect(progressPercent(-1000, 100000)).toBe(0);
+  /**
+   * The reason this helper was consolidated onto the goals module's parser.
+   *
+   * `parseMoney` used to strip `[^\d.,-]` **before** validating, so each of
+   * these produced a plausible amount the user never typed and put it in the
+   * family ledger with nothing on screen to show it had happened.
+   */
+  it.each([
+    ['1234 руб', 123400],
+    ['1234abc', 123400],
+    ['1e5', 1500],
+    ['5+5', 5500],
+    ['12 июля', 1200],
+  ])('no longer silently coerces %s (was %i minor units)', (input) => {
+    expect(parseMoney(input)).toBeNull();
   });
 
-  it('treats a zero target as no progress rather than dividing by zero', () => {
-    expect(progressPercent(5000, 0)).toBe(0);
+});
+
+/**
+ * Progress used to be computed four different ways — twice on the server, twice
+ * here — with two contradictory contracts. These are the cases where the old
+ * implementations disagreed with each other.
+ */
+describe('percentOf', () => {
+  it('is exact integer arithmetic, not `Math.round(c / t * 100)`', () => {
+    // `285 / 1000 * 100 === 28.499999999999996` in IEEE 754, so the float route
+    // rounded DOWN to 28 while the server's integer identity gave 29. The goals
+    // screen and the home screen showed different numbers for the same goal.
+    expect(percentOf(285, 1000)).toBe(29);
+    expect(percentOf(2_850, 10_000)).toBe(29);
+    // The same disagreement, the other way, at the next half-way point.
+    expect(percentOf(33_500, 100_000)).toBe(34);
+    expect(percentOf(33_333, 100_000)).toBe(33);
+  });
+
+  it('does NOT cap at 100 — an over-funded goal reads honestly', () => {
+    // `contracts/goals.ts` always said this; `contracts/dashboard.ts` capped it,
+    // so the same goal read «112 %» on one screen and «100 %» on another.
+    expect(percentOf(112_000, 100_000)).toBe(112);
+    expect(percentOf(1_000_000, 100_000)).toBe(1000);
+  });
+
+  it('floors at 0 and treats a zero target as no progress', () => {
+    expect(percentOf(0, 100_000)).toBe(0);
+    expect(percentOf(50_000, 100_000)).toBe(50);
+    expect(percentOf(-1_000, 100_000)).toBe(0);
+    expect(percentOf(5_000, 0)).toBe(0);
+  });
+
+  it('always returns an integer', () => {
+    for (const current of [0, 1, 7, 285, 33_333, 99_999, 112_000]) {
+      expect(Number.isInteger(percentOf(current, 100_000))).toBe(true);
+    }
+  });
+});
+
+describe('ringPercent', () => {
+  it('clamps to 0–100 — and only for drawing the arc', () => {
+    expect(ringPercent(percentOf(112_000, 100_000))).toBe(100);
+    expect(ringPercent(percentOf(-1_000, 100_000))).toBe(0);
+    expect(ringPercent(percentOf(50_000, 100_000))).toBe(50);
+  });
+
+  it('leaves the printed number alone', () => {
+    // The label and the fill are allowed to differ; that is the whole point of
+    // the clamp living in a separate function.
+    expect(percentOf(112_000, 100_000)).toBe(112);
+    expect(ringPercent(112)).toBe(100);
   });
 });
 

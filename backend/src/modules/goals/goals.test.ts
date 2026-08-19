@@ -5,11 +5,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { effectivePermissions, type Permission, type Role } from '@family/shared';
 
+import type { AuthContext } from '../../core/auth/context.js';
 import { AppError } from '../../core/errors.js';
+import { decideAccess } from '../../core/plugins/auth.js';
 import type { Db } from '../../core/db.js';
+import { authFor } from '../../test/access.js';
 import { users } from '../identity/users.schema.js';
 import { goalTransactions, savingsGoals } from './goals.schema.js';
-import goalsRoutes, { GOAL_ROUTE_PERMISSIONS } from './goals.routes.js';
+import goalsRoutes, { GOAL_ROUTE_ACCESS } from './goals.routes.js';
 import * as repo from './goals.repository.js';
 import * as service from './goals.service.js';
 
@@ -344,16 +347,29 @@ describe('permission matrix', () => {
 
   it('locks a child out of every declared goal route', () => {
     const child = effectivePermissions('child');
-    for (const [route, permission] of Object.entries(GOAL_ROUTE_PERMISSIONS)) {
-      expect(child, `child must not satisfy ${route}`).not.toContain(permission);
+    for (const [route, access] of Object.entries(GOAL_ROUTE_ACCESS)) {
+      expect(child, `child must not satisfy ${route}`).not.toContain(access.permission);
     }
   });
 
   it('lets a teen satisfy only the read routes', () => {
     const teen = effectivePermissions('teen');
-    for (const [route, permission] of Object.entries(GOAL_ROUTE_PERMISSIONS)) {
+    for (const [route, access] of Object.entries(GOAL_ROUTE_ACCESS)) {
       const isRead = route.startsWith('GET ');
-      expect(teen.includes(permission), `teen vs ${route}`).toBe(isRead);
+      expect(teen.includes(access.permission), `teen vs ${route}`).toBe(isRead);
+    }
+  });
+
+  it('marks every read route — and only the reads — `notFoundOnDeny`', () => {
+    // The D4 split, asserted on the table itself: a caller with no `goal:read`
+    // must not be told the moneybox exists, while a teen who *can* see it and
+    // may not spend from it gets an honest 403.
+    for (const [route, access] of Object.entries(GOAL_ROUTE_ACCESS)) {
+      const expected = route.startsWith('GET ') ? true : undefined;
+      expect(
+        'notFoundOnDeny' in access ? access.notFoundOnDeny : undefined,
+        `${route} carries the wrong deny status`,
+      ).toBe(expected);
     }
   });
 });
@@ -504,16 +520,19 @@ interface CollectedRoute {
   method: string;
   url: string;
   permission: Permission | undefined;
+  notFoundOnDeny: boolean;
   isPublic: boolean;
 }
 
 /**
  * A miniature host for the goals plugin.
  *
- * It reproduces exactly the part of `core/plugins/auth` these tests are about —
- * "deny unless the caller holds the permission the route declares" — without
- * dragging in Redis-backed rate limiting or a JWT. The real plugin is core-owned
- * and tested there; what is under test here is what *this* module declares.
+ * It hosts the routes without Redis-backed rate limiting or a JWT, but the
+ * access decision itself is the **real** one: the `onRequest` hook calls
+ * `decideAccess()` from `core/plugins/auth`, and the caller comes from the real
+ * `buildAuthContext`. A hand-rolled copy of the rule here would have happily
+ * kept asserting 403 on `/goals` forever — which is precisely the bug this
+ * module shipped.
  */
 async function buildGoalsHarness(
   role: Role | null,
@@ -534,34 +553,21 @@ async function buildGoalsHarness(
         method,
         url: route.url,
         permission: route.config?.permission,
+        notFoundOnDeny: route.config?.notFoundOnDeny === true,
         isPublic: route.config?.public === true,
       });
     }
   });
 
-  const held: ReadonlySet<Permission> | null = role
-    ? new Set<Permission>(effectivePermissions(role))
-    : null;
+  const caller: AuthContext | null = role ? authFor(role, { userId }) : null;
 
   app.addHook('onRequest', async (request) => {
     const access = request.routeOptions.config;
     if (access.public) return;
-    if (!held || !role) throw new AppError('UNAUTHENTICATED', 'Authentication required');
-    if (access.permission && !held.has(access.permission)) {
-      throw new AppError('FORBIDDEN', `Missing permission: ${access.permission}`);
-    }
-    request.auth = {
-      userId,
-      role,
-      status: 'active',
-      displayName: 'Тест',
-      timezone: 'Europe/Moscow',
-      permissions: held,
-      can: (permission) => held.has(permission),
-      canAny: (...list) => list.some((p) => held.has(p)),
-      scopeFor: () => null,
-      canManageRole: () => false,
-    };
+    if (!caller) throw new AppError('UNAUTHENTICATED', 'Authentication required');
+    const decision = decideAccess(access, caller);
+    if (!decision.allowed) throw decision.error;
+    request.auth = caller;
   });
 
   await app.register(goalsRoutes);
@@ -597,9 +603,14 @@ describe('route access declarations', () => {
 
   it('registers exactly the documented route table', () => {
     const registered = Object.fromEntries(
-      harness.routes.map((route) => [`${route.method} ${route.url}`, route.permission]),
+      harness.routes.map((route) => [
+        `${route.method} ${route.url}`,
+        route.notFoundOnDeny
+          ? { permission: route.permission, notFoundOnDeny: true }
+          : { permission: route.permission },
+      ]),
     );
-    expect(registered).toEqual(GOAL_ROUTE_PERMISSIONS);
+    expect(registered).toEqual(GOAL_ROUTE_ACCESS);
   });
 });
 
@@ -614,8 +625,8 @@ describe('HTTP: a child is denied every goal route', () => {
     await harness.app.close();
   });
 
-  it('rejects the child before any handler runs', async () => {
-    expect(harness.routes.length).toBe(Object.keys(GOAL_ROUTE_PERMISSIONS).length);
+  it('rejects the child before any handler runs — 404 on the reads', async () => {
+    expect(harness.routes.length).toBe(Object.keys(GOAL_ROUTE_ACCESS).length);
 
     for (const route of harness.routes) {
       const response = await harness.app.inject({
@@ -624,9 +635,33 @@ describe('HTTP: a child is denied every goal route', () => {
         payload: route.method === 'GET' || route.method === 'DELETE' ? undefined : {},
       });
       // The route guard denies at `onRequest`, so no database is touched and no
-      // goal id is ever confirmed or denied. (The guard itself answers 403; the
-      // service answers 404 for the same caller — see the service tests above.)
-      expect(response.statusCode, `${route.method} ${route.url} must reject a child`).toBe(403);
+      // goal id is ever confirmed or denied.
+      //
+      // A child holds no `goal:*` permission at all, so every **read** must
+      // answer 404: a 403 on `/goals` would tell them the family keeps a
+      // moneybox, which is the exact leak D4 was written about. The writes stay
+      // 403 — a caller who cannot read the section cannot reach them by
+      // guessing a URL either, and 403 is what the module promises everybody
+      // who can see a goal but may not spend from it.
+      const expected = route.method === 'GET' ? 404 : 403;
+      expect(response.statusCode, `${route.method} ${route.url} must reject a child`).toBe(
+        expected,
+      );
+    }
+  });
+
+  it('never answers a child 403 on a read, whatever the id', async () => {
+    const reads = harness.routes.filter((route) => route.method === 'GET');
+    expect(reads.length).toBeGreaterThan(0);
+
+    for (const route of reads) {
+      const response = await harness.app.inject({ method: 'GET', url: concreteUrl(route.url) });
+      expect(response.statusCode, `${route.url}`).toBe(404);
+      // A 404 whose body reads "Missing permission: goal:read" leaks exactly
+      // what the status code was chosen to hide. (This harness carries no error
+      // handler, so the body is Fastify's default; the shaped payload is
+      // asserted in `permissions.integration.test.ts`.)
+      expect(response.body).not.toContain('goal:read');
     }
   });
 });

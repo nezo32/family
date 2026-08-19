@@ -169,18 +169,22 @@ export const CALENDAR_RU = {
 
   /* ---- edit scope ------------------------------------------------------ */
   scope: {
-    editTitle: 'Это повторяющееся событие',
-    editDescription: 'Что изменить?',
-    deleteTitle: 'Удалить повторяющееся событие',
-    deleteDescription: 'Что удалить?',
+    // Title is the question, description is the context — the same order as
+    // `TASKS_RU.scope`. The two tables used to have these the other way round,
+    // so the shared dialog would have read one screen's title as the other's
+    // description. Keys match `EditScopeStrings` in `@/shared/components`.
+    editTitle: 'Что изменить?',
+    editDescription: 'Это повторяющееся событие. Выберите, на что подействуют изменения.',
+    deleteTitle: 'Что удалить?',
+    deleteDescription: 'Это повторяющееся событие. Выберите, что именно удалить.',
     this: 'Только это',
     thisAndFuture: 'Это и последующие',
     all: 'Все',
     thisHint: 'Изменится только выбранная дата.',
     thisAndFutureHint: 'Изменятся эта и все следующие даты, прошлые останутся как есть.',
     allHint: 'Изменятся все даты серии, кроме уже изменённых вручную.',
-    apply: 'Применить',
-    deleteApply: 'Удалить',
+    confirm: 'Применить',
+    deleteConfirm: 'Удалить',
   },
 
   deleteConfirmTitle: 'Удалить событие?',

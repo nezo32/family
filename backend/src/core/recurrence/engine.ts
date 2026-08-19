@@ -1,6 +1,7 @@
 import { RRuleTemporal } from 'rrule-temporal';
 import { Temporal } from 'temporal-polyfill';
 
+import { pluralRu, RU_PLURALS } from '@family/shared';
 import type { RecurrenceEnd, RecurrencePreset, Weekday } from '@family/shared';
 
 import { AppError } from '../errors.js';
@@ -308,16 +309,13 @@ function expandRule(
 /* Russian formatting                                                          */
 /* -------------------------------------------------------------------------- */
 
-/** 1 день / 2 дня / 5 дней — the three-way Russian numeric agreement. */
-function plural(n: number, one: string, few: string, many: string): string {
-  const abs = Math.abs(n);
-  const mod100 = abs % 100;
-  const mod10 = abs % 10;
-  if (mod100 >= 11 && mod100 <= 14) return many;
-  if (mod10 === 1) return one;
-  if (mod10 >= 2 && mod10 <= 4) return few;
-  return many;
-}
+/**
+ * 1 день / 2 дня / 5 дней — `pluralRu` from `@family/shared`.
+ *
+ * This was the sixth hand-written copy of the same rule. The `RU_PLURALS`
+ * entries it needs carry the case the sentence puts them in: «Каждые 3
+ * **недели**» is accusative, so it reads `weekAccusative`, not `week`.
+ */
 
 /** True when `n` takes the singular determiner: 1, 21, 31 — but not 11. */
 function takesSingularDeterminer(n: number): boolean {
@@ -328,19 +326,19 @@ function takesSingularDeterminer(n: number): boolean {
 function everyDays(n: number): string {
   if (n === 1) return 'Каждый день';
   const det = takesSingularDeterminer(n) ? 'Каждый' : 'Каждые';
-  return `${det} ${n} ${plural(n, 'день', 'дня', 'дней')}`;
+  return `${det} ${n} ${pluralRu(n, RU_PLURALS.day)}`;
 }
 
 function everyWeeks(n: number): string {
   if (n === 1) return 'Каждую неделю';
   const det = takesSingularDeterminer(n) ? 'Каждую' : 'Каждые';
-  return `${det} ${n} ${plural(n, 'неделю', 'недели', 'недель')}`;
+  return `${det} ${n} ${pluralRu(n, RU_PLURALS.weekAccusative)}`;
 }
 
 function everyMonths(n: number): string {
   if (n === 1) return 'Каждый месяц';
   const det = takesSingularDeterminer(n) ? 'Каждый' : 'Каждые';
-  return `${det} ${n} ${plural(n, 'месяц', 'месяца', 'месяцев')}`;
+  return `${det} ${n} ${pluralRu(n, RU_PLURALS.month)}`;
 }
 
 interface WeekdayForms {
@@ -734,7 +732,7 @@ export const recurrenceEngine: RecurrenceEngine = {
 
     let tail = '';
     if (ends.type === 'after') {
-      tail = `, ${ends.count} ${plural(ends.count, 'раз', 'раза', 'раз')}`;
+      tail = `, ${ends.count} ${pluralRu(ends.count, RU_PLURALS.times)}`;
     } else if (ends.type === 'until') {
       tail = `, до ${shortDateRu(ends.untilLocal)}`;
     }

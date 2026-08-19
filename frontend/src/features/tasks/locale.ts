@@ -168,9 +168,12 @@ export const TASKS_RU = {
 
   /* ---- edit scope prompt ---- */
   scope: {
+    // Keys named to match `EditScopeStrings` in `@/shared/components`, so the
+    // shared dialog cannot be handed a title where it expects a description —
+    // which is exactly how this table and the calendar's ended up swapped.
     editTitle: 'Что изменить?',
+    editDescription: 'Это повторяющееся дело. Выберите, на что подействуют изменения.',
     deleteTitle: 'Что удалить?',
-    description: 'Это повторяющееся дело. Выберите, на что подействуют изменения.',
     deleteDescription: 'Это повторяющееся дело. Выберите, что именно удалить.',
     this: 'Только это',
     thisHint: 'Изменится один этот раз. Расписание останется прежним.',
@@ -181,7 +184,7 @@ export const TASKS_RU = {
     all: 'Все',
     allHint: 'Изменится вся серия. Уже выполненные разы не трогаем.',
     allDeleteHint: 'Серия закроется целиком. История выполненных дел сохранится.',
-    continue: 'Продолжить',
+    confirm: 'Продолжить',
   },
 
   /* ---- skip ---- */

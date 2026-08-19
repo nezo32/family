@@ -28,6 +28,11 @@ import { hashRefreshToken } from '../../core/auth/tokens.js';
 import { getConfig } from '../../core/config.js';
 import type { Db, Executor } from '../../core/db.js';
 import { AppError } from '../../core/errors.js';
+import {
+  dispatchAfterCommit,
+  emitIntent,
+  rolesWithPermission,
+} from '../notifications/notifications.service.js';
 import * as repo from './identity.repository.js';
 import type { MemberFilter } from './identity.repository.js';
 import type { FamilySettingsRow, UserIdentityRow } from './identity.schema.js';
@@ -306,12 +311,18 @@ export async function register(
       userAgent: ctx.userAgent,
     });
 
-    if (user.status !== 'active') return { user, issued: null };
+    if (user.status !== 'active') {
+      return { user, issued: null, dispatch: await emitPendingApproval(tx, user, 'password') };
+    }
 
     const issued = await issueSession(tx, user, ctx);
     await repo.touchLastLogin(tx, user.id);
-    return { user, issued };
+    return { user, issued, dispatch: null };
   });
+
+  // After the commit, never inside it: a worker that reads the intent before
+  // the transaction lands finds nothing and drops the fan-out for good.
+  if (result.dispatch) await dispatchAfterCommit([result.dispatch]);
 
   if (!result.issued) {
     return {
@@ -327,6 +338,82 @@ export async function register(
     outcome: { session: toSessionResponse(result.user, result.issued), pending: null },
     refreshToken: result.issued.refreshToken,
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* The approval queue's notifications (D3 §3.4)                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * «Кто-то стучится в дверь» — tell the people who can actually open it.
+ *
+ * D3 makes admin approval the gate on every signup, and the whole flow assumed
+ * somebody would notice the queue. Nothing told them: `member_pending_approval`
+ * shipped with a renderer, a preference row, a Russian label, a UI toggle and
+ * `high` priority — and no producer anywhere. A person who registered simply
+ * waited until an admin happened to open the members screen.
+ *
+ * Addressed by **permission, not by role name**: `rolesWithPermission` reads
+ * the catalog, so granting `member:approve` to a new role starts notifying it
+ * with no list here to update. The fan-out re-checks the permission per user,
+ * so a per-user deny still wins.
+ *
+ * Written on the caller's executor and dispatched by the caller after commit —
+ * a registration that rolls back must not leave a notification behind.
+ */
+async function emitPendingApproval(
+  x: Executor,
+  user: { id: string; displayName: string; status: UserStatus },
+  provider: AuthProvider,
+): Promise<() => Promise<void>> {
+  const intent = await emitIntent(x, {
+    type: 'member_pending_approval',
+    audience: { roles: rolesWithPermission('member:approve') },
+    actorId: user.id,
+    entityType: 'user',
+    entityId: user.id,
+    // One notification per applicant, however many times the callback replays.
+    dedupeKey: `member_pending_approval:${user.id}`,
+    payload: {
+      userId: user.id,
+      displayName: user.displayName,
+      actorName: user.displayName,
+      provider,
+      status: user.status,
+    },
+  });
+  return intent.dispatch;
+}
+
+/**
+ * The other half of the handshake: tell the applicant they are in.
+ *
+ * Sent to the approved user alone — an approval is not family news, and
+ * announcing every new member to everybody is the kind of noise D11 warns
+ * about. The approving admin is the actor and is therefore never notified of
+ * their own click.
+ */
+async function emitMemberApproved(
+  x: Executor,
+  targetId: string,
+  approvedBy: { userId: string; displayName: string },
+  role: Role,
+): Promise<() => Promise<void>> {
+  const intent = await emitIntent(x, {
+    type: 'member_approved',
+    audience: { users: [targetId] },
+    actorId: approvedBy.userId,
+    entityType: 'user',
+    entityId: targetId,
+    dedupeKey: `member_approved:${targetId}`,
+    payload: {
+      userId: targetId,
+      role,
+      approvedByName: approvedBy.displayName,
+      actorName: approvedBy.displayName,
+    },
+  });
+  return intent.dispatch;
 }
 
 export interface LoginResult {
@@ -702,7 +789,7 @@ export async function approveMember(
 ): Promise<MemberListItem> {
   assertCanAssignRole(auth.role, input.role);
 
-  return db.transaction(async (tx) => {
+  const { member, dispatch } = await db.transaction(async (tx) => {
     const patch: Parameters<typeof repo.transitionUserStatus>[3] = {
       status: 'active',
       role: input.role,
@@ -729,8 +816,18 @@ export async function approveMember(
       userAgent: ctx.userAgent,
     });
 
-    return toMemberListItem(approved);
+    const dispatch = await emitMemberApproved(
+      tx,
+      targetId,
+      { userId: auth.userId, displayName: auth.displayName },
+      input.role,
+    );
+
+    return { member: toMemberListItem(approved), dispatch };
   });
+
+  await dispatchAfterCommit([dispatch]);
+  return member;
 }
 
 export async function rejectMember(
