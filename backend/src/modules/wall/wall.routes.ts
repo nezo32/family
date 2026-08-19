@@ -506,7 +506,7 @@ const wallRoutes: FastifyPluginAsync = async (fastify) => {
         response: { 200: activityListSchema },
       },
     },
-    async (request) => wall.listActivity(getDb(), request.query),
+    async (request) => wall.listActivity(getDb(), callerOf(request), request.query),
   );
 };
 

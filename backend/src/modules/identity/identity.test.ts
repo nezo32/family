@@ -434,17 +434,31 @@ describe('last login method guard', () => {
 
 describe('bootstrap rule', () => {
   it('auto-approves the very first user regardless of email', () => {
-    expect(isBootstrapSignup('anyone@example.com', 0, '')).toBe(true);
+    expect(isBootstrapSignup('anyone@example.com', 0, '', 0)).toBe(true);
   });
 
-  it('auto-approves the configured bootstrap owner, case-insensitively', () => {
-    expect(isBootstrapSignup('Owner@Example.com', 5, 'owner@example.com')).toBe(true);
+  it('auto-approves the configured bootstrap owner while the family has no owner', () => {
+    // Rows exist (e.g. a pending signup) but nobody can approve anyone yet.
+    expect(isBootstrapSignup('Owner@Example.com', 5, 'owner@example.com', 0)).toBe(true);
+  });
+
+  it('is one-shot: the configured email stops working once an owner exists', () => {
+    // Otherwise BOOTSTRAP_OWNER_EMAIL is a permanent unauthenticated route to an
+    // owner account — registration verifies no email ownership, so knowing the
+    // configured string would be enough, forever.
+    expect(isBootstrapSignup('owner@example.com', 5, 'owner@example.com', 1)).toBe(false);
+  });
+
+  it('stays one-shot even when the existing owner has no email at all', () => {
+    // A Telegram or Apple-private-relay owner stores NULL, so the duplicate-email
+    // check cannot catch this; the owner count is what closes it.
+    expect(isBootstrapSignup('owner@example.com', 1, 'owner@example.com', 1)).toBe(false);
   });
 
   it('does not auto-approve anybody else', () => {
-    expect(isBootstrapSignup('other@example.com', 5, 'owner@example.com')).toBe(false);
-    expect(isBootstrapSignup('other@example.com', 5, '')).toBe(false);
-    expect(isBootstrapSignup(null, 5, 'owner@example.com')).toBe(false);
+    expect(isBootstrapSignup('other@example.com', 5, 'owner@example.com', 0)).toBe(false);
+    expect(isBootstrapSignup('other@example.com', 5, '', 0)).toBe(false);
+    expect(isBootstrapSignup(null, 5, 'owner@example.com', 0)).toBe(false);
   });
 });
 
@@ -617,19 +631,31 @@ describe('identity routes', () => {
     expect(cleared?.value).toBe('');
   });
 
-  it('keeps the refresh cookie when the database is unreachable', async () => {
-    // No Postgres in this suite, so a refresh with a plausible cookie fails as
-    // a 500 rather than a 401 — which is exactly the case worth pinning down.
-    // Clearing the cookie on every failure would mean a five-minute database
-    // outage signs the entire family out and forces everyone to log in again.
+  it('clears the refresh cookie for a dead token but never for an outage', async () => {
+    // The invariant: the cookie is dropped only when the token is genuinely
+    // rejected. Clearing it on *any* failure would mean a five-minute database
+    // outage signs the whole family out and makes everyone log in again.
+    //
+    // Asserted against both worlds on purpose. Whether a Postgres happens to be
+    // listening on the test URL is an accident of the machine, and a test that
+    // silently changes meaning depending on that is worse than no test.
     const response = await app.inject({
       method: 'POST',
       url: '/api/auth/refresh',
       cookies: { [refreshCookieName()]: 'this-token-does-not-exist' },
     });
 
-    expect(response.statusCode).toBeGreaterThanOrEqual(500);
-    expect(response.cookies.some((c) => c.name === refreshCookieName())).toBe(false);
+    const cookie = response.cookies.find((c) => c.name === refreshCookieName());
+
+    if (response.statusCode >= 500) {
+      // Database unreachable — the token may well be perfectly good. Keep it.
+      expect(cookie).toBeUndefined();
+    } else {
+      // Database answered and the token is not in it. Now it may go.
+      expect(response.statusCode).toBe(401);
+      expect(cookie).toBeDefined();
+      expect(cookie?.value).toBe('');
+    }
   });
 
   it('logs out idempotently with no cookie at all', async () => {

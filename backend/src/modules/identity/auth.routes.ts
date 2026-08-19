@@ -14,6 +14,7 @@ import {
 
 import { refreshCookieName, refreshCookieOptions } from '../../core/auth/tokens.js';
 import { getDb } from '../../core/db.js';
+import { assertLoginAttemptAllowed, clearLoginThrottle } from './login-throttle.js';
 import { AppError } from '../../core/errors.js';
 import * as service from './identity.service.js';
 import { rotateRefreshToken, toPublicUser } from './session.service.js';
@@ -126,21 +127,6 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
           keyGenerator: (request) => `login:ip:${request.ip}`,
         },
       },
-      /**
-       * Per-email dimension, which needs the parsed body and therefore cannot
-       * live in `config.rateLimit`'s default `onRequest` hook. Without it, a
-       * botnet spread over many addresses walks a single account's password
-       * list while every individual IP stays under its limit.
-       */
-      preHandler: app.rateLimit({
-        max: 8,
-        timeWindow: '15 minutes',
-        keyGenerator: (request) => {
-          const body = request.body as { email?: unknown } | undefined;
-          const email = typeof body?.email === 'string' ? body.email.toLowerCase() : '(none)';
-          return `login:email:${email}`;
-        },
-      }),
       schema: {
         tags: ['auth'],
         summary: 'Sign in with email and password',
@@ -149,11 +135,18 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request, reply) => {
+      // Per-account throttle. Counted before the password is checked, so a
+      // botnet spread over many IPs cannot walk one account's password list
+      // while each individual address stays under the per-IP limit.
+      await assertLoginAttemptAllowed(request.body.email);
+
       const { session, issued } = await service.login(
         getDb(),
         request.body,
         sessionContext(request),
       );
+
+      await clearLoginThrottle(request.body.email);
       setRefreshCookie(reply, issued.refreshToken);
       return session;
     },

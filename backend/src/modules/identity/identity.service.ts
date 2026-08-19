@@ -144,15 +144,26 @@ export function assertNotLastLoginMethod(
  * The D3 bootstrap rule.
  *
  * Somebody has to be able to approve the first signup, and there is nobody to do
- * it. Either the family is empty (the very first row) or the email matches the
- * configured `BOOTSTRAP_OWNER_EMAIL`; both become an auto-approved `owner`.
+ * it — so the very first row, or a signup matching `BOOTSTRAP_OWNER_EMAIL`,
+ * becomes an auto-approved `owner`.
+ *
+ * **It is one-shot.** The email path additionally requires that no active owner
+ * exists yet. Without that guard the configured address stays a permanent
+ * unauthenticated route to an owner account: registration verifies no email
+ * ownership, so knowing the configured string is enough, and the rule runs
+ * before the "registration is closed" gate. The `findUserByEmail` collision
+ * check does not save you either, because an owner who signed in through
+ * Telegram (never has an email) or Apple private relay (stored as NULL) leaves
+ * nothing for it to collide with.
  */
 export function isBootstrapSignup(
   email: string | null,
   existingUserCount: number,
   bootstrapEmail: string,
+  activeOwnerCount: number,
 ): boolean {
   if (existingUserCount === 0) return true;
+  if (activeOwnerCount > 0) return false;
   const configured = bootstrapEmail.trim().toLowerCase();
   if (!configured || !email) return false;
   return email.trim().toLowerCase() === configured;
@@ -246,7 +257,13 @@ export async function register(
 
     const settings = await repo.getFamilySettings(tx);
     const existingCount = await repo.countUsers(tx);
-    const bootstrap = isBootstrapSignup(input.email, existingCount, config.BOOTSTRAP_OWNER_EMAIL);
+    const activeOwners = await repo.countActiveOwners(tx);
+    const bootstrap = isBootstrapSignup(
+      input.email,
+      existingCount,
+      config.BOOTSTRAP_OWNER_EMAIL,
+      activeOwners,
+    );
 
     if (!settings.allowRegistration && !bootstrap) {
       throw new AppError('FORBIDDEN', 'Registration is currently closed');

@@ -5,7 +5,12 @@ import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 /** Dev-time API origin. In production Caddy serves the SPA and the API on one origin. */
-const API_PROXY_TARGET = 'http://localhost:3000';
+/**
+ * Where `/api` goes in dev. Overridable because port 3000 is a popular default
+ * and may already be taken by something else on the machine — a proxy silently
+ * pointing at another app is a confusing way to spend an afternoon.
+ */
+const API_PROXY_TARGET = process.env.VITE_API_PROXY_TARGET ?? 'http://localhost:3000';
 
 export default defineConfig({
   plugins: [

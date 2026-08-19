@@ -78,7 +78,9 @@ const envSchema = z
     BOOTSTRAP_OWNER_EMAIL: z.string().default(''),
 
     // --- Feature switches ---
-    ENABLE_SWAGGER: bool(true),
+    // Off unless asked for. The reference exposes no data, but a public
+    // instance has no reason to advertise its whole surface.
+    ENABLE_SWAGGER: bool(false),
     ENABLE_WORKERS: bool(true),
     RUN_MIGRATIONS_ON_BOOT: bool(false),
   })

@@ -650,6 +650,8 @@ export async function kudosTotals(
 /* -------------------------------------------------------------------------- */
 
 export interface ListActivityOptions {
+  /** Verb prefixes the caller may not see, e.g. `['goal.']`. */
+  deniedVerbPrefixes?: string[];
   limit: number;
   cursor?: Cursor | undefined;
   actorId?: string | undefined;
@@ -678,6 +680,20 @@ export async function listActivity(
         : eq(activityLog.verb, options.verb),
     );
   }
+  /**
+   * Verb families the caller may not read, excluded in SQL rather than after
+   * the fact so the page size and cursor stay honest. A `goal.*` summary bakes
+   * the amount into its frozen Russian sentence and copies it into `metadata`,
+   * so letting one row through is a finance disclosure.
+   */
+  for (const prefix of options.deniedVerbPrefixes ?? []) {
+    filters.push(sql`${activityLog.verb} not like ${`${prefix}%`}`);
+    // ...and the generic verbs that merely *point* at a denied entity.
+    filters.push(
+      sql`not (${activityLog.entityType} = ${prefix.replace(/\.$/, '')} and ${activityLog.verb} = 'comment.added')`,
+    );
+  }
+
   if (options.cursor) {
     const { createdAt, id } = options.cursor;
     const predicate = or(

@@ -26,14 +26,31 @@ import { pingRedis } from './core/redis.js';
  * Kept separate from `main.ts` so tests can build an app, drive it with
  * `app.inject()` and tear it down without binding a port.
  */
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+
+function sanitizeRequestId(value: unknown): string | undefined {
+  return typeof value === 'string' && REQUEST_ID_PATTERN.test(value) ? value : undefined;
+}
+
 export async function buildApp(): Promise<FastifyInstance> {
   const config = getConfig();
 
   const app = fastify({
     loggerInstance: undefined,
     logger: buildLoggerOptions(),
-    trustProxy: true,
-    genReqId: (req) => (req.headers['x-request-id'] as string | undefined) ?? randomUUID(),
+    /**
+     * Trust exactly one hop — the reverse proxy in front of us.
+     *
+     * `true` trusts the whole chain, which means `request.ip` becomes the
+     * left-most `X-Forwarded-For` entry: a value the client writes. That
+     * silently defeats every per-IP rate limit (an attacker just rotates the
+     * header) and poisons `audit_log.ip`.
+     */
+    trustProxy: 1,
+    // The inbound id is echoed in error bodies and written to every log line,
+    // so it is constrained rather than trusted: an unbounded client-controlled
+    // string is a log-injection primitive.
+    genReqId: (req) => sanitizeRequestId(req.headers['x-request-id']) ?? randomUUID(),
     requestIdHeader: 'x-request-id',
     disableRequestLogging: config.isTest,
     bodyLimit: 2 * 1024 * 1024,

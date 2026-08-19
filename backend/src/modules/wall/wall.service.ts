@@ -510,11 +510,28 @@ export async function kudosReceivedBy(db: Db, userId: string): Promise<number> {
 /* Activity                                                                    */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Verb families this caller may not read.
+ *
+ * The activity feed stores a pre-rendered sentence and a structured payload, so
+ * a `goal.contributed` row spells out the amount («Папа пополнил цель „Море“ на
+ * 15 000,00 ₽»). Children hold no `goal:*` permission at all (D4), so those rows
+ * must never reach them — including the generic `comment.added` rows that point
+ * at a goal.
+ */
+export function deniedVerbPrefixesFor(auth: AuthContext): string[] {
+  const denied: string[] = [];
+  if (!auth.can('goal:read')) denied.push('goal.');
+  return denied;
+}
+
 export async function listActivity(
   db: Db,
+  auth: AuthContext,
   query: ListActivityQuery,
 ): Promise<{ items: ActivityItem[]; nextCursor: string | null }> {
   const rows = await repo.listActivity(db, {
+    deniedVerbPrefixes: deniedVerbPrefixesFor(auth),
     limit: query.limit + 1,
     cursor: query.cursor ? repo.decodeCursor(query.cursor) : undefined,
     actorId: query.actorId,
@@ -584,7 +601,11 @@ export async function getWallFeed(
   const [pinnedRows, postRows, activityRows] = await Promise.all([
     cursor ? Promise.resolve([] as PostRow[]) : repo.listPinnedPosts(db, now),
     repo.listPosts(db, { limit: query.limit + 1, cursor, excludePinned: true, now }),
-    repo.listActivity(db, { limit: query.limit + 1, cursor }),
+    repo.listActivity(db, {
+      limit: query.limit + 1,
+      cursor,
+      deniedVerbPrefixes: deniedVerbPrefixesFor(auth),
+    }),
   ]);
 
   const merged = mergeStreams(

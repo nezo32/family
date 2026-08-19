@@ -231,7 +231,7 @@ const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request) => {
-      const result = await service.getIntentReceipts(getDb(), request.params.id);
+      const result = await service.getIntentReceipts(getDb(), request.params.id, auth(request).userId);
       return {
         intentId: result.intentId,
         escalationState: result.escalationState,

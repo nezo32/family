@@ -12,8 +12,15 @@
  */
 const RAW_BASE = import.meta.env.VITE_API_URL ?? '';
 
-/** Base origin, without a trailing slash. Empty string means "same origin". */
-export const API_BASE_URL = RAW_BASE.replace(/\/+$/, '');
+/**
+ * Base **origin**, without a trailing slash. Empty string means "same origin".
+ *
+ * A trailing `/api` is stripped defensively. `VITE_API_URL` is an origin, not a
+ * path, but `/api` is the obvious thing to put there — and getting it wrong
+ * produces requests to `/api/api/...`, which 404 on every screen while dev
+ * (where the variable is unset) keeps working perfectly.
+ */
+export const API_BASE_URL = RAW_BASE.replace(/\/+$/, '').replace(/\/api$/, '');
 
 /** Prefix every API route carries. */
 export const API_PREFIX = '/api';

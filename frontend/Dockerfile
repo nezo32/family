@@ -47,7 +47,8 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store,sharing=locked \
 # ─────────────────────────────────────────────────────────────
 FROM deps AS build
 
-ARG VITE_API_URL=/api
+# Origin only — the client appends /api itself. Empty = same origin.
+ARG VITE_API_URL=
 ARG VITE_VAPID_PUBLIC_KEY=""
 ARG VITE_TELEGRAM_BOT_USERNAME=""
 

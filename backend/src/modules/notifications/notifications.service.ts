@@ -819,10 +819,18 @@ export async function ackDelivery(
   };
 }
 
-/** What the *sender* sees: «Доставлено» / «Не доставлено» per recipient. */
+/**
+ * What the *sender* sees: «Доставлено» / «Не доставлено» per recipient.
+ *
+ * Scoped to the caller. Receipts expose who read what and when — a family-wide
+ * announcement would otherwise let any recipient, including a child, read every
+ * other member's read and acknowledgement timestamps. Only the person who
+ * caused the notification, or somebody it was actually sent to, may look.
+ */
 export async function getIntentReceipts(
   db: Db,
   intentId: string,
+  viewerId: string,
 ): Promise<{
   intentId: string;
   escalationState: EscalationState;
@@ -839,7 +847,14 @@ export async function getIntentReceipts(
 }> {
   const intent = await repo.getIntent(db, intentId);
   if (!intent) throw notFound('Notification');
+
   const deliveries = await repo.listDeliveriesForIntent(db, intentId);
+
+  // 404 rather than 403: an outsider must not learn the intent exists (D4).
+  const mayView =
+    intent.actorId === viewerId || deliveries.some((d) => d.userId === viewerId);
+  if (!mayView) throw notFound('Notification');
+
   return {
     intentId,
     escalationState: intent.escalationState,

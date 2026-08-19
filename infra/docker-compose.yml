@@ -141,7 +141,8 @@ services:
       # Vite bakes these into the bundle at BUILD time. They are here only for
       # local `docker compose build`; CI passes the same values as build-args.
       args:
-        VITE_API_URL: ${VITE_API_URL:-/api}
+        # Origin only; empty = same origin. `/api` would yield `/api/api/...`.
+        VITE_API_URL: ${VITE_API_URL:-}
         VITE_VAPID_PUBLIC_KEY: ${VITE_VAPID_PUBLIC_KEY:-}
         VITE_TELEGRAM_BOT_USERNAME: ${VITE_TELEGRAM_BOT_USERNAME:-}
     <<: *default-restart
