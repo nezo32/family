@@ -88,15 +88,15 @@ export function truncate(value: string, max: number): string {
   return `${cut.trimEnd()}…`;
 }
 
-/** Russian plural picker: `plural(3, 'задача', 'задачи', 'задач')`. */
-export function plural(n: number, one: string, few: string, many: string): string {
-  const abs = Math.abs(n) % 100;
-  const last = abs % 10;
-  if (abs > 10 && abs < 20) return many;
-  if (last > 1 && last < 5) return few;
-  if (last === 1) return one;
-  return many;
-}
+/**
+ * Russian plural agreement comes from `@family/shared`.
+ *
+ * This file used to carry its own `plural(n, one, few, many)` — the fourth of
+ * six copies of the same rule, and one of two using the positional arity that
+ * shadowed the tuple form everything else uses. Re-exported under the local
+ * name so the call sites below read the same as before.
+ */
+export { pluralRu as plural } from '@family/shared';
 
 /** Money arrives as integer minor units (D6) — never a float. */
 function money(payload: NotificationPayload, key: string): string | null {
@@ -183,7 +183,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
         body: joinBody(
           `${actor(p)}: ${text(p, 'title', 'задача закрыта')}`,
           points !== null && points > 0
-            ? `+${points} ${plural(points, 'балл', 'балла', 'баллов')}`
+            ? `+${points} ${pluralRu(points, RU_PLURALS.point)}`
             : null,
         ),
         navigate: route('/tasks', taskId),
@@ -251,7 +251,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
         title: 'День рождения',
         body: joinBody(
           `Сегодня празднует ${name}`,
-          age !== null && age > 0 ? `${age} ${plural(age, 'год', 'года', 'лет')}` : null,
+          age !== null && age > 0 ? `${age} ${pluralRu(age, RU_PLURALS.year)}` : null,
         ),
         navigate: '/calendar',
       };

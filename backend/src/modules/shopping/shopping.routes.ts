@@ -40,6 +40,14 @@ import { ShoppingService, type ShoppingActor } from './shopping.service.js';
  * exactly the participation this app wants. Only owning a whole list —
  * creating, archiving, deleting, clearing the bought tail, editing the
  * catalogue — needs `shopping:list:manage`.
+ *
+ * ## 404, not 403
+ *
+ * Every route gated on `shopping:read` carries `notFoundOnDeny: true`: a caller
+ * without it — a guest holds no `shopping:*` at all — must not learn the family
+ * keeps a shopping list (D4). The `shopping:write` and `shopping:list:manage`
+ * routes keep 403 on purpose: that caller holds `shopping:read`, is looking at
+ * the list, and "you may not do that to it" is the honest answer.
  */
 
 const idParamsSchema = z.object({ id: idSchema });
@@ -72,7 +80,7 @@ const shoppingRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/shopping/lists',
     {
-      config: { permission: 'shopping:read' },
+      config: { permission: 'shopping:read', notFoundOnDeny: true },
       schema: {
         tags: ['shopping'],
         summary: 'Списки покупок',
@@ -135,7 +143,7 @@ const shoppingRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/shopping/lists/:id/items',
     {
-      config: { permission: 'shopping:read' },
+      config: { permission: 'shopping:read', notFoundOnDeny: true },
       schema: {
         tags: ['shopping'],
         summary: 'Позиции списка',
@@ -279,7 +287,7 @@ const shoppingRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/shopping/products/suggest',
     {
-      config: { permission: 'shopping:read' },
+      config: { permission: 'shopping:read', notFoundOnDeny: true },
       schema: {
         tags: ['shopping'],
         summary: 'Автодополнение по истории семьи',
@@ -294,7 +302,7 @@ const shoppingRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/shopping/products/frequent',
     {
-      config: { permission: 'shopping:read' },
+      config: { permission: 'shopping:read', notFoundOnDeny: true },
       schema: {
         tags: ['shopping'],
         summary: 'Часто покупаемое',

@@ -13,7 +13,7 @@ fs.mkdirSync(OUT, { recursive: true });
 const EMAIL = 'papa@example.com';
 const PASSWORD = 'ReviewMe!23456';
 
-test.use({ locale: 'ru-RU', timezoneId: 'Europe/Moscow' });
+test.use({ locale: 'ru-RU', timezoneId: 'Europe/Moscow', serviceWorkers: 'block' });
 test.setTimeout(180_000);
 
 type Console = { url: string; messages: string[] };
@@ -95,12 +95,21 @@ async function audit(page: Page, name: string) {
 }
 
 async function login(page: Page) {
-  await page.goto('/login');
-  await page.getByLabel(/почт|email|e-mail/i).first().fill(EMAIL);
-  await page.locator('input[type="password"]').first().fill(PASSWORD);
-  await page.locator('form button[type="submit"]').first().click();
-  await page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 20_000 });
-  await settle(page);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await page.goto('/login');
+    await settle(page, 400);
+    await page.locator('input[type="email"]').first().fill(EMAIL);
+    await page.locator('input[type="password"]').first().fill(PASSWORD);
+    await page.locator('form button[type="submit"]').first().click();
+    try {
+      await page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 15_000 });
+      await settle(page);
+      return;
+    } catch {
+      console.log('login attempt failed, retrying', attempt);
+    }
+  }
+  throw new Error('login failed');
 }
 
 async function setDark(page: Page, dark: boolean) {
@@ -180,14 +189,14 @@ test('visual walk', async ({ page }, testInfo) => {
   }
   // dump calendar control labels for the report
   const calControls = await page
-    .locator('main button, main [role="tab"]')
+    .locator('button, [role="tab"]')
     .evaluateAll((els) => els.map((e) => (e.textContent || '').trim()).filter(Boolean).slice(0, 30));
   console.log('CALENDAR CONTROLS', JSON.stringify(calControls));
 
   // ---------- detail pages ----------
   await page.goto('/goals');
   await settle(page);
-  const goalLink = page.locator('main a[href^="/goals/"]').first();
+  const goalLink = page.locator('a[href^="/goals/"]').first();
   if (await goalLink.count()) {
     await goalLink.click();
     await shot(page, `${t}-30-goal-detail`);
@@ -198,7 +207,7 @@ test('visual walk', async ({ page }, testInfo) => {
 
   await page.goto('/tasks');
   await settle(page);
-  const taskLink = page.locator('main a[href^="/tasks/"]').first();
+  const taskLink = page.locator('a[href^="/tasks/"]').first();
   if (await taskLink.count()) {
     await taskLink.click();
     await shot(page, `${t}-31-task-detail`);
@@ -209,7 +218,7 @@ test('visual walk', async ({ page }, testInfo) => {
 
   await page.goto('/shopping');
   await settle(page);
-  const listLink = page.locator('main a[href^="/shopping/"]').first();
+  const listLink = page.locator('a[href^="/shopping/"]').first();
   if (await listLink.count()) {
     await listLink.click();
     await shot(page, `${t}-32-shopping-list`);

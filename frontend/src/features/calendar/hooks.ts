@@ -113,7 +113,7 @@ export function useIsPhone(): boolean {
  */
 export function useFamilyTimeZone(): string {
   const { data: me } = useMe();
-  return me?.family?.timezone ?? getFamilyTimeZone();
+  return me?.family.timezone ?? getFamilyTimeZone();
 }
 
 /* -------------------------------------------------------------------------- */

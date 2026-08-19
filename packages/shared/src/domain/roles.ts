@@ -216,17 +216,47 @@ export function hasPermission(
   return (permissions as readonly Permission[]).includes(required);
 }
 
+/** The answer {@link resolveScope} gives. `null` means "denied entirely". */
+export type PermissionScope = 'any' | 'own' | null;
+
 /**
- * Resolves an `own`/`any` permission pair: returns `'any'` when the actor may act
- * on every row, `'own'` when limited to their own rows, `null` when denied.
+ * Anything that can answer "do you hold this permission string?" — an array or
+ * a `Set`, of `Permission` or of plain strings.
+ *
+ * The looser `string` element type is deliberate: the frontend builds its set
+ * from whatever `GET /api/me` returned, which a stale bundle may not have in
+ * its `Permission` union, and narrowing that would only hide the mismatch.
  */
-export function resolveScope(
-  permissions: readonly Permission[],
-  ownPermission: Permission,
-  anyPermission: Permission,
-): 'any' | 'own' | null {
-  if (hasPermission(permissions, anyPermission)) return 'any';
-  if (hasPermission(permissions, ownPermission)) return 'own';
+export type PermissionSource = readonly string[] | ReadonlySet<string>;
+
+function holds(source: PermissionSource, permission: string): boolean {
+  return source instanceof Set
+    ? source.has(permission)
+    : (source as readonly string[]).includes(permission);
+}
+
+/**
+ * Resolves the `own`/`any` pair under `base`: `'any'` when the actor may act on
+ * every row, `'own'` when limited to their own, `null` when denied.
+ *
+ * This is the **single** implementation. It used to be re-inlined in
+ * `backend/src/core/auth/context.ts` (as `AuthContext.scopeFor`) and in
+ * `frontend/src/shared/auth/use-can.ts` (as `resolveScopeFor`), and the two had
+ * drifted: the client had an extra `if (has(base)) return 'any'` branch.
+ *
+ * That branch is **deliberately not kept**, and the server's stricter answer
+ * wins, because a bare permission is not always the elevated one. `goal:read`
+ * and `goal:read:any` both exist: a teen holds the bare `goal:read` and must
+ * *not* be told they may read every goal. Treating a bare hold as `'any'` would
+ * have rendered controls that the API answers with 403 — and, for `goal:read`,
+ * would have widened what the UI believed the teen could see. Callers that want
+ * a plain "may I?" answer on an unscoped permission should ask
+ * {@link hasPermission} (or the frontend's `can()`), which looks the string up
+ * verbatim; `resolveScope` only ever answers about a scoped pair.
+ */
+export function resolveScope(permissions: PermissionSource, base: string): PermissionScope {
+  if (holds(permissions, `${base}:any`)) return 'any';
+  if (holds(permissions, `${base}:own`)) return 'own';
   return null;
 }
 

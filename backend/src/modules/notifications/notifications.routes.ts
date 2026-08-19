@@ -45,6 +45,12 @@ import * as service from './notifications.service.js';
  * holds, including `guest`, because muting your own notifications must never be
  * a privilege.
  *
+ * The reads add `notFoundOnDeny: true`, so a member whose grant has been
+ * explicitly revoked sees an absent section rather than a forbidden one (D4).
+ * The writes stay 403: that revocation is worth telling the caller about when
+ * they try to change something, and it confirms nothing they could not already
+ * see.
+ *
  * ## These endpoints must NEVER be cached by the service worker
  *
  * The frontend's Workbox config must register a `NetworkOnly` route for
@@ -86,7 +92,7 @@ const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/notifications',
     {
-      config: { permission: 'notification:manage:own' },
+      config: { permission: 'notification:manage:own', notFoundOnDeny: true },
       schema: {
         tags: ['notifications'],
         summary: 'In-app notification inbox (the bell)',
@@ -107,7 +113,7 @@ const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/notifications/unread-count',
     {
-      config: { permission: 'notification:manage:own' },
+      config: { permission: 'notification:manage:own', notFoundOnDeny: true },
       schema: {
         tags: ['notifications'],
         summary: 'Unread count for the bell badge and navigator.setAppBadge()',
@@ -222,7 +228,7 @@ const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/notifications/intents/:id/receipts',
     {
-      config: { permission: 'notification:manage:own' },
+      config: { permission: 'notification:manage:own', notFoundOnDeny: true },
       schema: {
         tags: ['notifications'],
         summary: 'Per-recipient delivery receipts for one intent',
@@ -256,7 +262,7 @@ const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/notifications/preferences',
     {
-      config: { permission: 'notification:manage:own' },
+      config: { permission: 'notification:manage:own', notFoundOnDeny: true },
       schema: {
         tags: ['notifications'],
         summary: 'Resolved preference matrix, quiet hours and channel readiness',
@@ -338,7 +344,7 @@ const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/notifications/subscriptions',
     {
-      config: { permission: 'notification:manage:own' },
+      config: { permission: 'notification:manage:own', notFoundOnDeny: true },
       schema: {
         tags: ['notifications'],
         summary: 'Devices subscribed to push (never returns the endpoint)',
@@ -463,7 +469,7 @@ const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/notifications/digest',
     {
-      config: { permission: 'notification:manage:own' },
+      config: { permission: 'notification:manage:own', notFoundOnDeny: true },
       schema: {
         tags: ['notifications'],
         summary: 'Weekly digest subscription',
@@ -502,7 +508,7 @@ const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/notifications/telegram',
     {
-      config: { permission: 'notification:manage:own' },
+      config: { permission: 'notification:manage:own', notFoundOnDeny: true },
       schema: {
         tags: ['notifications'],
         summary: 'Telegram link status',

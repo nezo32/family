@@ -1,4 +1,4 @@
-import { plural, pluralize } from '@/shared/lib/i18n';
+import { PLURALS, plural, pluralize } from '@/shared/lib/i18n';
 
 /**
  * Every user-facing string on the «Сегодня» screen (D7).
@@ -88,11 +88,11 @@ export const TODAY_RU = {
  * counted phrase on this screen goes through the shared `pluralize` helper so
  * the exception is handled in exactly one place.
  */
-export const taskCount = (n: number): string => pluralize(n, ['задача', 'задачи', 'задач']);
-export const eventCount = (n: number): string => pluralize(n, ['событие', 'события', 'событий']);
-export const itemCount = (n: number): string => pluralize(n, ['товар', 'товара', 'товаров']);
-export const requestCount = (n: number): string => pluralize(n, ['заявка', 'заявки', 'заявок']);
-export const pointCount = (n: number): string => pluralize(n, ['балл', 'балла', 'баллов']);
-export const choreCount = (n: number): string => pluralize(n, ['дело', 'дела', 'дел']);
+export const taskCount = (n: number): string => pluralize(n, PLURALS.task);
+export const eventCount = (n: number): string => pluralize(n, PLURALS.event);
+export const itemCount = (n: number): string => pluralize(n, PLURALS.item);
+export const requestCount = (n: number): string => pluralize(n, PLURALS.request);
+export const pointCount = (n: number): string => pluralize(n, PLURALS.point);
+export const choreCount = (n: number): string => pluralize(n, PLURALS.chore);
 /** The bare word, for a figure already rendered next to it. */
-export const pointWord = (n: number): string => plural(n, ['балл', 'балла', 'баллов']);
+export const pointWord = (n: number): string => plural(n, PLURALS.point);

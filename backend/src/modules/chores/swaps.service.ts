@@ -2,8 +2,11 @@ import type { SwapCreate, SwapListQuery, SwapRespond, SwapResponse, SwapStatus }
 
 import type { Db, Executor } from '../../core/db.js';
 import { badRequest, conflict, forbidden, notFound } from '../../core/errors.js';
-import { enqueue } from '../../core/queue/queues.js';
-import { notificationIntents } from '../notifications/notifications.schema.js';
+import {
+  dispatchAfterCommit,
+  emitIntent,
+  type NotificationAudience,
+} from '../notifications/notifications.service.js';
 import * as repo from './chores.repository.js';
 import type { ChoreSwapRow } from './chores.schema.js';
 import type { ChoreActor } from './points.service.js';
@@ -54,11 +57,25 @@ export interface ChoreIntent {
   /** Stable, caller-computed. The dedupe guard and the BullMQ job id (D10). */
   readonly dedupeKey: string;
   readonly payload: Record<string, unknown>;
-  readonly audience: Record<string, unknown>;
+  /**
+   * Who is told. **Never optional and never `{}`** — an unset audience is
+   * stored as `{}`, which the fan-out reads as `{ everyone: true }`.
+   */
+  readonly audience: NotificationAudience;
 }
 
+/**
+ * The queue hand-off the emitter defers to its caller.
+ *
+ * Emission happens on the caller's transaction so a rolled-back swap cannot
+ * notify anybody; the *enqueue* has to wait for the commit, or the worker reads
+ * a row that is not there yet. Returning the thunk is what makes that ordering
+ * the caller's explicit decision instead of an easy thing to forget.
+ */
+export type IntentDispatch = () => Promise<void>;
+
 /** Injected so tests exercise the decision without needing Redis. */
-export type ChoreIntentEmitter = (ex: Executor, intent: ChoreIntent) => Promise<void>;
+export type ChoreIntentEmitter = (ex: Executor, intent: ChoreIntent) => Promise<IntentDispatch>;
 
 export interface SwapsServiceOptions {
   readonly now?: () => Date;
@@ -80,7 +97,7 @@ export class SwapsService {
   /* ------------------------------ request ------------------------------ */
 
   async request(actor: ChoreActor, input: SwapCreate): Promise<SwapResponse> {
-    return this.db.transaction(async (tx) => {
+    const { response, dispatch } = await this.db.transaction(async (tx) => {
       const occurrence = await repo.findOccurrence(tx, input.occurrenceId);
       if (!occurrence) throw notFound('Occurrence');
 
@@ -119,7 +136,7 @@ export class SwapsService {
       // The partial unique index rejected it — there is already a live offer.
       if (!row) throw conflict('По этой задаче уже есть активное предложение обмена');
 
-      await this.emitIntent(tx, {
+      const dispatch = await this.emitIntent(tx, {
         type: 'chore_swap_requested',
         actorId: actor.id,
         entityType: 'task_occurrence',
@@ -128,9 +145,11 @@ export class SwapsService {
         payload: {
           swapId: row.id,
           occurrenceId: row.occurrenceId,
+          title: occurrence.title,
           occurrenceTitle: occurrence.title,
           dueAt: occurrence.dueAt.toISOString(),
           fromUserId: row.fromUserId,
+          actorName: actor.displayName,
           fromUserName: actor.displayName,
           toUserId: row.toUserId,
           bonusPoints: row.bonusPoints,
@@ -138,17 +157,22 @@ export class SwapsService {
           isOpenOffer: row.toUserId === null,
         },
         // An open offer goes to the whole family; a directed one to one person.
-        audience: row.toUserId === null ? {} : { users: [row.toUserId] },
+        // `{ everyone: true }` is spelled out rather than left to the column
+        // default, so "everyone" is always a decision somebody made.
+        audience: row.toUserId === null ? { everyone: true } : { users: [row.toUserId] },
       });
 
-      return toSwapResponse(row, occurrence.title, occurrence.dueAt);
+      return { response: toSwapResponse(row, occurrence.title, occurrence.dueAt), dispatch };
     });
+
+    await dispatchAfterCommit([dispatch]);
+    return response;
   }
 
   /* ------------------------------ respond ------------------------------ */
 
   async respond(actor: ChoreActor, swapId: string, input: SwapRespond): Promise<SwapResponse> {
-    return this.db.transaction(async (tx) => {
+    const { response, dispatch } = await this.db.transaction(async (tx) => {
       const swap = await repo.findSwapById(tx, swapId);
       if (!swap) throw notFound('Swap');
 
@@ -187,8 +211,18 @@ export class SwapsService {
         const reassigned = await repo.reassignOccurrence(tx, swap.occurrenceId, taker, 'swap');
         if (!reassigned) throw conflict('Задача больше не запланирована');
 
-        await this.emitAnswered(tx, actor, updated, occurrence.title, occurrence.dueAt, 'accepted');
-        return toSwapResponse(updated, occurrence.title, occurrence.dueAt);
+        const dispatch = await this.emitAnswered(
+          tx,
+          actor,
+          updated,
+          occurrence.title,
+          occurrence.dueAt,
+          'accepted',
+        );
+        return {
+          response: toSwapResponse(updated, occurrence.title, occurrence.dueAt),
+          dispatch,
+        };
       }
 
       const updated = await repo.transitionSwap(tx, swapId, 'declined', {
@@ -197,15 +231,25 @@ export class SwapsService {
       });
       if (!updated) throw conflict('Это предложение уже обработано');
 
-      await this.emitAnswered(tx, actor, updated, occurrence.title, occurrence.dueAt, 'declined');
-      return toSwapResponse(updated, occurrence.title, occurrence.dueAt);
+      const dispatch = await this.emitAnswered(
+        tx,
+        actor,
+        updated,
+        occurrence.title,
+        occurrence.dueAt,
+        'declined',
+      );
+      return { response: toSwapResponse(updated, occurrence.title, occurrence.dueAt), dispatch };
     });
+
+    await dispatchAfterCommit([dispatch]);
+    return response;
   }
 
   /* ------------------------------- cancel ------------------------------ */
 
   async cancel(actor: ChoreActor, swapId: string): Promise<SwapResponse> {
-    return this.db.transaction(async (tx) => {
+    const { response, dispatch } = await this.db.transaction(async (tx) => {
       const swap = await repo.findSwapById(tx, swapId);
       if (!swap) throw notFound('Swap');
       if (swap.fromUserId !== actor.id && !actor.can('task:assign:any')) {
@@ -221,9 +265,12 @@ export class SwapsService {
 
       const title = occurrence?.title ?? '';
       const dueAt = occurrence?.dueAt ?? updated.createdAt;
-      await this.emitAnswered(tx, actor, updated, title, dueAt, 'cancelled');
-      return toSwapResponse(updated, title, dueAt);
+      const dispatch = await this.emitAnswered(tx, actor, updated, title, dueAt, 'cancelled');
+      return { response: toSwapResponse(updated, title, dueAt), dispatch };
     });
+
+    await dispatchAfterCommit([dispatch]);
+    return response;
   }
 
   /* ------------------------------- expire ------------------------------ */
@@ -307,13 +354,13 @@ export class SwapsService {
     occurrenceTitle: string,
     dueAt: Date,
     outcome: Extract<SwapStatus, 'accepted' | 'declined' | 'cancelled'>,
-  ): Promise<void> {
+  ): Promise<IntentDispatch> {
     // The asker always wants to know. On a cancel the counterparty does too.
     const recipients = new Set<string>([swap.fromUserId]);
     if (swap.toUserId !== null) recipients.add(swap.toUserId);
     recipients.delete(actor.id);
 
-    await this.emitIntent(ex, {
+    return this.emitIntent(ex, {
       type: 'chore_swap_answered',
       actorId: actor.id,
       entityType: 'task_occurrence',
@@ -322,10 +369,13 @@ export class SwapsService {
       payload: {
         swapId: swap.id,
         occurrenceId: swap.occurrenceId,
+        title: occurrenceTitle,
         occurrenceTitle,
         dueAt: dueAt.toISOString(),
         outcome,
+        accepted: outcome === 'accepted',
         respondedById: actor.id,
+        actorName: actor.displayName,
         respondedByName: actor.displayName,
         fromUserId: swap.fromUserId,
         toUserId: swap.toUserId,
@@ -340,27 +390,30 @@ export class SwapsService {
 /* -------------------------------------------------------------------------- */
 
 /**
- * One intent row plus one dispatch job, both keyed by the same stable string,
- * so a retried transaction cannot tell the family twice (D10).
+ * Hands a chore intent to the notifications service (D8: a cross-module
+ * *service* call, never a repository or schema one).
+ *
+ * This used to insert into `notification_intents` by hand with a hardcoded
+ * `priority: 'normal'`. `chore_swap_requested` is `high` in the catalog, and
+ * per D11 only `high`/`critical` have an escalation deadline at all — so every
+ * «поменяемся?» that nobody answered sat there forever instead of escalating.
+ * The priority now comes from `NOTIFICATION_TYPE_DEFAULT_PRIORITY`, which is
+ * `emitIntent`'s default, so there is nothing here to get out of step.
  */
-export async function emitChoreIntent(ex: Executor, intent: ChoreIntent): Promise<void> {
-  const [row] = await ex
-    .insert(notificationIntents)
-    .values({
-      type: intent.type,
-      actorId: intent.actorId,
-      entityType: intent.entityType,
-      entityId: intent.entityId,
-      payload: intent.payload,
-      audience: intent.audience,
-      dedupeKey: intent.dedupeKey,
-      priority: 'normal',
-    })
-    .onConflictDoNothing()
-    .returning({ id: notificationIntents.id });
-
-  if (!row) return;
-  await enqueue('notification.dispatch', { intentId: row.id }, { jobId: intent.dedupeKey });
+export async function emitChoreIntent(
+  ex: Executor,
+  intent: ChoreIntent,
+): Promise<IntentDispatch> {
+  const result = await emitIntent(ex, {
+    type: intent.type,
+    audience: intent.audience,
+    actorId: intent.actorId,
+    entityType: intent.entityType,
+    entityId: intent.entityId,
+    payload: intent.payload,
+    dedupeKey: intent.dedupeKey,
+  });
+  return result.dispatch;
 }
 
 /* -------------------------------------------------------------------------- */

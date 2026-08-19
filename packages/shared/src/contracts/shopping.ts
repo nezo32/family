@@ -1,11 +1,12 @@
 import { z } from 'zod';
 
 import {
-  cursorPaginationSchema,
+  cursorPaginationWithLimit,
   idSchema,
   isoDateTimeSchema,
   nonEmptyString,
   paginatedSchema,
+  queryBooleanSchema,
 } from './common.js';
 
 /**
@@ -70,7 +71,7 @@ export const shoppingListResponseSchema = z.object({
 export type ShoppingListResponse = z.infer<typeof shoppingListResponseSchema>;
 
 export const listShoppingListsQuerySchema = z.object({
-  includeArchived: z.coerce.boolean().default(false),
+  includeArchived: queryBooleanSchema.default(false),
 });
 export type ListShoppingListsQuery = z.infer<typeof listShoppingListsQuerySchema>;
 
@@ -168,11 +169,21 @@ export const shoppingItemResponseSchema = z.object({
 });
 export type ShoppingItemResponse = z.infer<typeof shoppingItemResponseSchema>;
 
-export const listShoppingItemsQuerySchema = cursorPaginationSchema.extend({
+/**
+ * A shopping list is read as one screen, not as pages: the client asks for
+ * `limit: 200` and scrolls. That is why this query — alone among the list
+ * endpoints — raises the ceiling instead of paginating, and why the raise is
+ * spelled out here rather than by loosening `MAX_PAGE_SIZE` for everybody.
+ */
+export const SHOPPING_ITEMS_MAX_LIMIT = 200;
+
+export const listShoppingItemsQuerySchema = cursorPaginationWithLimit(
+  SHOPPING_ITEMS_MAX_LIMIT,
+).extend({
   state: z.array(shoppingItemStateSchema).optional(),
   category: z.string().max(64).optional(),
   /** Group the response by `category` for the aisle-ordered view. */
-  groupByCategory: z.coerce.boolean().default(false),
+  groupByCategory: queryBooleanSchema.default(false),
 });
 export type ListShoppingItemsQuery = z.infer<typeof listShoppingItemsQuerySchema>;
 

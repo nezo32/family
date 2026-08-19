@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import type { Permission } from '@family/shared';
 import { ERROR_MESSAGES_RU } from '@/shared/api/errors-ru';
 import { clearAccessToken } from '@/shared/api/token-store';
+import { makeMe } from '@/test/me';
 import TodayPage from './pages/TodayPage';
 import { TODAY_RU, taskCount } from './locale';
 import type { DashboardEvent, DashboardTask, TodayResponse, WeekResponse } from './types';
@@ -56,19 +57,15 @@ const CHILD_PERMISSIONS: Permission[] = [
   'shopping:read',
 ];
 
-function makeMe(permissions: Permission[]) {
-  return {
+/** The `/api/me` body this screen is rendered against. */
+function meBody(permissions: Permission[]) {
+  return makeMe({
     id: ME_ID,
     email: 'pasha@example.com',
     displayName: 'Паша Иванов',
-    avatarUrl: null,
-    role: 'adult',
-    status: 'active',
-    timezone: 'Europe/Moscow',
     permissions,
-    providers: [],
-    family: { name: 'Ивановы', timezone: 'Europe/Moscow', currency: 'RUB', weekStartsOn: 1 },
-  };
+    family: { name: 'Ивановы' },
+  });
 }
 
 function makeTask(overrides: Partial<DashboardTask> = {}): DashboardTask {
@@ -216,7 +213,7 @@ function stubApi(options: StubOptions = {}): void {
     'fetch',
     vi.fn((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
-      if (url.includes('/api/me')) return Promise.resolve(jsonResponse(200, makeMe(permissions)));
+      if (url.includes('/api/me')) return Promise.resolve(jsonResponse(200, meBody(permissions)));
       if (url.includes('/api/dashboard/today')) return Promise.resolve(jsonResponse(200, today));
       if (url.includes('/api/dashboard/week')) return Promise.resolve(jsonResponse(200, WEEK));
       if (url.includes('/complete')) {

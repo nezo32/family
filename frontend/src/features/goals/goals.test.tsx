@@ -4,8 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import type { GoalResponse, Permission, PublicUser } from '@family/shared';
-import type { Me } from '@/shared/auth/types';
 import { meKeys } from '@/shared/auth/use-me';
+import { makeMe } from '@/test/me';
 import { formatMoney } from '@/shared/lib/format';
 import { GOALS_RU } from './locale';
 import {
@@ -47,21 +47,6 @@ const ADULT_PERMISSIONS: Permission[] = [
 /** A teen holds `goal:read` and nothing else (see the matrix in `roles.ts`). */
 const TEEN_PERMISSIONS: Permission[] = ['goal:read', 'member:read'];
 
-function makeMe(permissions: Permission[]): Me {
-  return {
-    id: '11111111-1111-4111-8111-111111111111',
-    email: 'mama@example.com',
-    displayName: 'Мама',
-    avatarUrl: null,
-    role: 'adult',
-    status: 'active',
-    timezone: 'Europe/Moscow',
-    permissions,
-    providers: [],
-    family: { name: 'Семья', timezone: 'Europe/Moscow', currency: 'RUB', weekStartsOn: 1 },
-  };
-}
-
 function makeGoal(overrides: Partial<GoalResponse> = {}): GoalResponse {
   return {
     id: '22222222-2222-4222-8222-222222222222',
@@ -96,7 +81,10 @@ function renderAs(permissions: Permission[], ui: ReactNode) {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   // The real permission source: the `['me']` cache entry `useCan()` reads.
-  queryClient.setQueryData(meKeys.detail(), makeMe(permissions));
+  queryClient.setQueryData(
+    meKeys.detail(),
+    makeMe({ id: '11111111-1111-4111-8111-111111111111', permissions }),
+  );
 
   return render(
     <QueryClientProvider client={queryClient}>

@@ -211,7 +211,7 @@ export function useAssignableRoles(): Role[] {
 
   return useMemo(() => {
     if (!isReady || !me || !can('member:role:assign')) return [];
-    return assignableRoles(me.role);
+    return assignableRoles(me.user.role);
   }, [can, isReady, me]);
 }
 
@@ -227,6 +227,6 @@ export function useAssignableRoles(): Role[] {
 export function useCanManageMember(target: RosterMember | null): boolean {
   const { data: me } = useMe();
   if (!me || !target) return false;
-  if (me.id === target.id) return false;
-  return canManageRole(me.role, target.role);
+  if (me.user.id === target.id) return false;
+  return canManageRole(me.user.role, target.role);
 }

@@ -53,17 +53,29 @@ import { ChoresService, type ChoreActor } from './chores.service.js';
  * preview endpoint exists precisely so fairness is auditable by the people it
  * applies to.
  *
- * Swaps are the interesting case. A teen or child may **request** one with
- * `task:update:own` — asking your sister to take the bins is exactly the
- * negotiation this app wants to support. **Accepting** hands responsibility
- * over, so `POST /chores/swaps/:id/respond` also admits `task:assign:any` and
- * the service requires it for the `accept` branch specifically. There is no
- * `chore:swap:approve` string in the shared catalog (D4: the catalog is the
- * single source of truth), so the adult-level assignment permission is the one
- * that gates the handoff.
+ * Swaps are the interesting case, and they are guarded by the catalog strings
+ * written for them: `chore:swap:request` and `chore:swap:accept`. Both are held
+ * from `child` upwards, which is the point — asking your sister to take the
+ * bins, and volunteering to take hers, is exactly the negotiation this app
+ * exists to support.
+ *
+ * These guards used to be `task:update:own` / `task:assign:any`, which a child
+ * does not hold, so the role matrix granted a child two permissions the router
+ * then refused to honour. `POST /chores/swaps/:id/respond` admits either swap
+ * permission because declining is not a handoff; `swaps.service.ts` requires
+ * `chore:swap:accept` on the accept branch specifically, so the taking-over
+ * decision stays in the service where the rest of the swap rules live.
  *
  * `GET /chores/fairness` is `task:read:any` and returns the neutral load bar.
  * It has no rank field and must never grow one (D5).
+ *
+ * ## 404, not 403
+ *
+ * Every read here carries `notFoundOnDeny: true`. A caller without
+ * `task:read:*` — a guest — must not learn the family runs rotations at all,
+ * and one without `task:read:any` must not learn there is a family-wide
+ * fairness board (D4). Writes keep 403: they are all reachable by somebody who
+ * can already see what they are asking to change.
  */
 
 const idParamsSchema = z.object({ id: idSchema });
@@ -94,7 +106,7 @@ const choresRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/chores/rotations',
     {
-      config: { permission: 'task:read:any' },
+      config: { permission: 'task:read:any', notFoundOnDeny: true },
       schema: {
         tags: ['chores'],
         summary: 'Список дежурств',
@@ -122,7 +134,7 @@ const choresRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/chores/rotations/:id',
     {
-      config: { permission: 'task:read:any' },
+      config: { permission: 'task:read:any', notFoundOnDeny: true },
       schema: {
         tags: ['chores'],
         summary: 'Дежурство',
@@ -168,7 +180,7 @@ const choresRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/chores/rotations/:id/preview',
     {
-      config: { permission: 'task:read:any' },
+      config: { permission: 'task:read:any', notFoundOnDeny: true },
       schema: {
         tags: ['chores'],
         summary: 'Сухой прогон: кого выберет дежурство и почему',
@@ -185,7 +197,7 @@ const choresRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/chores/blackouts',
     {
-      config: { scoped: 'task:read' },
+      config: { scoped: 'task:read', notFoundOnDeny: true },
       schema: {
         tags: ['chores'],
         summary: 'Периоды недоступности',
@@ -235,7 +247,7 @@ const choresRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/chores/swaps',
     {
-      config: { scoped: 'task:read' },
+      config: { scoped: 'task:read', notFoundOnDeny: true },
       schema: {
         tags: ['chores'],
         summary: 'Предложения обмена',
@@ -249,7 +261,7 @@ const choresRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/chores/swaps',
     {
-      config: { scoped: 'task:update' },
+      config: { permission: 'chore:swap:request' },
       schema: {
         tags: ['chores'],
         summary: 'Предложить обмен (одно активное предложение на задачу — иначе 409)',
@@ -266,7 +278,7 @@ const choresRoutes: FastifyPluginAsync = async (fastify) => {
     {
       // Anyone with `task:update:own` may decline; the service requires
       // `task:assign:any` to accept, because a handoff needs an adult.
-      config: { anyPermission: ['task:update:own', 'task:assign:any'] },
+      config: { anyPermission: ['chore:swap:accept', 'chore:swap:request'] },
       schema: {
         tags: ['chores'],
         summary: 'Принять или отклонить обмен (принимает взрослый)',
@@ -281,7 +293,7 @@ const choresRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/chores/swaps/:id/cancel',
     {
-      config: { scoped: 'task:update' },
+      config: { permission: 'chore:swap:request' },
       schema: {
         tags: ['chores'],
         summary: 'Отменить своё предложение',
@@ -297,7 +309,7 @@ const choresRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/chores/points',
     {
-      config: { scoped: 'task:read' },
+      config: { scoped: 'task:read', notFoundOnDeny: true },
       schema: {
         tags: ['chores'],
         summary: 'История очков (журнал только на добавление)',
@@ -331,7 +343,7 @@ const choresRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/chores/points/balance',
     {
-      config: { scoped: 'task:read' },
+      config: { scoped: 'task:read', notFoundOnDeny: true },
       schema: {
         tags: ['chores'],
         summary: 'Баланс очков и серии',
@@ -351,7 +363,7 @@ const choresRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/chores/fairness',
     {
-      config: { permission: 'task:read:any' },
+      config: { permission: 'task:read:any', notFoundOnDeny: true },
       schema: {
         tags: ['chores'],
         summary: 'Нагрузка за период — нейтральная полоса, без рейтинга',
@@ -367,7 +379,7 @@ const choresRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/chores/kudos',
     {
-      config: { permission: 'kudos:give' },
+      config: { permission: 'kudos:give', notFoundOnDeny: true },
       schema: {
         tags: ['chores'],
         summary: 'Благодарности',

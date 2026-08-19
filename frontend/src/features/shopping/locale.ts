@@ -1,3 +1,5 @@
+import { PLURALS, formatCountRu, plural, pluralize } from '@/shared/lib/i18n';
+
 /**
  * Russian strings for the shopping feature (D7 — every user-facing word lives
  * in the feature's `locale.ts`, never inline in JSX).
@@ -22,9 +24,9 @@ export const SHOPPING_RU = {
   openList: 'Открыть список',
   backToLists: 'К спискам',
   archived: 'В архиве',
-  itemsNeeded: (n: number) => `${String(n)} ${plural(n, 'нужен', 'нужны', 'нужно')}`,
+  itemsNeeded: (n: number) => `${formatCountRu(n)} ${plural(n, PLURALS.needed)}`,
   counters: (needed: number, total: number) =>
-    `${String(needed)} из ${String(total)} ${plural(total, 'позиция', 'позиции', 'позиций')}`,
+    `${formatCountRu(needed)} из ${pluralize(total, PLURALS.lineItem)}`,
 
   /* items ---------------------------------------------------------------- */
   itemsEmptyTitle: 'Список пуст',
@@ -37,7 +39,7 @@ export const SHOPPING_RU = {
   clearBought: 'Убрать купленное',
   clearBoughtConfirmTitle: 'Убрать купленное?',
   clearBoughtConfirmBody: (n: number) =>
-    `Из списка исчезнут ${String(n)} ${plural(n, 'позиция', 'позиции', 'позиций')}. Отменить нельзя.`,
+    `Из списка исчезнут ${pluralize(n, PLURALS.lineItem)}. Отменить нельзя.`,
   clearBoughtEmpty: 'Купленного пока нет',
   cleared: 'Купленное убрано',
   deleteItem: 'Удалить позицию',
@@ -50,7 +52,7 @@ export const SHOPPING_RU = {
   quickAddHint: 'По одному товару в строке. Можно с количеством: «2 кг картошки».',
   quickAddSubmit: 'Добавить',
   quickAddCount: (n: number) =>
-    `Добавим ${String(n)} ${plural(n, 'позицию', 'позиции', 'позиций')}`,
+    `Добавим ${pluralize(n, PLURALS.lineItemAccusative)}`,
   quickAddNothing: 'Пока нечего добавить',
   frequent: 'Часто покупаем',
   suggestions: 'Подсказки',
@@ -61,7 +63,7 @@ export const SHOPPING_RU = {
   queuedTitle: 'Ждут отправки',
   queuedDescription: 'Отправим, когда откроете приложение со связью.',
   queuedCount: (n: number) =>
-    `${String(n)} ${plural(n, 'изменение', 'изменения', 'изменений')} не отправлено`,
+    `${pluralize(n, PLURALS.change)} не отправлено`,
   notSent: 'не отправлено',
   retryNow: 'Отправить сейчас',
   syncing: 'Отправляем…',
@@ -78,17 +80,15 @@ export const SHOPPING_RU = {
 } as const;
 
 /**
- * Russian plural agreement: 1 позиция / 2 позиции / 5 позиций.
- * Exported because several components format their own counts.
+ * Russian plural agreement lives in `@family/shared` now — see `PLURALS` and
+ * `plural`/`pluralize` in `@/shared/lib/i18n`.
+ *
+ * This file used to export its own `plural(n, one, few, many)`, which
+ * **shadowed** the shared `plural(n, forms)` with a different arity: an import
+ * swapped between the two files compiled cleanly and printed the wrong word.
+ * Components that used to import `plural` from here import it from
+ * `@/shared/lib/i18n` instead.
  */
-export function plural(n: number, one: string, few: string, many: string): string {
-  const abs = Math.abs(n) % 100;
-  const last = abs % 10;
-  if (abs > 10 && abs < 20) return many;
-  if (last > 1 && last < 5) return few;
-  if (last === 1) return one;
-  return many;
-}
 
 /**
  * Store-walk order for the aisle view.

@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 
+import { percentOf as sharedPercentOf } from '@family/shared';
 import type { GoalStatus, GoalTxnKind, GoalVisibility } from '@family/shared';
 
 import type { Executor } from '../../core/db.js';
@@ -92,17 +93,16 @@ function toCount(value: string | number | null | undefined): number {
 }
 
 /**
- * `round(current / target * 100)` with **integer arithmetic only**:
- * `round(c/t*100) === floor((c*200 + t) / (2t))` for `t > 0`.
+ * `round(current / target * 100)` with **integer arithmetic only**.
  *
- * This is the single JS definition of progress, mirrored exactly by
- * {@link PROGRESS_PERCENT_EXPR} in SQL. `goals.service.ts` re-exports it as
- * `progressPercent` so there is one formula, not two that can drift.
+ * The definition now lives in `@family/shared` (`domain/percent.ts`) so the
+ * dashboard, the goals screen and the shared formatter cannot round it
+ * differently — they used to, and `285/1000` came out as 29 here and 28 there.
+ * Re-exported under the repository's own name because
+ * {@link PROGRESS_PERCENT_EXPR} mirrors it in SQL and the two belong side by
+ * side; `goals.service.ts` re-exports it again as `progressPercent`.
  */
-export function percentOf(currentAmount: number, targetAmount: number): number {
-  if (targetAmount <= 0) return 0;
-  return Math.max(Math.floor((currentAmount * 200 + targetAmount) / (2 * targetAmount)), 0);
-}
+export const percentOf = sharedPercentOf;
 
 /* -------------------------------------------------------------------------- */
 /* Read scope                                                                  */

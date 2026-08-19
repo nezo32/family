@@ -44,7 +44,7 @@ import { ApiError, NetworkError } from '@/shared/api/errors';
 import { shoppingKeys } from './api';
 import { optimisticItem, upsertItem, type ItemsCache } from './grouping';
 import { createOutboxHandlers } from './hooks';
-import { parseQuickAddLine, parseQuickAddText } from './quick-add';
+import { parseQuickAddLine, parseQuickAddText } from '@family/shared';
 import { OfflineBanner } from './components/OfflineBanner';
 import * as outbox from './outbox';
 
@@ -315,5 +315,26 @@ describe('quick-add parsing', () => {
     const parsed = parseQuickAddLine('молоко 3,2%');
     expect(parsed?.name).toBe('молоко 3,2%');
     expect(parsed?.quantity).toBeNull();
+  });
+
+  /**
+   * The client used to carry its own copy of the parser without the
+   * `IRREGULAR_GENITIVES` table, so an offline add keyed «2 л молока» as
+   * `молока` while the server keyed it `молоко` — two `product_catalog` rows
+   * for one product, and the suffix rules mangled «огурцов» into `огурц` on top
+   * of it. The parser is `@family/shared` now; these are the keys the server
+   * has always produced, asserted from the client side.
+   */
+  it.each([
+    ['2 л молока', 'молоко'],
+    ['500 г масла', 'масло'],
+    ['1 кг огурцов', 'огурец'],
+    ['10 шт яиц', 'яйцо'],
+    ['5 яблок', 'яблоко'],
+    ['1 кг соли', 'соль'],
+    ['1 кг моркови', 'морковь'],
+    ['2 кг картошки', 'картошка'],
+  ])('keys «%s» exactly as the server does (%s)', (input, key) => {
+    expect(parseQuickAddLine(input)?.normalizedName).toBe(key);
   });
 });

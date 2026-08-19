@@ -52,10 +52,19 @@ import * as service from './goals.service.js';
  *
  * ## 404, not 403
  *
- * A goal outside the caller's read scope — somebody else's `private` goal —
- * returns **404**. The service does this by filtering in SQL rather than by
- * fetching and then comparing, so the "does it exist" answer never leaks
- * through a timing or error-shape difference.
+ * Two layers, same answer.
+ *
+ * **At the guard.** Every read route carries `notFoundOnDeny: true`, so a
+ * caller with no `goal:read` at all — a child holds zero `goal:*` permissions —
+ * gets **404**. This is the case `core/plugins/auth` names in its own
+ * documentation: a 403 on `/goals` would confirm the family has a moneybox
+ * (D4). Writes deliberately keep 403: a teen holds `goal:read`, can see the
+ * section, and "you may not do that to it" is the honest answer.
+ *
+ * **Inside the handler.** A goal outside the caller's read scope — somebody
+ * else's `private` goal — also returns 404. The service does this by filtering
+ * in SQL rather than by fetching and then comparing, so the "does it exist"
+ * answer never leaks through a timing or error-shape difference.
  */
 
 /* -------------------------------------------------------------------------- */
@@ -63,27 +72,30 @@ import * as service from './goals.service.js';
 /* -------------------------------------------------------------------------- */
 
 /**
- * The permission each route declares. Exported so `goals.test.ts` can assert
- * that what is actually registered matches what is documented here — the check
- * that catches a guard quietly loosened during a refactor.
+ * The access each route declares. Exported so `goals.test.ts` can assert that
+ * what is actually registered matches what is documented here — the check that
+ * catches a guard quietly loosened during a refactor.
+ *
+ * Read routes carry `notFoundOnDeny: true`; write routes do not. See the
+ * "404, not 403" note above for why the split falls exactly there.
  */
-export const GOAL_ROUTE_PERMISSIONS = {
-  'GET /goals': 'goal:read',
-  'GET /goals/summary': 'goal:read',
-  'POST /goals': 'goal:create',
-  'POST /goals/reorder': 'goal:update',
-  'GET /goals/:id': 'goal:read',
-  'PATCH /goals/:id': 'goal:update',
-  'DELETE /goals/:id': 'goal:delete',
-  'GET /goals/:id/transactions': 'goal:read',
-  'POST /goals/:id/contributions': 'goal:contribute',
-  'POST /goals/:id/withdrawals': 'goal:contribute',
-  'POST /goals/:id/corrections': 'goal:update',
-  'GET /goals/:id/milestones': 'goal:read',
-  'POST /goals/:id/milestones': 'goal:update',
-  'PATCH /goals/:id/milestones/:mid': 'goal:update',
-  'DELETE /goals/:id/milestones/:mid': 'goal:update',
-} as const satisfies Record<string, Permission>;
+export const GOAL_ROUTE_ACCESS = {
+  'GET /goals': { permission: 'goal:read', notFoundOnDeny: true },
+  'GET /goals/summary': { permission: 'goal:read', notFoundOnDeny: true },
+  'POST /goals': { permission: 'goal:create' },
+  'POST /goals/reorder': { permission: 'goal:update' },
+  'GET /goals/:id': { permission: 'goal:read', notFoundOnDeny: true },
+  'PATCH /goals/:id': { permission: 'goal:update' },
+  'DELETE /goals/:id': { permission: 'goal:delete' },
+  'GET /goals/:id/transactions': { permission: 'goal:read', notFoundOnDeny: true },
+  'POST /goals/:id/contributions': { permission: 'goal:contribute' },
+  'POST /goals/:id/withdrawals': { permission: 'goal:contribute' },
+  'POST /goals/:id/corrections': { permission: 'goal:update' },
+  'GET /goals/:id/milestones': { permission: 'goal:read', notFoundOnDeny: true },
+  'POST /goals/:id/milestones': { permission: 'goal:update' },
+  'PATCH /goals/:id/milestones/:mid': { permission: 'goal:update' },
+  'DELETE /goals/:id/milestones/:mid': { permission: 'goal:update' },
+} as const satisfies Record<string, { permission: Permission; notFoundOnDeny?: true }>;
 
 /* -------------------------------------------------------------------------- */
 /* Local schemas                                                               */
@@ -203,7 +215,7 @@ const goalsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.get(
     '/goals',
     {
-      config: { permission: 'goal:read' },
+      config: GOAL_ROUTE_ACCESS['GET /goals'],
       schema: {
         tags: ['goals'],
         summary: 'Список целей копилки',
@@ -221,7 +233,7 @@ const goalsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.get(
     '/goals/summary',
     {
-      config: { permission: 'goal:read' },
+      config: GOAL_ROUTE_ACCESS['GET /goals/summary'],
       schema: {
         tags: ['goals'],
         summary: 'Сводка по копилке',
@@ -234,7 +246,7 @@ const goalsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.post(
     '/goals',
     {
-      config: { permission: 'goal:create' },
+      config: GOAL_ROUTE_ACCESS['POST /goals'],
       schema: {
         tags: ['goals'],
         body: createGoalSchema,
@@ -250,7 +262,7 @@ const goalsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.post(
     '/goals/reorder',
     {
-      config: { permission: 'goal:update' },
+      config: GOAL_ROUTE_ACCESS['POST /goals/reorder'],
       schema: {
         tags: ['goals'],
         body: reorderGoalsSchema,
@@ -266,7 +278,7 @@ const goalsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.get(
     '/goals/:id',
     {
-      config: { permission: 'goal:read' },
+      config: GOAL_ROUTE_ACCESS['GET /goals/:id'],
       schema: {
         tags: ['goals'],
         params: goalParamsSchema,
@@ -282,7 +294,7 @@ const goalsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.patch(
     '/goals/:id',
     {
-      config: { permission: 'goal:update' },
+      config: GOAL_ROUTE_ACCESS['PATCH /goals/:id'],
       schema: {
         tags: ['goals'],
         params: goalParamsSchema,
@@ -304,7 +316,7 @@ const goalsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.delete(
     '/goals/:id',
     {
-      config: { permission: 'goal:delete' },
+      config: GOAL_ROUTE_ACCESS['DELETE /goals/:id'],
       schema: {
         tags: ['goals'],
         summary: 'Удалить цель (с транзакциями — архивируется)',
@@ -323,7 +335,7 @@ const goalsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.get(
     '/goals/:id/milestones',
     {
-      config: { permission: 'goal:read' },
+      config: GOAL_ROUTE_ACCESS['GET /goals/:id/milestones'],
       schema: {
         tags: ['goals'],
         params: goalParamsSchema,
@@ -339,7 +351,7 @@ const goalsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.post(
     '/goals/:id/milestones',
     {
-      config: { permission: 'goal:update' },
+      config: GOAL_ROUTE_ACCESS['POST /goals/:id/milestones'],
       schema: {
         tags: ['goals'],
         params: goalParamsSchema,
@@ -361,7 +373,7 @@ const goalsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.patch(
     '/goals/:id/milestones/:mid',
     {
-      config: { permission: 'goal:update' },
+      config: GOAL_ROUTE_ACCESS['PATCH /goals/:id/milestones/:mid'],
       schema: {
         tags: ['goals'],
         params: milestoneParamsSchema,
@@ -384,7 +396,7 @@ const goalsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.delete(
     '/goals/:id/milestones/:mid',
     {
-      config: { permission: 'goal:update' },
+      config: GOAL_ROUTE_ACCESS['DELETE /goals/:id/milestones/:mid'],
       schema: {
         tags: ['goals'],
         summary: 'Удалить веху (без следа — вехи не история)',
@@ -408,7 +420,7 @@ const goalsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.get(
     '/goals/:id/transactions',
     {
-      config: { permission: 'goal:read' },
+      config: GOAL_ROUTE_ACCESS['GET /goals/:id/transactions'],
       schema: {
         tags: ['goals'],
         params: goalParamsSchema,
@@ -431,7 +443,7 @@ const goalsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.post(
     '/goals/:id/contributions',
     {
-      config: { permission: 'goal:contribute' },
+      config: GOAL_ROUTE_ACCESS['POST /goals/:id/contributions'],
       schema: {
         tags: ['goals'],
         summary: 'Пополнить цель',
@@ -464,7 +476,7 @@ const goalsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.post(
     '/goals/:id/withdrawals',
     {
-      config: { permission: 'goal:contribute' },
+      config: GOAL_ROUTE_ACCESS['POST /goals/:id/withdrawals'],
       schema: {
         tags: ['goals'],
         summary: 'Снять с цели',
@@ -498,7 +510,7 @@ const goalsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.post(
     '/goals/:id/corrections',
     {
-      config: { permission: 'goal:update' },
+      config: GOAL_ROUTE_ACCESS['POST /goals/:id/corrections'],
       schema: {
         tags: ['goals'],
         summary: 'Коррекция ленты операций',

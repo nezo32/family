@@ -100,6 +100,13 @@ export function canReadGoal(
  * Missing `goal:read` is **404, not 403** (D4, household.md §5): a caller who
  * may not read the moneybox at all should not learn that it exists. Children
  * hold zero `goal:*` permissions and land here.
+ *
+ * For an HTTP caller the route guard now reaches this verdict first —
+ * `GOAL_ROUTE_ACCESS` marks every read `notFoundOnDeny: true`, so the 404 is
+ * produced in `core/plugins/auth` and this function never runs. It is kept
+ * because it is the same answer at the other layer: the dashboard aggregate and
+ * the digest job call these functions directly, with no route in front of them,
+ * and they must not be able to assemble a moneybox tile for a child.
  */
 function requireGoalRead(actor: GoalActor): void {
   if (!actor.can('goal:read')) throw notFound('Goal');

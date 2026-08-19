@@ -5,7 +5,7 @@ import { Textarea } from '@/shared/ui/textarea';
 import { cn } from '@/shared/lib/utils';
 import { SHOPPING_RU } from '../locale';
 import { draftFromParsed, type ItemDraft } from '../grouping';
-import { parseQuickAddLine, parseQuickAddText } from '../quick-add';
+import { parseQuickAddLine, parseQuickAddText } from '@family/shared';
 import { useProductSuggestions } from '../hooks';
 
 /**

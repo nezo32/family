@@ -7,7 +7,7 @@ import type { Permission } from '@family/shared';
 import { api } from '@/shared/api/client';
 import { ApiError } from '@/shared/api/errors';
 import { meKeys } from '@/shared/auth/use-me';
-import type { Me } from '@/shared/auth/types';
+import { makeMe } from '@/test/me';
 import { TooltipProvider } from '@/shared/ui/tooltip';
 import { AnnouncementComposer } from './components/AnnouncementComposer';
 import { PollsPanel } from './components/PollsPanel';
@@ -37,20 +37,6 @@ const OPTION_A = '22222222-2222-4222-8222-222222222222';
 const OPTION_B = '33333333-3333-4333-8333-333333333333';
 
 const NOW = '2026-08-19T09:00:00.000Z';
-
-function makeMe(permissions: Permission[]): Me {
-  return {
-    id: ME_ID,
-    email: null,
-    displayName: 'Мама',
-    avatarUrl: null,
-    role: 'adult',
-    status: 'active',
-    timezone: 'Europe/Moscow',
-    permissions,
-    providers: [],
-  };
-}
 
 const ROSTER = {
   items: [
@@ -164,7 +150,7 @@ function renderWithProviders(ui: ReactNode, permissions: Permission[]) {
   });
   // Seeding `['me']` rather than mocking the endpoint keeps `useCan()` on its
   // real code path: the permission list still comes from the server contract.
-  queryClient.setQueryData(meKeys.detail(), makeMe(permissions));
+  queryClient.setQueryData(meKeys.detail(), makeMe({ id: ME_ID, email: null, permissions }));
 
   return render(
     <QueryClientProvider client={queryClient}>

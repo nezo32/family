@@ -6,6 +6,8 @@ import {
   NOTIFICATION_TYPE_DEFAULT_PRIORITY,
   NOTIFICATION_TYPES,
   PERMISSIONS,
+  ROLES,
+  ROLE_PERMISSIONS,
   effectivePermissions,
   nextEscalationState,
   requiresExplicitAcknowledgement,
@@ -29,6 +31,7 @@ import { logger } from '../../core/logger.js';
 import { enqueue } from '../../core/queue/queues.js';
 import * as repo from './notifications.repository.js';
 import type {
+  EscalationPolicyRow,
   NotificationDeliveryRow,
   NotificationIntentRow,
   NewNotificationDeliveryRow,
@@ -203,6 +206,44 @@ export async function emit(db: Db, input: EmitIntentInput): Promise<EmitIntentRe
   const result = await emitIntent(db, input);
   await result.dispatch();
   return result;
+}
+
+/**
+ * The roles that currently hold `permission`, **derived from the catalog**.
+ *
+ * D4 forbids branching on `role ===` for access decisions; this is not one — it
+ * is the `{ roles: [...] }` audience declaration `emitIntent` expects. Deriving
+ * it means granting a role `member:approve` tomorrow automatically starts
+ * notifying it, with no second list to forget. The fan-out re-checks the
+ * permission anyway (`REQUIRED_PERMISSIONS`), so this only narrows the query.
+ */
+export function rolesWithPermission(permission: Permission): Role[] {
+  return ROLES.filter((role) => ROLE_PERMISSIONS[role].includes(permission));
+}
+
+/**
+ * Run the `dispatch()` thunks a transaction produced, **after it committed**.
+ *
+ * Two rules in one helper, so no producer has to remember either:
+ *
+ * - *After* the commit. Enqueuing inside the transaction is the classic way to
+ *   have a worker read a row that does not exist yet, and `dispatchIntent`
+ *   treats a missing intent as "nothing to do" — the notification is then lost
+ *   for good, because nothing re-dispatches an intent that never fanned out.
+ * - *Fail-soft*. Redis being down must not turn a committed kudos into a 500.
+ *   The intent row is durable and idempotent on its dedupe key, so the worst
+ *   case is a late notification, not a wrong one.
+ */
+export async function dispatchAfterCommit(
+  dispatches: ReadonlyArray<() => Promise<void>>,
+): Promise<void> {
+  for (const dispatch of dispatches) {
+    try {
+      await dispatch();
+    } catch (error) {
+      logger.error({ err: error }, 'failed to enqueue a notification dispatch');
+    }
+  }
 }
 
 function serializeAudience(
@@ -875,6 +916,150 @@ export async function getIntentReceipts(
 /* Escalation (D11)                                                            */
 /* ========================================================================== */
 
+/**
+ * Who a notification nobody acknowledged is handed to, when the family has not
+ * said otherwise.
+ *
+ * Adults only, and derived from the role catalog rather than spelled out: the
+ * whole point of rung three is that a *second, responsible* person hears about
+ * something the first one did not. Escalating to a child would be noise at best
+ * and a privacy leak at worst — the fan-out would drop them anyway, leaving the
+ * escalation silently reaching nobody.
+ */
+export const ESCALATION_FALLBACK_ROLES: readonly Role[] = ['owner', 'admin', 'adult'];
+
+/**
+ * The starting configuration for `escalation_policies` — **defaults, not law**.
+ *
+ * Before this existed the table was read by `listEnabledEscalationPolicies` and
+ * written by nothing at all, so D11's third rung («escalate to another person»)
+ * was a permanent no-op for every type: `targets` was always empty unless the
+ * intent happened to be `critical`, and nothing in the product emits `critical`
+ * except an escalation itself.
+ *
+ * Only types that can actually escalate appear here — `ESCALATION_DEADLINE_MINUTES`
+ * is `null` for `normal`/`low`, so a policy on `task_completed` could never fire.
+ * `afterMinutes` is measured from the **first** hand-off to a transport, so it
+ * is the total patience budget, not a fourth deadline stacked on the ladder.
+ */
+export const DEFAULT_ESCALATION_POLICIES: readonly {
+  type: NotificationType;
+  afterMinutes: number;
+  escalateToRole: Role;
+}[] = [
+  // An overdue chore is the everyday case: the teen's phone is face-down, so
+  // after an hour an adult is told rather than the task rotting silently.
+  { type: 'task_overdue', afterMinutes: 60, escalateToRole: 'adult' },
+  // «Ты где? Приём через 15 минут» — a missed event reminder is time-critical
+  // by construction, so the patience budget is short.
+  { type: 'event_reminder', afterMinutes: 45, escalateToRole: 'adult' },
+  // Somebody is standing in the shop right now. If they never saw it, another
+  // adult still can — an hour later it is pointless, so the window is tight.
+  { type: 'shopping_urgent_item', afterMinutes: 30, escalateToRole: 'adult' },
+  // Nobody answered «поменяемся?» — an adult can reassign the chore by hand.
+  { type: 'chore_swap_requested', afterMinutes: 120, escalateToRole: 'adult' },
+  // A person is locked out of the family app until *somebody* clicks approve.
+  // Owner rather than adult: `member:approve` is an owner/admin permission, so
+  // the fan-out would drop a plain adult anyway.
+  { type: 'member_pending_approval', afterMinutes: 240, escalateToRole: 'owner' },
+  // The one type that is `critical` out of the box.
+  { type: 'system_alert', afterMinutes: 15, escalateToRole: 'owner' },
+];
+
+/**
+ * Put the defaults in the table on first boot, and never again.
+ *
+ * Seeded **only when the table is completely empty**, which is what makes the
+ * rows genuinely configurable: an admin can retarget a policy at one person,
+ * lengthen a deadline or set `enabled = false`, and the next restart will not
+ * quietly undo it. Turning escalation off is `enabled = false`, not `DELETE` —
+ * deleting every row and restarting is, deliberately, how you ask for the
+ * defaults back.
+ *
+ * Idempotent and cheap (one `count(*)` on a table with a handful of rows), so
+ * it is safe to call on every boot.
+ */
+export async function ensureDefaultEscalationPolicies(db: Db): Promise<number> {
+  if ((await repo.countEscalationPolicies(db)) > 0) return 0;
+
+  const inserted = await repo.insertEscalationPolicies(
+    db,
+    DEFAULT_ESCALATION_POLICIES.map((policy) => ({
+      type: policy.type,
+      afterMinutes: policy.afterMinutes,
+      escalateToRole: policy.escalateToRole,
+      enabled: true,
+    })),
+  );
+
+  if (inserted.length > 0) {
+    logger.info({ count: inserted.length }, 'seeded the default escalation policies');
+  }
+  return inserted.length;
+}
+
+/** Every policy, enabled or not — the read side of the admin screen. */
+export async function listEscalationPolicies(db: Db): Promise<EscalationPolicyRow[]> {
+  return repo.listEscalationPolicies(db);
+}
+
+export interface EscalationPolicyWrite {
+  type: NotificationType;
+  afterMinutes: number;
+  escalateToRole?: Role | null;
+  escalateToUserId?: string | null;
+  enabled?: boolean;
+}
+
+/**
+ * Create a policy. Rejects a row that points at nobody, because that is a
+ * silent no-op three rungs down the ladder rather than an error anyone sees.
+ */
+export async function createEscalationPolicy(
+  db: Db,
+  input: EscalationPolicyWrite,
+): Promise<EscalationPolicyRow> {
+  if (!input.escalateToRole && !input.escalateToUserId) {
+    throw new AppError('BAD_REQUEST', 'An escalation policy must name a role or a user');
+  }
+  if (ESCALATION_DEADLINE_MINUTES[NOTIFICATION_TYPE_DEFAULT_PRIORITY[input.type]] === null) {
+    throw new AppError(
+      'BAD_REQUEST',
+      'This notification type never escalates — only high and critical do (D11)',
+    );
+  }
+  const [row] = await repo.insertEscalationPolicies(db, [
+    {
+      type: input.type,
+      afterMinutes: input.afterMinutes,
+      escalateToRole: input.escalateToRole ?? null,
+      escalateToUserId: input.escalateToUserId ?? null,
+      enabled: input.enabled ?? true,
+    },
+  ]);
+  if (!row) throw new AppError('INTERNAL_ERROR', 'Could not create the escalation policy');
+  return row;
+}
+
+export async function updateEscalationPolicy(
+  db: Db,
+  id: string,
+  patch: Partial<Omit<EscalationPolicyWrite, 'type'>>,
+): Promise<EscalationPolicyRow> {
+  const row = await repo.updateEscalationPolicy(db, id, {
+    ...(patch.afterMinutes !== undefined ? { afterMinutes: patch.afterMinutes } : {}),
+    ...(patch.escalateToRole !== undefined ? { escalateToRole: patch.escalateToRole } : {}),
+    ...(patch.escalateToUserId !== undefined ? { escalateToUserId: patch.escalateToUserId } : {}),
+    ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+  });
+  if (!row) throw notFound('Escalation policy');
+  return row;
+}
+
+export async function deleteEscalationPolicy(db: Db, id: string): Promise<void> {
+  if (!(await repo.deleteEscalationPolicy(db, id))) throw notFound('Escalation policy');
+}
+
 /** Schedules the D11 deadline check for a `high`/`critical` intent. */
 async function scheduleEscalationCheck(intent: NotificationIntentRow, now: Date): Promise<void> {
   const deadline = ESCALATION_DEADLINE_MINUTES[intent.priority];
@@ -1067,6 +1252,19 @@ async function createFallbackDelivery(
   return null;
 }
 
+/**
+ * Who a policy points at. Exactly one of the two columns is meaningful; a role
+ * wins if both are set, and a row with neither is a no-op rather than a crash.
+ */
+function policyAudience(policy: EscalationPolicyRow): NotificationAudience | null {
+  if (policy.escalateToRole) {
+    const role = policy.escalateToRole as Role;
+    return ROLES.includes(role) ? { roles: [role] } : null;
+  }
+  if (policy.escalateToUserId) return { users: [policy.escalateToUserId] };
+  return null;
+}
+
 async function escalateToAnotherPerson(
   db: Db,
   intent: NotificationIntentRow,
@@ -1076,20 +1274,33 @@ async function escalateToAnotherPerson(
   const originalRecipients = new Set(deliveries.map((d) => d.userId));
   const policies = await repo.listEnabledEscalationPolicies(db, intent.type);
 
-  const bumped: NotificationPriority = intent.priority === 'critical' ? 'critical' : 'critical';
+  // The first hand-off is what starts the clock a policy's `afterMinutes`
+  // measures from — not this rung, which has already burned two deadlines.
+  const firstSentAt = Math.min(
+    ...deliveries.filter((d) => d.sentAt !== null).map((d) => d.sentAt?.getTime() ?? Infinity),
+  );
+  const elapsedMinutes = Number.isFinite(firstSentAt)
+    ? (now.getTime() - firstSentAt) / 60_000
+    : Infinity;
 
-  const targets: NotificationAudience[] = policies.length
-    ? policies.map((policy) =>
-        policy.escalateToRole
-          ? ({ roles: [policy.escalateToRole as Role] } satisfies NotificationAudience)
-          : ({
-              users: policy.escalateToUserId ? [policy.escalateToUserId] : [],
-            } satisfies NotificationAudience),
-      )
-    : // No policy configured: for a genuinely critical event, reaching *somebody*
-      // beats reaching nobody. Adults and admins only.
+  const due = policies.filter((policy) => policy.afterMinutes <= elapsedMinutes);
+
+  // Escalation is the loudest thing this system does, so it always arrives as
+  // `critical`: quiet hours may be crossed and an explicit human ack is the
+  // only thing that closes the loop (D11).
+  const bumped: NotificationPriority = 'critical';
+
+  const targets: NotificationAudience[] = due.length
+    ? due.flatMap((policy) => {
+        const audience = policyAudience(policy);
+        return audience ? [audience] : [];
+      })
+    : // No row matched. `ensureDefaultEscalationPolicies` normally guarantees
+      // one, but a family that deleted every policy must not turn a genuinely
+      // critical, unacknowledged event into silence — reaching *somebody* beats
+      // reaching nobody. Same roles as the seeded default, one source of truth.
       intent.priority === 'critical'
-      ? [{ roles: ['owner', 'admin', 'adult'] }]
+      ? [{ roles: [...ESCALATION_FALLBACK_ROLES] }]
       : [];
 
   for (const [index, audience] of targets.entries()) {
@@ -1116,10 +1327,9 @@ async function escalateToAnotherPerson(
   }
 
   logger.warn(
-    { intentId: intent.id, type: intent.type, targets: targets.length },
+    { intentId: intent.id, type: intent.type, targets: targets.length, policies: due.length },
     'escalated an unacknowledged notification to another person',
   );
-  void now;
 }
 
 function filterAudience(

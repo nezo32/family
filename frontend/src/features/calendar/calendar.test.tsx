@@ -27,6 +27,7 @@ vi.mock('@/shared/api/client', () => {
   };
 });
 
+import { makeMe } from '@/test/me';
 import { setFamilyTimeZone } from '@/shared/lib/format';
 import {
   birthdayAge,
@@ -50,13 +51,10 @@ const TZ = 'Europe/Moscow';
 const ME_ID = '11111111-1111-4111-8111-111111111111';
 const ANNA_ID = '22222222-2222-4222-8222-222222222222';
 
-const me = {
+const me = makeMe({
   id: ME_ID,
   email: 'me@example.com',
   displayName: 'Пётр',
-  avatarUrl: null,
-  role: 'adult',
-  status: 'active',
   timezone: TZ,
   permissions: [
     'event:read',
@@ -65,9 +63,8 @@ const me = {
     'event:delete:any',
     'member:read',
   ],
-  providers: [],
-  family: { name: 'Семья', timezone: TZ, currency: 'RUB', weekStartsOn: 1 },
-};
+  family: { timezone: TZ },
+});
 
 const members: PublicUser[] = [
   {

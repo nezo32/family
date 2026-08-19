@@ -20,7 +20,7 @@ import { Button } from '@/shared/ui/button';
 import { Separator } from '@/shared/ui/separator';
 import { ROUTES } from '@/shared/lib/routes';
 import { formatDateTime } from '@/shared/lib/format';
-import { COMMON, pluralize } from '@/shared/lib/i18n';
+import { COMMON, PLURALS, pluralize } from '@/shared/lib/i18n';
 import { TASKS_RU } from '../locale';
 import { isRecurring } from '../recurrence';
 import {
@@ -207,7 +207,7 @@ export default function TaskDetailPage() {
             {occurrence.points > 0 ? (
               <Row
                 label={TASKS_RU.detail.points}
-                value={pluralize(occurrence.points, ['балл', 'балла', 'баллов'])}
+                value={pluralize(occurrence.points, PLURALS.point)}
               />
             ) : null}
             {occurrence.completedAt ? (

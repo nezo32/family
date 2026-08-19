@@ -7,6 +7,7 @@ import {
   isoDateTimeSchema,
   nonEmptyString,
   paginatedSchema,
+  queryBooleanSchema,
   timeZoneSchema,
 } from './common.js';
 
@@ -191,15 +192,6 @@ export type OccurrenceStatus = z.infer<typeof occurrenceStatusSchema>;
 
 export const assignedViaSchema = z.enum(['rotation', 'manual', 'swap', 'claimed']);
 export type AssignedVia = z.infer<typeof assignedViaSchema>;
-
-/**
- * Query-string booleans. `z.coerce.boolean()` is a trap here: it is
- * `Boolean(value)`, so the string `"false"` coerces to `true`.
- */
-export const queryBooleanSchema = z.preprocess(
-  (v) => (typeof v === 'string' ? v === 'true' || v === '1' : v),
-  z.boolean(),
-);
 
 /**
  * A calendar window, expressed in **local dates** because that is what a grid

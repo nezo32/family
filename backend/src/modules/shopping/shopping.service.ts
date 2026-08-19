@@ -17,12 +17,11 @@ import type {
   UpdateShoppingItem,
   UpdateShoppingList,
 } from '@family/shared';
+import { catalogKeyFor, normalizeProductName, parseQuickAddText } from '@family/shared';
 
 import type { Db, Executor } from '../../core/db.js';
 import { assertFound, badRequest, internal, notFound } from '../../core/errors.js';
-import { enqueue } from '../../core/queue/queues.js';
-import { notificationIntents } from '../notifications/notifications.schema.js';
-import { catalogKeyFor, normalizeProductName, parseQuickAddText } from './quick-add.js';
+import { emit } from '../notifications/notifications.service.js';
 import * as repo from './shopping.repository.js';
 import type {
   NewShoppingItemRow,
@@ -248,49 +247,38 @@ export interface UrgentItemNotification {
 }
 
 /**
- * Writes a `shopping_urgent_item` intent and hands it to the notification
- * pipeline (D10 — one pipeline, no bespoke channel per feature).
+ * Hands a `shopping_urgent_item` event to the notification pipeline
+ * (D10 — one pipeline, no bespoke channel per feature).
  *
- * Both halves are deduped on the same key: the partial unique index on
- * `dedupe_key` collapses a replayed offline mutation into one intent, and
- * BullMQ refuses a second job with the same `jobId`. If the insert is a no-op
- * we never enqueue, so the family is told once even if the phone sends the
- * request five times on a flaky connection.
+ * **The audience is the one person standing in the shop.** This used to write
+ * the intent row by hand and leave `audience` unset; the column defaults to
+ * `{}`, which the fan-out reads as `{ everyone: true }`. The intended recipient
+ * was recorded as `payload.recipientId`, a field nothing has ever read — so
+ * «молоко срочно» fired a `high`-priority push, with its 30-minute D11
+ * escalation ladder, at every member holding `shopping:read`.
  *
- * NOTE: this reaches into the notifications *schema* because that module has no
- * service yet. When `notifications.service.ts` lands this function should
- * delegate to it — D8 allows a cross-module service call, never a repository one.
+ * `emit` runs outside a transaction on purpose: the item is already committed
+ * by the time we get here, and the dedupe key (`shopping_urgent_item:<itemId>`)
+ * collapses a replayed offline mutation into a single intent and a single job.
  */
-async function recordUrgentItemIntent(ex: Executor, input: UrgentItemNotification): Promise<void> {
-  const dedupeKey = `shopping_urgent_item:${input.itemId}`;
-
-  const [intent] = await ex
-    .insert(notificationIntents)
-    .values({
-      type: 'shopping_urgent_item',
-      actorId: input.actorId,
-      entityType: 'shopping_item',
-      entityId: input.itemId,
-      payload: {
-        listId: input.listId,
-        listName: input.listName,
-        itemId: input.itemId,
-        itemName: input.itemName,
-        quantity: input.quantity,
-        unit: input.unit,
-        actorName: input.actorName,
-        // Whoever is standing in the shop. The fan-out worker still applies
-        // preferences and quiet hours; this only says who it is *for*.
-        recipientId: input.shopperId,
-      },
-      dedupeKey,
-      priority: 'high',
-    })
-    .onConflictDoNothing()
-    .returning({ id: notificationIntents.id });
-
-  if (!intent) return;
-  await enqueue('notification.dispatch', { intentId: intent.id }, { jobId: dedupeKey });
+async function recordUrgentItemIntent(db: Db, input: UrgentItemNotification): Promise<void> {
+  await emit(db, {
+    type: 'shopping_urgent_item',
+    audience: { users: [input.shopperId] },
+    actorId: input.actorId,
+    entityType: 'shopping_item',
+    entityId: input.itemId,
+    payload: {
+      listId: input.listId,
+      listName: input.listName,
+      itemId: input.itemId,
+      itemName: input.itemName,
+      quantity: input.quantity,
+      unit: input.unit,
+      actorName: input.actorName,
+    },
+    dedupeKey: `shopping_urgent_item:${input.itemId}`,
+  });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -300,7 +288,7 @@ async function recordUrgentItemIntent(ex: Executor, input: UrgentItemNotificatio
 export interface ShoppingServiceDeps {
   /** Injectable clock so tests do not have to sleep. */
   now?: () => Date;
-  /** Injectable notification sink; the default writes a `notification_intents` row. */
+  /** Injectable notification sink; the default emits a `shopping_urgent_item` intent. */
   notifyUrgentItem?: (input: UrgentItemNotification) => Promise<void>;
 }
 

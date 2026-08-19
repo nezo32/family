@@ -97,43 +97,141 @@ export function formatMoney(
   return text;
 }
 
-/** Parse a user-typed amount ("1 234,56", "1234.5") back into minor units. */
-export function parseMoney(input: string): number | null {
-  const normalized = input
-    // `\s` already covers U+00A0 and U+202F, the separators Intl emits for ru-RU.
-    .replace(/\s/g, '')
-    .replace(/[^\d.,-]/g, '')
-    .replace(',', '.');
-  if (normalized === '' || normalized === '-') return null;
+/* -------------------------------------------------------------------------
+ * Parsing money the user typed
+ *
+ * This used to be two implementations, and the *shared* one was the dangerous
+ * one. It stripped `[^\d.,-]` **before** validating, so `"1234 руб"` became
+ * 1234 ₽, `"1234abc"` became 1234 ₽, `"1e5"` became 15 ₽ and `"5+5"` became
+ * 55 ₽ — every one of them a plausible-looking number the user never typed,
+ * landing in the family's ledger with nothing on screen to show it happened.
+ * `features/goals/money.ts` had a stricter parser that rejected all four and
+ * returned a typed reason the forms already display.
+ *
+ * The strict one won and moved here. There is one parser now; nothing coerces.
+ * ---------------------------------------------------------------------- */
 
-  // Exactly one optional sign, digits, and at most two decimal places. Rejecting
-  // `12.345` matters: rounding it silently would turn a typo into a wrong amount
-  // in the family's ledger, and the user would never see it happen.
-  const match = /^(-?)(\d*)(?:\.(\d{1,2}))?$/.exec(normalized);
-  if (!match) return null;
+/** Why a typed amount could not be turned into minor units. */
+export type MoneyParseError = 'empty' | 'invalid' | 'precision' | 'tooLarge' | 'notPositive';
 
-  const [, sign, whole = '', fraction = ''] = match;
-  if (whole === '' && fraction === '') return null;
+export type MoneyParseResult =
+  | { readonly ok: true; readonly minorUnits: number }
+  | { readonly ok: false; readonly error: MoneyParseError };
 
-  // Concatenate digit strings rather than multiplying by 100. A float never
-  // enters the calculation, so there is nothing to drift (D6).
-  const minor = Number(`${whole || '0'}${fraction.padEnd(2, '0')}`);
-  if (!Number.isSafeInteger(minor)) return null;
+/**
+ * Whitespace the user (or `Intl.NumberFormat('ru-RU')`) can put between
+ * thousands: a plain space, NBSP, narrow NBSP, figure space — plus the rouble
+ * sign, because the value round-trips through `formatMoney`.
+ *
+ * Note what is **not** here: letters, `+`, `e`, and every other character the
+ * old `parseMoney` quietly deleted.
+ */
+const IGNORED_CHARS = /[\s\u00A0\u202F\u2007\u2009\u20BD]/g;
 
-  return sign === '-' ? -minor : minor;
+/** `-1 234,56` → sign, integer digits, optional decimal separator + fraction. */
+const AMOUNT_PATTERN = /^([+-]?)(\d*)(?:[.,](\d*))?$/;
+
+/**
+ * Widest amount we accept: 15 digits of копейки ≈ 10 trillion ₽, comfortably
+ * inside `Number.MAX_SAFE_INTEGER` so every later addition stays exact.
+ */
+const MAX_MINOR_DIGITS = 15;
+
+/**
+ * Parse a user-typed amount into **integer minor units**, with a reason when
+ * it cannot be done.
+ *
+ * Never multiplies and never calls `parseFloat`: it splits the typed string
+ * into an integer part and a two-digit fraction part and **concatenates the
+ * digits**, so `"1 234,56"` becomes the digit string `"123456"` and then the
+ * integer `123456`. `19.99 * 100 === 1998.9999999999998` is a bug that simply
+ * cannot be written this way (D6).
+ *
+ * Accepted: `1234`, `1 234`, `1 234,56`, `1234.5`, `1234.50`, `,50`, `-100`.
+ * Rejected: empty input, letters, several separators, more than two decimals
+ * (silently rounding somebody's money is not this function's job), and amounts
+ * beyond the safe-integer range.
+ */
+export function parseAmount(input: string): MoneyParseResult {
+  const cleaned = input.replace(IGNORED_CHARS, '');
+  if (cleaned === '') return { ok: false, error: 'empty' };
+
+  const match = AMOUNT_PATTERN.exec(cleaned);
+  if (!match) return { ok: false, error: 'invalid' };
+
+  const [, sign = '', wholePart = '', fractionPart] = match;
+
+  // `-`, `,` or `-,` on their own carry no digits at all.
+  if (wholePart === '' && (fractionPart === undefined || fractionPart === '')) {
+    return { ok: false, error: 'invalid' };
+  }
+  if (fractionPart !== undefined && fractionPart.length > 2) {
+    return { ok: false, error: 'precision' };
+  }
+
+  // The whole point: build the minor-unit *digit string*, never a product.
+  const kopeks = (fractionPart ?? '').padEnd(2, '0');
+  const digits = `${wholePart}${kopeks}`.replace(/^0+(?=\d)/, '');
+
+  if (digits.length > MAX_MINOR_DIGITS) return { ok: false, error: 'tooLarge' };
+
+  const magnitude = Number(digits);
+  if (!Number.isSafeInteger(magnitude)) return { ok: false, error: 'tooLarge' };
+
+  return { ok: true, minorUnits: sign === '-' ? -magnitude : magnitude };
+}
+
+/** `parseAmount` for callers that only care whether it worked. */
+export function parseMinorUnits(input: string): number | null {
+  const result = parseAmount(input);
+  return result.ok ? result.minorUnits : null;
+}
+
+/** Same as `parseAmount`, but a zero or negative amount is an error too. */
+export function parsePositiveAmount(input: string): MoneyParseResult {
+  const result = parseAmount(input);
+  if (!result.ok) return result;
+  if (result.minorUnits <= 0) return { ok: false, error: 'notPositive' };
+  return result;
 }
 
 /**
- * Percentage of a goal reached, for filling a progress **bar** — hence the
- * clamp to 0–100, since a bar cannot render past full.
- *
- * Do NOT use this for the number shown next to the bar: the server does not cap
- * progress, and a goal that is over-funded should honestly read «112 %».
+ * The old name, kept so no call site has to care — but it is now exactly
+ * {@link parseMinorUnits}, i.e. the strict parser. `parseMoney('1234 руб')` is
+ * `null` where it used to be `123400`.
  */
-export function progressPercent(current: number, target: number): number {
-  if (target <= 0) return 0;
-  return Math.max(0, Math.min(100, Math.round((current / target) * 100)));
+export const parseMoney = parseMinorUnits;
+
+/**
+ * Minor units → the text an editable field should start with.
+ *
+ * Deliberately ungrouped (`1234,56`, not `1 234,56`): the value goes back into
+ * an `<input>` the user will edit, and grouping separators there fight the
+ * caret. `,00` is dropped on whole amounts.
+ */
+export function formatMinorUnitsForInput(minorUnits: number): string {
+  if (!Number.isInteger(minorUnits)) return '';
+  const sign = minorUnits < 0 ? '-' : '';
+  const magnitude = Math.abs(minorUnits);
+  const whole = Math.floor(magnitude / 100);
+  const kopeks = magnitude % 100;
+  if (kopeks === 0) return `${sign}${String(whole)}`;
+  return `${sign}${String(whole)},${String(kopeks).padStart(2, '0')}`;
 }
+
+/* -------------------------------------------------------------------------
+ * Progress
+ * ---------------------------------------------------------------------- */
+
+/**
+ * `percentOf` is the server's own exact-integer progress formula and
+ * `ringPercent` is the 0–100 **visual** bound for an arc that cannot render
+ * past full. Re-exported from `@family/shared` rather than re-implemented:
+ * this file used to carry a third `Math.round(c / t * 100)` clamped at 100,
+ * which read «100 %» for a goal the goals screen honestly reported as «112 %»,
+ * and rounded `285/1000` to 28 where the API said 29.
+ */
+export { percentOf, ringPercent } from '@family/shared';
 
 /* -------------------------------------------------------------------------
  * Numbers

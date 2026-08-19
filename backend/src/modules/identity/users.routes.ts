@@ -31,6 +31,14 @@ import * as service from './identity.service.js';
  * assertion in `core/plugins/auth.ts` fails the whole app if one does not.
  * Nothing here re-derives the permission matrix; the guard has already run by
  * the time a handler executes, and `request.auth` carries the resolved set.
+ *
+ * ## 404, not 403
+ *
+ * The reads carry `notFoundOnDeny: true`. `GET /members/pending` is the one
+ * worth spelling out: the approval queue is moderation state, and somebody who
+ * cannot act on it should not learn that a queue exists, let alone that it is
+ * non-empty. The member-administration writes keep 403 — an admin who may not
+ * touch *this* member can still see them in the roster.
  */
 
 const memberParamsSchema = z.object({ id: idSchema });
@@ -116,7 +124,7 @@ const usersRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/me/identities',
     {
-      config: { permission: 'identity:manage:own' },
+      config: { permission: 'identity:manage:own', notFoundOnDeny: true },
       schema: {
         tags: ['me'],
         summary: 'Linked sign-in methods, plus the ones still available',
@@ -156,7 +164,7 @@ const usersRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/members',
     {
-      config: { permission: 'member:read' },
+      config: { permission: 'member:read', notFoundOnDeny: true },
       schema: {
         tags: ['members'],
         summary: 'Family roster',
@@ -175,7 +183,7 @@ const usersRoutes: FastifyPluginAsync = async (fastify) => {
     {
       // Tighter than `/members`: the approval queue is moderation state, and
       // only somebody who can act on it has a reason to read it.
-      config: { permission: 'member:approve' },
+      config: { permission: 'member:approve', notFoundOnDeny: true },
       schema: {
         tags: ['members'],
         summary: 'Signups awaiting approval',

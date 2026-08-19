@@ -1,4 +1,4 @@
-import { eq, inArray, sql } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 
 import type {
   ActivityItem,
@@ -14,10 +14,9 @@ import type {
 import type { AuthContext } from '../../core/auth/context.js';
 import type { Db, Executor } from '../../core/db.js';
 import { badRequest, conflict, forbidden, notFound } from '../../core/errors.js';
-import { enqueue } from '../../core/queue/queues.js';
 import { kudos, type KudosRow } from '../chores/chores.schema.js';
 import { users } from '../identity/users.schema.js';
-import { notificationIntents } from '../notifications/notifications.schema.js';
+import { dispatchAfterCommit, emitIntent } from '../notifications/notifications.service.js';
 import { recordActivityEvent } from './activity.service.js';
 import { deleteCommentsFor } from './comments.service.js';
 import * as repo from './wall.repository.js';
@@ -112,71 +111,6 @@ export async function hydratePosts(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Notification intents (D10)                                                  */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Writes an intent row and asks the notifications worker to fan it out.
- *
- * Two independent idempotency guards, because both halves can be retried:
- * `dedupeKey` collapses duplicate rows at the database, and the BullMQ `jobId`
- * collapses duplicate dispatch jobs. A retried request therefore notifies the
- * family exactly once.
- *
- * Enqueueing is deliberately fail-soft: Redis being down must not turn a posted
- * announcement into a 500. The row is already committed, and the maintenance
- * sweep re-dispatches undelivered intents.
- */
-async function emitIntent(
-  exec: Executor,
-  intent: {
-    type: 'announcement_posted' | 'kudos_received';
-    actorId: string | null;
-    entityType: string;
-    entityId: string;
-    payload: Record<string, unknown>;
-    dedupeKey: string;
-    priority?: 'low' | 'normal' | 'high';
-  },
-): Promise<void> {
-  const [row] = await exec
-    .insert(notificationIntents)
-    .values({
-      type: intent.type,
-      actorId: intent.actorId,
-      entityType: intent.entityType,
-      entityId: intent.entityId,
-      payload: intent.payload,
-      dedupeKey: intent.dedupeKey,
-      priority: intent.priority ?? 'normal',
-    })
-    // The dedupe index is **partial** (`where dedupe_key is not null`), so the
-    // predicate has to be repeated here or Postgres refuses to match it.
-    .onConflictDoNothing({
-      target: notificationIntents.dedupeKey,
-      where: sql`${notificationIntents.dedupeKey} is not null`,
-    })
-    .returning({ id: notificationIntents.id });
-
-  // Lost the dedupe race: somebody already created this intent, and the job for
-  // it is already queued. Nothing to do.
-  if (!row) return;
-
-  try {
-    await enqueue(
-      'notification.dispatch',
-      { intentId: row.id },
-      { jobId: `notification.dispatch:${row.id}` },
-    );
-  } catch (error) {
-    console.error('failed to enqueue notification.dispatch', {
-      intentId: row.id,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-}
-
-/* -------------------------------------------------------------------------- */
 /* Announcements                                                               */
 /* -------------------------------------------------------------------------- */
 
@@ -198,7 +132,7 @@ export async function createAnnouncement(
   const pinnedUntil = input.pinnedUntil ? new Date(input.pinnedUntil) : null;
   if (pinnedUntil && !auth.can('post:pin')) throw forbidden('Missing permission: post:pin');
 
-  const post = await db.transaction(async (tx) => {
+  const { post, dispatch } = await db.transaction(async (tx) => {
     const row = await repo.insertPost(tx, {
       authorId: auth.userId,
       type: 'announcement',
@@ -216,13 +150,18 @@ export async function createAnnouncement(
       entityId: row.id,
     });
 
-    await emitIntent(tx, {
+    // An announcement is addressed to the household by name. The fan-out still
+    // drops anyone without `post:create`/`member:read`, and the author never
+    // receives their own post.
+    const intent = await emitIntent(tx, {
       type: 'announcement_posted',
+      audience: { everyone: true },
       actorId: auth.userId,
       entityType: 'post',
       entityId: row.id,
       payload: {
         postId: row.id,
+        actorName: auth.displayName,
         authorName: auth.displayName,
         title: postHeadline(row),
         excerpt: row.body.slice(0, 200),
@@ -231,9 +170,10 @@ export async function createAnnouncement(
       dedupeKey: `announcement_posted:${row.id}`,
     });
 
-    return row;
+    return { post: row, dispatch: intent.dispatch };
   });
 
+  await dispatchAfterCommit([dispatch]);
   return toPostResponse(post, 0, []);
 }
 
@@ -412,7 +352,7 @@ export async function giveKudos(
   if (!recipient || recipient.status !== 'active') throw notFound('User');
 
   try {
-    return await db.transaction(async (tx) => {
+    const { response, dispatch } = await db.transaction(async (tx) => {
       const row = await repo.insertKudos(tx, {
         fromUserId: auth.userId,
         toUserId: input.toUserId,
@@ -431,14 +371,23 @@ export async function giveKudos(
         metadata: { toUserId: row.toUserId, occurrenceId: row.occurrenceId, emoji: row.emoji },
       });
 
-      await emitIntent(tx, {
+      /**
+       * **Exactly one recipient.** This used to omit `audience` entirely, which
+       * the column defaults to `{}` — and `{}` parses as `{ everyone: true }`.
+       * `kudos_received` also requires no permission, so nothing downstream
+       * narrowed it: every «спасибо» pushed «Спасибо от семьи» at the whole
+       * household, each of whom was told *they* had been thanked.
+       */
+      const intent = await emitIntent(tx, {
         type: 'kudos_received',
+        audience: { users: [row.toUserId] },
         actorId: auth.userId,
         entityType: 'kudos',
         entityId: row.id,
         payload: {
           kudosId: row.id,
           toUserId: row.toUserId,
+          actorName: auth.displayName,
           fromName: auth.displayName,
           emoji: row.emoji,
           message: row.message,
@@ -446,8 +395,11 @@ export async function giveKudos(
         dedupeKey: `kudos_received:${row.id}`,
       });
 
-      return toKudosResponse(row);
+      return { response: toKudosResponse(row), dispatch: intent.dispatch };
     });
+
+    await dispatchAfterCommit([dispatch]);
+    return response;
   } catch (error) {
     if (isUniqueViolation(error)) {
       throw conflict('You have already given this kudos', 'ALREADY_EXISTS');

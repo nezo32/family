@@ -132,56 +132,40 @@ export const WEEK_STARTS_ON = 1 as const;
  * ---------------------------------------------------------------------- */
 
 /**
- * Russian has three plural forms and picking the wrong one is the single most
- * visible "this was translated by a machine" tell:
+ * Russian numeric agreement, re-exported from `@family/shared`.
  *
- *   1 задача   — `one`   : n % 10 === 1 and n % 100 !== 11
- *   2 задачи   — `few`   : n % 10 in 2..4 and n % 100 not in 12..14
- *   5 задач    — `many`  : everything else (0, 5–20, 11–14, …)
+ * The rule itself used to be written out six times — here, in
+ * `features/shopping/locale.ts`, in `features/goals/locale.ts`, and three more
+ * times on the server. They agreed on every integer, but two of them exported a
+ * function called `plural` with a **different arity**
+ * (`plural(n, one, few, many)` there, `plural(n, [one, few, many])` here), so
+ * moving a line between the two files compiled cleanly and printed nonsense.
+ * And the count in front of the word was formatted two ways: `Intl` grouping in
+ * the UI, a bare `${n}` in the weekly digest, so the same figure read
+ * «1 000 задач» on screen and «1000 задач» in the push about it.
  *
- * The 11–14 exception is what naive implementations get wrong: 21 задача but
- * 11 задач, 22 задачи but 12 задач.
- *
- * @param n     the count (fractions are floored on the absolute value)
- * @param forms `[one, few, many]`, e.g. `['задача', 'задачи', 'задач']`
+ * One implementation now, one count format. The names below are the ones this
+ * app uses; `plural` is the word alone, `pluralize` is count + word.
  */
-export function pluralForm(n: number): 0 | 1 | 2 {
-  const abs = Math.floor(Math.abs(n));
-  const mod10 = abs % 10;
-  const mod100 = abs % 100;
-  if (mod10 === 1 && mod100 !== 11) return 0;
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 1;
-  return 2;
-}
+export {
+  pluralIndex as pluralForm,
+  pluralRu as plural,
+  countRu as pluralize,
+  formatCountRu,
+} from '@family/shared';
+export type { PluralForms } from '@family/shared';
 
-export function plural(n: number, forms: readonly [string, string, string]): string {
-  return forms[pluralForm(n)];
-}
-
-/** `pluralize(5, ['задача','задачи','задач'])` → `'5 задач'`. */
-export function pluralize(n: number, forms: readonly [string, string, string]): string {
-  return `${formatCount(n)} ${plural(n, forms)}`;
-}
-
-function formatCount(n: number): string {
-  return new Intl.NumberFormat('ru-RU').format(n);
-}
-
-/** Ready-made word sets used across features. */
-export const PLURALS = {
-  task: ['задача', 'задачи', 'задач'] as const,
-  event: ['событие', 'события', 'событий'] as const,
-  member: ['участник', 'участника', 'участников'] as const,
-  item: ['товар', 'товара', 'товаров'] as const,
-  goal: ['цель', 'цели', 'целей'] as const,
-  day: ['день', 'дня', 'дней'] as const,
-  hour: ['час', 'часа', 'часов'] as const,
-  minute: ['минута', 'минуты', 'минут'] as const,
-  point: ['балл', 'балла', 'баллов'] as const,
-  comment: ['комментарий', 'комментария', 'комментариев'] as const,
-  post: ['запись', 'записи', 'записей'] as const,
-  rouble: ['рубль', 'рубля', 'рублей'] as const,
-} satisfies Record<string, readonly [string, string, string]>;
+/**
+ * Ready-made word sets used across features.
+ *
+ * This is `RU_PLURALS` from `@family/shared` — the *same* table the digest and
+ * the notification renderer read, so a word cannot be spelled one way in a push
+ * and another way on the screen it links to. It had zero consumers while six
+ * features inlined their own tuples; every counted phrase goes through it now.
+ *
+ * Add a key rather than inlining a tuple at a call site.
+ */
+export { RU_PLURALS as PLURALS } from '@family/shared';
 
 /* -------------------------------------------------------------------------
  * Relative time

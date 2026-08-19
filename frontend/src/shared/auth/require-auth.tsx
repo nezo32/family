@@ -47,9 +47,9 @@ export function RequireAuth(props: { children?: ReactNode }): ReactNode {
 
   // Belt and braces: the server should never hand a session to a non-active
   // account, but if it ever does, land on the right explanation screen.
-  if (me.status === 'pending_approval') return <Navigate to={ROUTES.authPending} replace />;
-  if (me.status === 'rejected') return <Navigate to={ROUTES.authRejected} replace />;
-  if (me.status === 'suspended') return <Navigate to={ROUTES.authSuspended} replace />;
+  if (me.user.status === 'pending_approval') return <Navigate to={ROUTES.authPending} replace />;
+  if (me.user.status === 'rejected') return <Navigate to={ROUTES.authRejected} replace />;
+  if (me.user.status === 'suspended') return <Navigate to={ROUTES.authSuspended} replace />;
 
   return props.children ?? <Outlet />;
 }
@@ -107,7 +107,7 @@ export function RedirectIfAuthenticated(props: { children?: ReactNode }): ReactN
   const { data: me, isPending } = useMe();
 
   if (isPending) return <LoadingScreen />;
-  if (me && me.status === 'active') {
+  if (me && me.user.status === 'active') {
     const next = new URLSearchParams(location.search).get('next');
     return <Navigate to={next && next.startsWith('/') ? next : ROUTES.today} replace />;
   }

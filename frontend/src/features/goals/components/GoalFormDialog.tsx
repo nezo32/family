@@ -157,13 +157,13 @@ export function GoalFormDialog(props: {
       title: values.title.trim(),
       description: description.length > 0 ? description : null,
       targetAmount: parsed.minorUnits,
-      currency: me?.family?.currency ?? 'RUB',
+      currency: me?.family.currency ?? 'RUB',
       deadline: values.deadline === '' ? null : values.deadline,
       color: values.color,
       icon: values.icon === '' ? null : values.icon,
       visibility: personal && values.isPrivate ? ('private' as const) : ('household' as const),
       // `null` means a shared family goal; a personal one belongs to its author.
-      ownerId: personal ? (props.goal?.ownerId ?? me?.id ?? null) : null,
+      ownerId: personal ? (props.goal?.ownerId ?? me?.user.id ?? null) : null,
     };
 
     const close = {

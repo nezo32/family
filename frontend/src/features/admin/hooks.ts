@@ -178,6 +178,6 @@ export function useAssignableRoles(): Role[] {
 
   return useMemo(() => {
     if (!isReady || !me || !can('member:approve')) return [];
-    return assignableRoles(me.role);
+    return assignableRoles(me.user.role);
   }, [can, isReady, me]);
 }

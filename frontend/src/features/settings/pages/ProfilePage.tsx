@@ -56,19 +56,19 @@ export default function ProfilePage() {
   // `null` in local state means "untouched"; that is what keeps the PATCH body
   // to the fields the user actually edited.
   //
-  // TODO(contract): `shared/auth/types.ts` is the temporary home of the `/api/me`
-  // shape and does not yet carry `birthDate` or `color` (`selfUserSchema` in
-  // `@family/shared` does). Until the auth agent swaps that file for the shared
-  // contract, those two inputs start empty rather than pre-filled; saving them
-  // works either way.
-  const currentName = displayName ?? me.displayName;
-  const currentAvatar = avatarUrl ?? me.avatarUrl ?? '';
-  const currentBirthDate = birthDate ?? '';
-  const currentColor = color ?? '#8b7bd8';
-  const currentTimezone = timezone ?? me.timezone;
+  // Everything here reads from `me.user` — the `selfUserSchema` projection of
+  // `GET /api/me` — so `birthDate` and `color` are pre-filled from the server
+  // rather than starting empty.
+  const self = me.user;
+  const currentName = displayName ?? self.displayName;
+  const currentAvatar = avatarUrl ?? self.avatarUrl ?? '';
+  const currentBirthDate = birthDate ?? self.birthDate ?? '';
+  const currentColor = color ?? self.color ?? '#8b7bd8';
+  // `user.timezone` is nullable and means "inherit the family's" (D2).
+  const currentTimezone = timezone ?? self.timezone ?? me.family.timezone;
 
   const patch: UpdateProfileRequest = {
-    ...(displayName !== null && displayName.trim() !== me.displayName
+    ...(displayName !== null && displayName.trim() !== self.displayName
       ? { displayName: displayName.trim() }
       : {}),
     ...(avatarUrl !== null ? { avatarUrl: avatarUrl.trim() === '' ? null : avatarUrl.trim() } : {}),
@@ -106,7 +106,7 @@ export default function ProfilePage() {
             <CardTitle className="flex items-center gap-3">
               <UserAvatar
                 user={{
-                  id: me.id,
+                  id: self.id,
                   displayName: currentName,
                   avatarUrl: currentAvatar || null,
                 }}
@@ -115,10 +115,10 @@ export default function ProfilePage() {
             </CardTitle>
             <CardDescription className="flex flex-wrap items-center gap-2">
               <Badge variant="secondary">
-                {T.roleLabel}: {ROLE_LABELS_RU[me.role]}
+                {T.roleLabel}: {ROLE_LABELS_RU[self.role]}
               </Badge>
               <span className="text-xs">
-                {T.emailLabel}: {me.email ?? T.emailEmpty}
+                {T.emailLabel}: {self.email ?? T.emailEmpty}
               </span>
             </CardDescription>
           </CardHeader>

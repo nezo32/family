@@ -7,7 +7,7 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { cn } from '@/shared/lib/utils';
 import { formatTime } from '@/shared/lib/format';
-import { pluralize } from '@/shared/lib/i18n';
+import { PLURALS, pluralize } from '@/shared/lib/i18n';
 import { TASKS_RU } from '../locale';
 import { taskDetailPath } from '../routes';
 import { useClaimOccurrence, useCompleteOccurrence, useUncompleteOccurrence } from '../hooks';
@@ -128,7 +128,7 @@ export function TaskCard(props: {
             <span>{formatTime(occurrence.startsAt)}</span>
             {occurrence.category ? <span>{occurrence.category}</span> : null}
             {occurrence.points > 0 ? (
-              <span>{pluralize(occurrence.points, ['балл', 'балла', 'баллов'])}</span>
+              <span>{pluralize(occurrence.points, PLURALS.point)}</span>
             ) : null}
           </span>
 

@@ -8,8 +8,8 @@ import {
   isoDateTimeSchema,
   nonEmptyString,
   paginatedSchema,
+  queryBooleanSchema,
 } from './common.js';
-import { queryBooleanSchema } from './tasks.js';
 
 /**
  * Chore fairness contracts (D5): rotations, blackouts, swaps, points and the
@@ -121,7 +121,8 @@ export const rotationListResponseSchema = paginatedSchema(rotationResponseSchema
 export const rotationPreviewQuerySchema = z.object({
   /** Instant to evaluate eligibility (blackouts) at. Defaults to now. */
   at: isoDateTimeSchema.optional(),
-  count: z.number().int().min(1).max(20).default(5),
+  /** Coerced: this is a querystring, so `?count=5` arrives as the string "5". */
+  count: z.coerce.number().int().min(1).max(20).default(5),
 });
 
 export const rotationPreviewResponseSchema = z.object({
@@ -291,8 +292,14 @@ export type PointsBalance = z.infer<typeof pointsBalanceSchema>;
 /* -------------------------------------------------------------------------- */
 
 export const fairnessQuerySchema = z.object({
-  /** Defaults to the rotation's `balanceWindowDays`, i.e. 28 (D5). */
-  windowDays: z.number().int().min(1).max(365).default(28),
+  /**
+   * Defaults to the rotation's `balanceWindowDays`, i.e. 28 (D5).
+   *
+   * `z.coerce` because this is a querystring: both callers send
+   * `?windowDays=7`, which arrives as the string `"7"` and would fail a bare
+   * `z.number()` with a 400 on every call.
+   */
+  windowDays: z.coerce.number().int().min(1).max(365).default(28),
   rotationId: idSchema.optional(),
 });
 export type FairnessQuery = z.infer<typeof fairnessQuerySchema>;

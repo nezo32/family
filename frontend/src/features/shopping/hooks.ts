@@ -40,7 +40,7 @@ import {
   type ItemsCache,
 } from './grouping';
 import { SHOPPING_RU } from './locale';
-import { normalizeProductName } from './quick-add';
+import { normalizeProductName } from '@family/shared';
 import {
   enqueueAdd,
   enqueueToggle,

@@ -44,8 +44,10 @@ export function AppShell() {
 
   // Times and dates are rendered in the family timezone, not the device one (D2).
   useEffect(() => {
-    setFamilyTimeZone(me?.family?.timezone ?? me?.timezone);
-  }, [me?.family?.timezone, me?.timezone]);
+    // The family zone is the authority; `user.timezone` is the member's own
+    // override and is nullable ("inherit the family's").
+    setFamilyTimeZone(me?.user.timezone ?? me?.family.timezone);
+  }, [me?.user.timezone, me?.family.timezone]);
 
   useEffect(() => {
     // Remember where we were leaving from.

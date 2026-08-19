@@ -49,6 +49,15 @@ import { feedUrlFor, webcalUrlFor } from './ics.service.js';
  * it but you may not do that to it", which is the only case where the
  * distinction helps the user.
  *
+ * The same rule at the guard: every route gated on `event:read` carries
+ * `notFoundOnDeny: true`, because `event:read` *is* the permission that makes
+ * the calendar visible — a member it has been revoked from must see an absent
+ * section, not a forbidden one (D4). That includes the two non-GET routes gated
+ * on it (`rsvp`, `feed/token/rotate`): a caller who cannot read the event must
+ * not learn it exists by trying to RSVP to it. The `scoped: 'event:update'` /
+ * `'event:delete'` writes keep 403 — that caller holds `event:read` and is
+ * looking straight at the event.
+ *
  * ## The one public route
  *
  * `GET /events/feed.ics` is `config: { public: true }` because a calendar
@@ -66,21 +75,21 @@ import { feedUrlFor, webcalUrlFor } from './ics.service.js';
  * quietly loosened during a refactor.
  */
 export const EVENT_ROUTE_ACCESS = {
-  'GET /events/series': { permission: 'event:read' },
+  'GET /events/series': { permission: 'event:read', notFoundOnDeny: true },
   'POST /events/series': { permission: 'event:create' },
-  'GET /events/series/:id': { permission: 'event:read' },
+  'GET /events/series/:id': { permission: 'event:read', notFoundOnDeny: true },
   'PATCH /events/series/:id': { scoped: 'event:update' },
   'DELETE /events/series/:id': { scoped: 'event:delete' },
   'PUT /events/series/:id/attendees': { scoped: 'event:update' },
-  'GET /events/occurrences': { permission: 'event:read' },
-  'GET /events/occurrences/:id': { permission: 'event:read' },
+  'GET /events/occurrences': { permission: 'event:read', notFoundOnDeny: true },
+  'GET /events/occurrences/:id': { permission: 'event:read', notFoundOnDeny: true },
   'PATCH /events/occurrences/:id': { scoped: 'event:update' },
   'POST /events/occurrences/:id/cancel': { scoped: 'event:delete' },
-  'PUT /events/occurrences/:id/rsvp': { permission: 'event:read' },
-  'GET /events/calendar': { permission: 'event:read' },
-  'GET /events/today': { permission: 'event:read' },
-  'GET /events/feed/token': { permission: 'event:read' },
-  'POST /events/feed/token/rotate': { permission: 'event:read' },
+  'PUT /events/occurrences/:id/rsvp': { permission: 'event:read', notFoundOnDeny: true },
+  'GET /events/calendar': { permission: 'event:read', notFoundOnDeny: true },
+  'GET /events/today': { permission: 'event:read', notFoundOnDeny: true },
+  'GET /events/feed/token': { permission: 'event:read', notFoundOnDeny: true },
+  'POST /events/feed/token/rotate': { permission: 'event:read', notFoundOnDeny: true },
   'GET /events/feed.ics': { public: true },
 } as const;
 
@@ -153,7 +162,7 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.get(
     '/events/series',
     {
-      config: { permission: 'event:read' },
+      config: EVENT_ROUTE_ACCESS['GET /events/series'],
       schema: {
         tags: ['events'],
         summary: 'Список серий событий',
@@ -170,7 +179,7 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.post(
     '/events/series',
     {
-      config: { permission: 'event:create' },
+      config: EVENT_ROUTE_ACCESS['POST /events/series'],
       schema: {
         tags: ['events'],
         summary: 'Создать событие (одиночное или повторяющееся)',
@@ -189,7 +198,7 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.get(
     '/events/series/:id',
     {
-      config: { permission: 'event:read' },
+      config: EVENT_ROUTE_ACCESS['GET /events/series/:id'],
       schema: {
         tags: ['events'],
         params: seriesParamsSchema,
@@ -203,7 +212,7 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.patch(
     '/events/series/:id',
     {
-      config: { scoped: 'event:update' },
+      config: EVENT_ROUTE_ACCESS['PATCH /events/series/:id'],
       schema: {
         tags: ['events'],
         summary: 'Изменить событие (требуется scope: this | this_and_future | all)',
@@ -221,7 +230,7 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.delete(
     '/events/series/:id',
     {
-      config: { scoped: 'event:delete' },
+      config: EVENT_ROUTE_ACCESS['DELETE /events/series/:id'],
       schema: {
         tags: ['events'],
         summary: 'Удалить событие (требуется scope)',
@@ -244,7 +253,7 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.put(
     '/events/series/:id/attendees',
     {
-      config: { scoped: 'event:update' },
+      config: EVENT_ROUTE_ACCESS['PUT /events/series/:id/attendees'],
       schema: {
         tags: ['events'],
         summary: 'Изменить список участников',
@@ -268,7 +277,7 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.get(
     '/events/occurrences',
     {
-      config: { permission: 'event:read' },
+      config: EVENT_ROUTE_ACCESS['GET /events/occurrences'],
       schema: {
         tags: ['events'],
         querystring: eventOccurrenceListQuerySchema,
@@ -281,7 +290,7 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.get(
     '/events/occurrences/:id',
     {
-      config: { permission: 'event:read' },
+      config: EVENT_ROUTE_ACCESS['GET /events/occurrences/:id'],
       schema: {
         tags: ['events'],
         params: occurrenceParamsSchema,
@@ -294,7 +303,7 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.patch(
     '/events/occurrences/:id',
     {
-      config: { scoped: 'event:update' },
+      config: EVENT_ROUTE_ACCESS['PATCH /events/occurrences/:id'],
       schema: {
         tags: ['events'],
         summary: 'Перенести / изменить один экземпляр (occurrenceKey не меняется)',
@@ -310,7 +319,7 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.post(
     '/events/occurrences/:id/cancel',
     {
-      config: { scoped: 'event:delete' },
+      config: EVENT_ROUTE_ACCESS['POST /events/occurrences/:id/cancel'],
       schema: {
         tags: ['events'],
         params: occurrenceParamsSchema,
@@ -323,7 +332,7 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.put(
     '/events/occurrences/:id/rsvp',
     {
-      config: { permission: 'event:read' },
+      config: EVENT_ROUTE_ACCESS['PUT /events/occurrences/:id/rsvp'],
       schema: {
         tags: ['events'],
         summary: 'Ответить на приглашение (за другого — нужен event:update:any)',
@@ -341,7 +350,7 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.get(
     '/events/calendar',
     {
-      config: { permission: 'event:read' },
+      config: EVENT_ROUTE_ACCESS['GET /events/calendar'],
       schema: {
         tags: ['events'],
         summary: 'Сетка календаря за диапазон локальных дат',
@@ -355,7 +364,7 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.get(
     '/events/today',
     {
-      config: { permission: 'event:read' },
+      config: EVENT_ROUTE_ACCESS['GET /events/today'],
       schema: {
         tags: ['events'],
         summary: 'Лента «сегодня / завтра» для главного экрана',
@@ -371,7 +380,7 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.get(
     '/events/feed/token',
     {
-      config: { permission: 'event:read' },
+      config: EVENT_ROUTE_ACCESS['GET /events/feed/token'],
       schema: {
         tags: ['events'],
         summary: 'Ссылка на подписку в календаре телефона',
@@ -388,7 +397,7 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.post(
     '/events/feed/token/rotate',
     {
-      config: { permission: 'event:read' },
+      config: EVENT_ROUTE_ACCESS['POST /events/feed/token/rotate'],
       schema: {
         tags: ['events'],
         summary: 'Отозвать старую ссылку и выдать новую',
@@ -416,7 +425,7 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
   app.get(
     '/events/feed.ics',
     {
-      config: { public: true },
+      config: EVENT_ROUTE_ACCESS['GET /events/feed.ics'],
       schema: {
         tags: ['events'],
         summary: 'ICS-подписка (только чтение, авторизация по токену в ссылке)',

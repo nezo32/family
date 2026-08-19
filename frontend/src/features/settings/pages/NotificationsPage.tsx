@@ -52,7 +52,7 @@ export default function NotificationsPage() {
           />
         ) : (
           <>
-            <PreferenceMatrix data={preferences.data} role={me?.role} />
+            <PreferenceMatrix data={preferences.data} role={me?.user.role} />
             <QuietHoursEditor windows={preferences.data.quietHours} />
           </>
         )}

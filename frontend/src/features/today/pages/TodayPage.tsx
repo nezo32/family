@@ -65,7 +65,7 @@ export default function TodayPage() {
   if (!data) {
     return (
       <>
-        <GreetingHeader displayName={me?.displayName} date={undefined} tasks={0} events={0} />
+        <GreetingHeader displayName={me?.user.displayName} date={undefined} tasks={0} events={0} />
         <ErrorState
           error={today.error}
           title={TODAY_RU.errorTitle}
@@ -90,7 +90,7 @@ export default function TodayPage() {
   return (
     <>
       <GreetingHeader
-        displayName={me?.displayName}
+        displayName={me?.user.displayName}
         date={data.today}
         tasks={openTasks}
         events={openEvents}

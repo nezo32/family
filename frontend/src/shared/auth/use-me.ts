@@ -2,7 +2,7 @@ import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-q
 import { api } from '../api/client';
 import { AUTH_ENDPOINTS } from '../api/config';
 import { isApiError } from '../api/errors';
-import { meSchema, type Me } from './types';
+import { meResponseSchema, type MeResponse } from '@family/shared';
 
 /**
  * `GET /api/me` — the identity + **effective permission list** (D4).
@@ -10,6 +10,17 @@ import { meSchema, type Me } from './types';
  * This is the root of every access decision in the UI. It is fetched once, kept
  * warm for the whole session, and invalidated whenever the server tells us our
  * permission set was wrong (a 403 on a call the UI thought was allowed).
+ *
+ * ## The shape is nested, and it is owned by `@family/shared`
+ *
+ * `{ user, permissions, family, permissionsVersion }` — `meResponseSchema`. The
+ * frontend used to carry a hand-written *flat* mirror of this in
+ * `shared/auth/types.ts`; it drifted (`weekStartsOn` on the wrong axis,
+ * `timezone` wrongly non-nullable, `avatarUrl` wrongly a `.url()`, a `providers`
+ * field the server never sends) and then the server shipped the nested shape,
+ * at which point `parse()` threw on every single call and every authenticated
+ * screen rendered an error state. There is now exactly one definition of this
+ * contract and it lives in the package both sides import.
  */
 
 export const meKeys = {
@@ -17,14 +28,14 @@ export const meKeys = {
   detail: () => ['me'] as const,
 };
 
-async function fetchMe(signal: AbortSignal): Promise<Me> {
+async function fetchMe(signal: AbortSignal): Promise<MeResponse> {
   const raw = await api.get<unknown>(AUTH_ENDPOINTS.me, { signal });
   // Parsed, not cast: a contract drift between backend and frontend should fail
   // loudly here rather than as `undefined.map` three components deep.
-  return meSchema.parse(raw);
+  return meResponseSchema.parse(raw);
 }
 
-export function useMe(): UseQueryResult<Me> {
+export function useMe(): UseQueryResult<MeResponse> {
   return useQuery({
     queryKey: meKeys.detail(),
     queryFn: ({ signal }) => fetchMe(signal),

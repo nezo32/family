@@ -82,9 +82,9 @@ export function TopAppBar(props: {
             >
               <UserAvatar
                 user={{
-                  id: me?.id,
-                  displayName: me?.displayName ?? '?',
-                  avatarUrl: me?.avatarUrl ?? null,
+                  id: me?.user.id,
+                  displayName: me?.user.displayName ?? '?',
+                  avatarUrl: me?.user.avatarUrl ?? null,
                 }}
                 size="sm"
               />
@@ -93,10 +93,10 @@ export function TopAppBar(props: {
 
           <DropdownMenuContent align="end" className="w-60">
             <DropdownMenuLabel className="space-y-0.5">
-              <div className="truncate text-sm font-medium">{me?.displayName ?? '—'}</div>
+              <div className="truncate text-sm font-medium">{me?.user.displayName ?? '—'}</div>
               {me ? (
                 <div className="text-xs font-normal text-muted-foreground">
-                  {ROLE_LABELS_RU[me.role]}
+                  {ROLE_LABELS_RU[me.user.role]}
                 </div>
               ) : null}
             </DropdownMenuLabel>

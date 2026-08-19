@@ -35,6 +35,7 @@ import {
   telegramLinks,
   type DigestSubscriptionRow,
   type EscalationPolicyRow,
+  type NewEscalationPolicyRow,
   type NewNotificationDeliveryRow,
   type NewNotificationIntentRow,
   type NotificationDeliveryRow,
@@ -949,6 +950,51 @@ export async function listEnabledEscalationPolicies(
     .from(escalationPolicies)
     .where(and(eq(escalationPolicies.enabled, true), eq(escalationPolicies.type, type)))
     .orderBy(asc(escalationPolicies.afterMinutes));
+}
+
+/** Every policy, enabled or not — what an admin screen renders. */
+export async function listEscalationPolicies(x: Executor): Promise<EscalationPolicyRow[]> {
+  return x
+    .select()
+    .from(escalationPolicies)
+    .orderBy(asc(escalationPolicies.type), asc(escalationPolicies.afterMinutes));
+}
+
+export async function countEscalationPolicies(x: Executor): Promise<number> {
+  const [row] = await x
+    .select({ count: sql<number>`count(*)::int` })
+    .from(escalationPolicies)
+    .limit(1);
+  return row?.count ?? 0;
+}
+
+export async function insertEscalationPolicies(
+  x: Executor,
+  values: readonly NewEscalationPolicyRow[],
+): Promise<EscalationPolicyRow[]> {
+  if (values.length === 0) return [];
+  return x.insert(escalationPolicies).values([...values]).returning();
+}
+
+export async function updateEscalationPolicy(
+  x: Executor,
+  id: string,
+  patch: Partial<Pick<NewEscalationPolicyRow, 'afterMinutes' | 'escalateToRole' | 'escalateToUserId' | 'enabled'>>,
+): Promise<EscalationPolicyRow | null> {
+  const rows = await x
+    .update(escalationPolicies)
+    .set({ ...patch, updatedAt: new Date() })
+    .where(eq(escalationPolicies.id, id))
+    .returning();
+  return first(rows);
+}
+
+export async function deleteEscalationPolicy(x: Executor, id: string): Promise<boolean> {
+  const rows = await x
+    .delete(escalationPolicies)
+    .where(eq(escalationPolicies.id, id))
+    .returning({ id: escalationPolicies.id });
+  return rows.length > 0;
 }
 
 /* -------------------------------------------------------------------------- */

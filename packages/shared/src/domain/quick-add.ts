@@ -4,6 +4,14 @@
  * This is the single most-used code path in the app: adding to the shopping
  * list is one field and one tap, and the family types whatever it types.
  *
+ * **One implementation, two runtimes.** This module used to exist twice — once
+ * in `backend/src/modules/shopping/quick-add.ts` and once, minus the
+ * `IRREGULAR_GENITIVES` table below, in `frontend/src/features/shopping/quick-add.ts`.
+ * The two disagreed on the catalogue key for most realistic inputs
+ * («молока» -> `молока` on the client, `молоко` on the server), so an offline add
+ * created a second `product_catalog` row for a product the family already had.
+ * It lives here now and both sides import it.
+ *
  * Two hard constraints shape this file:
  *
  * 1. **Pure.** No database, no clock, no config. The identical function runs on

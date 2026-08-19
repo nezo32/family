@@ -12,10 +12,15 @@ export {
 } from './use-can';
 export { meKeys, useInvalidateMe, useIsAuthLoading, useMe } from './use-me';
 export {
-  accountStatusSchema,
-  authProviderSchema,
-  meSchema,
-  type AccountStatus,
-  type AuthProvider,
-  type Me,
-} from './types';
+  familyWeekStart,
+  toDayPickerWeekStart,
+  type DayPickerWeekStart,
+} from './week-start';
+
+/**
+ * The `/api/me` shape itself is **not** re-exported here.
+ *
+ * It is `meResponseSchema` / `MeResponse` in `@family/shared`, imported from
+ * there by both sides of the wire. A local alias is how the previous flat
+ * duplicate started.
+ */

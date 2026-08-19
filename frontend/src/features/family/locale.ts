@@ -1,4 +1,4 @@
-import { pluralize } from '@/shared/lib/i18n';
+import { PLURALS, pluralize } from '@/shared/lib/i18n';
 
 /**
  * Every user-facing string of the «Семья» section (D7).
@@ -79,7 +79,7 @@ export const FAMILY_RU = {
 /* -------------------------------------------------------------------------- */
 
 export const memberCount = (n: number): string =>
-  pluralize(n, ['участник', 'участника', 'участников']);
-export const choreCount = (n: number): string => pluralize(n, ['дело', 'дела', 'дел']);
-export const pointCount = (n: number): string => pluralize(n, ['балл', 'балла', 'баллов']);
-export const dayCount = (n: number): string => pluralize(n, ['день', 'дня', 'дней']);
+  pluralize(n, PLURALS.member);
+export const choreCount = (n: number): string => pluralize(n, PLURALS.chore);
+export const pointCount = (n: number): string => pluralize(n, PLURALS.point);
+export const dayCount = (n: number): string => pluralize(n, PLURALS.day);

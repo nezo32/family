@@ -49,6 +49,19 @@ import * as wall from './wall.service.js';
  * a rule needs the row (author checks, private targets), the guard is the
  * coarse one and the service does the narrowing, returning **404 rather than
  * 403** for anything outside the caller's read scope.
+ *
+ * ## Why no `notFoundOnDeny` here
+ *
+ * Deliberate, not an omission. Every read on the wall is `authenticated: true`:
+ * the wall is the family's shared room and there is no permission to lack, so
+ * there is no denial for a status code to leak through. The guarded routes are
+ * all writes (`post:create`, `comment:create`, `poll:vote`, `post:pin`, the
+ * scoped deletes), and their caller is looking straight at the thing they are
+ * trying to change — 403 is the honest answer (D4).
+ *
+ * The one read that *is* narrowed — comments on a private goal or task — is
+ * narrowed by the target's own rule in `comments.service.ts`, which answers 404
+ * through `assertCanReadEntity`.
  */
 
 const idParams = z.object({ id: idSchema });

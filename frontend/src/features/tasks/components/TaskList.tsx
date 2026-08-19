@@ -1,5 +1,5 @@
 import type { PublicUser } from '@family/shared';
-import { pluralize } from '@/shared/lib/i18n';
+import { PLURALS, pluralize } from '@/shared/lib/i18n';
 import { GROUP_ORDER, type GroupId, type TaskGroups } from '../grouping';
 import { TASKS_RU } from '../locale';
 import { TaskCard } from './TaskCard';
@@ -39,7 +39,7 @@ function TaskGroupSection(props: {
           {TASKS_RU.groups[props.group]}
         </h2>
         <span className="text-xs text-muted-foreground">
-          {pluralize(props.occurrences.length, ['дело', 'дела', 'дел'])}
+          {pluralize(props.occurrences.length, PLURALS.chore)}
         </span>
       </div>
       <p className="text-xs text-muted-foreground">{TASKS_RU.groupHint[props.group]}</p>

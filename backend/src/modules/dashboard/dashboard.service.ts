@@ -13,6 +13,7 @@ import type {
   WeekQuery,
   WeekResponse,
 } from '@family/shared/contracts/dashboard';
+import { percentOf } from '@family/shared';
 import type { Permission, Role } from '@family/shared';
 
 import type { Executor } from '../../core/db.js';
@@ -713,10 +714,19 @@ export function toShoppingItem(row: ShoppingRow): DashboardShoppingItem {
   };
 }
 
-function percent(part: number, whole: number): number {
-  if (whole <= 0) return 0;
-  return Math.max(0, Math.min(100, Math.round((part / whole) * 100)));
-}
+/**
+ * Whole percent, exact integer arithmetic, floored at 0 and **uncapped**.
+ *
+ * This used to be a local `Math.round(part / whole * 100)` clamped to 100, and
+ * it disagreed with the goals module twice over: `285/1000` rounded down to 28
+ * where the goals screen said 29 (`285/1000` is `28.499999999999996` in IEEE
+ * 754), and an over-funded goal read «100 %» here and «112 %» there. Same
+ * function everywhere now.
+ *
+ * `sharePercent` cannot exceed 100 by construction (`doneCount <= total`), so
+ * dropping the clamp changes nothing for the fairness bar.
+ */
+const percent = percentOf;
 
 /**
  * The single next thing the moneybox is reaching for.

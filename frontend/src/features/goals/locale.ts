@@ -1,3 +1,4 @@
+import { PLURALS, pluralize } from '@/shared/lib/i18n';
 import type { MoneyParseError } from './money';
 
 /**
@@ -181,24 +182,19 @@ export const GOAL_STATUS_RU = {
 } as const;
 
 /**
- * "5 дней" — Russian plural rules, which no `Intl` shortcut gets right for us
- * because we also need the "дней/дня/день" stem swap.
+ * "5 дней" — one Russian plural rule for the whole app, in `@family/shared`.
+ *
+ * This file used to carry its own `pluralRu(count, one, few, many)`, which was
+ * the same rule as `@/shared/lib/i18n`'s `plural(n, forms)` written with a
+ * different arity, and it interpolated the count bare while the rest of the UI
+ * grouped it. `pluralize` does both, once.
  */
-export function pluralRu(count: number, one: string, few: string, many: string): string {
-  const abs = Math.abs(count) % 100;
-  const last = abs % 10;
-  if (abs > 10 && abs < 20) return many;
-  if (last > 1 && last < 5) return few;
-  if (last === 1) return one;
-  return many;
-}
-
 export function daysLeftLabel(days: number): string {
   if (days === 0) return GOALS_RU.deadlineToday;
   if (days < 0) return GOALS_RU.deadlinePassed;
-  return `${String(days)} ${pluralRu(days, 'день', 'дня', 'дней')}`;
+  return pluralize(days, PLURALS.day);
 }
 
 export function contributorsLabel(count: number): string {
-  return `${String(count)} ${pluralRu(count, 'участник', 'участника', 'участников')}`;
+  return pluralize(count, PLURALS.member);
 }

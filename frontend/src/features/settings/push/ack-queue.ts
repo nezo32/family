@@ -10,6 +10,15 @@
  * |---|---|
  * | after `showNotification()` resolves in `push` | `POST /api/notifications/deliveries/:id/delivered` |
  * | in `notificationclick`, before navigating     | `POST /api/notifications/deliveries/:id/interacted` |
+ * | the «Подтвердить» tap in the inbox            | `POST /api/notifications/deliveries/:id/acknowledge` |
+ *
+ * The third one is not a service-worker event — it is a button in the app — but
+ * it is queued here with the other two because it is the receipt that matters
+ * most: per D11 an explicit acknowledgement is the **only** signal that stops a
+ * `critical` intent escalating to another family member. A tap that is lost
+ * because the phone was on the metro at that moment costs somebody else a 3 a.m.
+ * push, so it goes to durable storage first and to the network second, exactly
+ * like the other two.
  *
  * Body is `{ occurredAt }` — an ISO-8601 instant recorded when the event
  * *actually happened*, not when the request finally went out. The server clamps
@@ -36,7 +45,7 @@
  * here and server-side (delivery status only ever moves forward).
  */
 
-export type AckKind = 'delivered' | 'interacted';
+export type AckKind = 'delivered' | 'interacted' | 'acknowledged';
 
 export interface QueuedAck {
   /** `${deliveryId}:${kind}` — the primary key, which makes replay idempotent. */
@@ -67,9 +76,23 @@ export function ackKey(deliveryId: string, kind: AckKind): string {
   return `${deliveryId}:${kind}`;
 }
 
-/** `POST /api/notifications/deliveries/:id/{delivered|interacted}`. */
+/**
+ * The route segment for each kind.
+ *
+ * Two of them are named after the resulting **state** and the third after the
+ * **act**: the endpoint is `/acknowledge`, not `/acknowledged`. Interpolating
+ * the kind directly — as this function used to — silently 404s every
+ * acknowledgement, which per D11 looks exactly like nobody pressed the button.
+ */
+const ACK_PATH_SEGMENT: Record<AckKind, string> = {
+  delivered: 'delivered',
+  interacted: 'interacted',
+  acknowledged: 'acknowledge',
+};
+
+/** `POST /api/notifications/deliveries/:id/{delivered|interacted|acknowledge}`. */
 export function ackPath(deliveryId: string, kind: AckKind): string {
-  return `/notifications/deliveries/${encodeURIComponent(deliveryId)}/${kind}`;
+  return `/notifications/deliveries/${encodeURIComponent(deliveryId)}/${ACK_PATH_SEGMENT[kind]}`;
 }
 
 /* -------------------------------------------------------------------------- */

@@ -113,7 +113,7 @@ export default function FamilyPage() {
               key={member.id}
               member={member}
               load={load.byMember.get(member.id)}
-              isSelf={member.id === me?.id}
+              isSelf={member.id === me?.user.id}
               onOpen={() => {
                 setSelectedId(member.id);
               }}
@@ -125,7 +125,7 @@ export default function FamilyPage() {
       <MemberSheet
         member={selected}
         load={selected ? load.byMember.get(selected.id) : undefined}
-        isSelf={selected?.id === me?.id}
+        isSelf={selected?.id === me?.user.id}
         open={selected !== null}
         onOpenChange={(open) => {
           if (!open) setSelectedId(null);

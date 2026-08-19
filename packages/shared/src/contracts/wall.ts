@@ -6,6 +6,7 @@ import {
   isoDateTimeSchema,
   nonEmptyString,
   paginatedSchema,
+  queryBooleanSchema,
 } from './common.js';
 
 /**
@@ -80,7 +81,7 @@ export type PostResponse = z.infer<typeof postResponseSchema>;
 export const listPostsQuerySchema = cursorPaginationSchema.extend({
   type: postTypeSchema.optional(),
   authorId: idSchema.optional(),
-  pinnedFirst: z.coerce.boolean().default(true),
+  pinnedFirst: queryBooleanSchema.default(true),
 });
 export type ListPostsQuery = z.infer<typeof listPostsQuerySchema>;
 

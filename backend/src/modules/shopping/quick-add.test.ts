@@ -8,12 +8,18 @@ import {
   parseQuickAddLine,
   parseQuickAddText,
   type CanonicalUnit,
-} from './quick-add.js';
+} from '@family/shared';
 
 /**
  * The parser is the most-typed-into code path in the app and it runs in two
  * places — the server and the offline PWA. These are the cases the family will
  * actually type, in Russian, on a phone, one-handed, in a shop.
+ *
+ * The corpus now runs against `@family/shared`, which is the **only**
+ * implementation. It used to be duplicated in the client, minus the
+ * `IRREGULAR_GENITIVES` table, and 51 of the 66 assertions below produced a
+ * different `product_catalog` key there. See the regression block at the end of
+ * the file for the exact words that used to diverge.
  */
 
 interface Case {
@@ -298,5 +304,52 @@ describe('catalogKeyFor', () => {
 
   it('leaves multi-word names alone — the head noun is ambiguous', () => {
     expect(catalogKeyFor('красной икры', true)).toBe('красной икры');
+  });
+});
+
+/**
+ * The words the deleted client-side copy got wrong.
+ *
+ * It had no `IRREGULAR_GENITIVES` table, so «молока» keyed as `молока` and the
+ * server keyed the same word as `молоко` — an offline add created a second
+ * `product_catalog` row for a product the family already had. Worse, the bare
+ * suffix rules actively mangled words the table protected: «огурцов» became
+ * `огурц`, «яиц» stayed `яиц`, «соли» became `сола`.
+ *
+ * There is one implementation now, so these can only ever be one answer; the
+ * block exists to pin down *which* answer, and to fail loudly if somebody ever
+ * re-adds a copy that drops the table.
+ */
+describe('irregular genitives (the divergence that made this module shared)', () => {
+  it.each([
+    // masculine/neuter genitive singular in -а/-я, indistinguishable from a
+    // feminine nominative without the table
+    ['2 л молока', 'молоко'],
+    ['500 г масла', 'масло'],
+    ['1 кг сахара', 'сахар'],
+    ['300 г сыра', 'сыр'],
+    ['2 кг мяса', 'мясо'],
+    ['1 л сока', 'сок'],
+    ['200 г творога', 'творог'],
+    ['1 кг картофеля', 'картофель'],
+    // fleeting vowels — the suffix rule alone produces «огурц»
+    ['1 кг огурцов', 'огурец'],
+    // suppletive stems
+    ['10 шт яиц', 'яйцо'],
+    ['5 яблок', 'яблоко'],
+    // third declension — the -и rule alone produces «сола» / «морковя»
+    ['1 кг соли', 'соль'],
+    ['1 кг моркови', 'морковь'],
+    // plural-only nouns
+    ['2 уп макарон', 'макароны'],
+    ['1 кг фруктов', 'фрукты'],
+  ])('«%s» keys as %s on both sides', (input, key) => {
+    expect(parseQuickAddLine(input)?.normalizedName).toBe(key);
+  });
+
+  it('never truncates a word the table protects', () => {
+    // What the table-less copy did: slice off the last two characters.
+    expect(lemmatizeProductName('огурцов')).not.toBe('огурц');
+    expect(lemmatizeProductName('овощей')).not.toBe('овощ');
   });
 });

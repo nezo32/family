@@ -35,6 +35,7 @@ import { ScheduleField } from './components/ScheduleField';
 import { TaskEditor } from './components/TaskEditor';
 import { AssigneeControl } from './components/AssigneeControl';
 import { useCompleteOccurrence } from './hooks';
+import { makeMe } from '@/test/me';
 import { taskKeys } from './api';
 import { ONCE, type ScheduleValue } from './recurrence';
 
@@ -50,17 +51,7 @@ const SERIES_ID = '44444444-4444-4444-8444-444444444444';
 const DTSTART = '2026-09-08T09:00:00'; // a Tuesday
 
 function me(permissions: Permission[]) {
-  return {
-    id: ME_ID,
-    email: null,
-    displayName: 'Аня',
-    avatarUrl: null,
-    role: 'adult',
-    status: 'active',
-    timezone: 'Europe/Moscow',
-    permissions,
-    providers: [],
-  };
+  return makeMe({ id: ME_ID, email: null, displayName: 'Аня', permissions });
 }
 
 function occurrence(overrides: Partial<TaskOccurrenceResponse> = {}): TaskOccurrenceResponse {

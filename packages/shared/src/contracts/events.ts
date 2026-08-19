@@ -7,6 +7,7 @@ import {
   isoDateTimeSchema,
   nonEmptyString,
   paginatedSchema,
+  queryBooleanSchema,
   timeZoneSchema,
 } from './common.js';
 import {
@@ -15,7 +16,6 @@ import {
   editScopeSchema,
   floatingDateTimeSchema,
   occurrenceStatusSchema,
-  queryBooleanSchema,
   recurrenceSpecSchema,
   recurrenceViewSchema,
   visibilitySchema,

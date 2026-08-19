@@ -86,35 +86,87 @@ async function resolveAuth(request: FastifyRequest): Promise<AuthContext> {
   return buildAuthContext(user);
 }
 
-function enforce(request: FastifyRequest, access: RouteAccessConfig): void {
-  const auth = request.auth;
-  if (!auth) throw new AppError('UNAUTHENTICATED', 'Authentication required');
+/**
+ * The caller, reduced to what an access decision actually reads. Anything
+ * shaped like this — including a fixture built by `buildAuthContext` — can be
+ * put through `decideAccess`, which is what makes the 404-vs-403 rule testable
+ * without a database or an HTTP request.
+ */
+export type AccessActor = Pick<AuthContext, 'role' | 'can' | 'canAny' | 'scopeFor'>;
 
-  const deny = (required: string, context: Record<string, unknown>): never => {
-    if (access.notFoundOnDeny) {
-      throw new AppError('NOT_FOUND', 'Resource not found', { context });
-    }
-    throw new AppError('FORBIDDEN', `Missing permission: ${required}`, { context });
-  };
+export type AccessDecision =
+  | { readonly allowed: true; readonly scope: 'any' | 'own' | null }
+  | { readonly allowed: false; readonly error: AppError };
 
+/**
+ * The one place a denial picks its status code.
+ *
+ * `notFoundOnDeny` routes answer 404 because the caller must not learn the
+ * section exists; everything else answers 403, the honest "you can see it, you
+ * may not do that to it" (D4). Both the `onRequest` hook and the
+ * `requirePermission` / `requireAny` preHandlers come through here, so a route
+ * cannot be 404 through one door and 403 through the other.
+ */
+export function denyError(
+  access: RouteAccessConfig,
+  required: string,
+  context: Record<string, unknown>,
+): AppError {
+  if (access.notFoundOnDeny) {
+    return new AppError('NOT_FOUND', 'Resource not found', { context });
+  }
+  return new AppError('FORBIDDEN', `Missing permission: ${required}`, { context });
+}
+
+/**
+ * Pure: config + caller in, allow-or-error out. `enforce` is the thin wrapper
+ * that applies the result to the request.
+ */
+export function decideAccess(access: RouteAccessConfig, auth: AccessActor): AccessDecision {
   if (access.permission && !auth.can(access.permission)) {
-    deny(access.permission, { required: access.permission, role: auth.role });
+    return {
+      allowed: false,
+      error: denyError(access, access.permission, {
+        required: access.permission,
+        role: auth.role,
+      }),
+    };
   }
 
   if (access.anyPermission?.length && !auth.canAny(...access.anyPermission)) {
-    deny(access.anyPermission.join(' | '), {
-      requiredAnyOf: access.anyPermission,
-      role: auth.role,
-    });
+    return {
+      allowed: false,
+      error: denyError(access, access.anyPermission.join(' | '), {
+        requiredAnyOf: access.anyPermission,
+        role: auth.role,
+      }),
+    };
   }
 
   if (access.scoped) {
     const scope = auth.scopeFor(access.scoped);
     if (!scope) {
-      deny(`${access.scoped}:own`, { required: `${access.scoped}:own`, role: auth.role });
+      return {
+        allowed: false,
+        error: denyError(access, `${access.scoped}:own`, {
+          required: `${access.scoped}:own`,
+          role: auth.role,
+        }),
+      };
     }
-    request.scope = scope;
+    return { allowed: true, scope };
   }
+
+  return { allowed: true, scope: null };
+}
+
+function enforce(request: FastifyRequest, access: RouteAccessConfig): void {
+  const auth = request.auth;
+  if (!auth) throw new AppError('UNAUTHENTICATED', 'Authentication required');
+
+  const decision = decideAccess(access, auth);
+  if (!decision.allowed) throw decision.error;
+  request.scope = decision.scope;
 }
 
 export const authPlugin = fp(
@@ -183,10 +235,19 @@ export const authPlugin = fp(
 
     /* --- preHandler factories, for the rare route that needs a dynamic check --- */
 
+    /**
+     * These route through `denyError` with the route's own access config, so a
+     * `notFoundOnDeny` route stays 404 no matter which door the denial comes
+     * out of. Hard-coding 403 here — as they used to — meant a dynamic check on
+     * a hidden section confirmed its existence anyway.
+     */
     app.decorate('requirePermission', (permission: Permission) => {
       return async (request: FastifyRequest) => {
         if (!request.auth?.can(permission)) {
-          throw new AppError('FORBIDDEN', `Missing permission: ${permission}`);
+          throw denyError(accessConfigOf(request), permission, {
+            required: permission,
+            role: request.auth?.role,
+          });
         }
       };
     });
@@ -194,7 +255,10 @@ export const authPlugin = fp(
     app.decorate('requireAny', (...permissions: Permission[]) => {
       return async (request: FastifyRequest) => {
         if (!request.auth?.canAny(...permissions)) {
-          throw new AppError('FORBIDDEN', `Missing any of: ${permissions.join(', ')}`);
+          throw denyError(accessConfigOf(request), permissions.join(' | '), {
+            requiredAnyOf: permissions,
+            role: request.auth?.role,
+          });
         }
       };
     });

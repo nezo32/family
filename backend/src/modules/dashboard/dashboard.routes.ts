@@ -37,7 +37,10 @@ import { createDigestPort, previewDigest } from './digest.service.js';
  *
  * `/dashboard/digest/preview` is a personal-settings action and declares
  * `notification:manage:own`, matching the `GET/PUT /notifications/digest`
- * routes it sits next to on the settings screen.
+ * routes it sits next to on the settings screen. It is a write-shaped action on
+ * a section its caller can already see, so it stays 403 on a denial rather than
+ * taking `notFoundOnDeny` — there is nothing here whose existence is a secret,
+ * which is exactly why the two reads need no permission at all.
  *
  * ## Why the preview is a POST
  *

@@ -10,6 +10,7 @@ import {
   nonEmptyString,
   paginatedSchema,
   positiveMinorUnitsSchema,
+  queryBooleanSchema,
 } from './common.js';
 
 /**
@@ -162,7 +163,7 @@ export const listGoalsQuerySchema = cursorPaginationSchema.extend({
   /** `family` = `owner_id IS NULL`, `mine` = owned by the caller. */
   scope: z.enum(['all', 'family', 'mine']).default('all'),
   ownerId: idSchema.optional(),
-  includeArchived: z.coerce.boolean().default(false),
+  includeArchived: queryBooleanSchema.default(false),
   sort: z.enum(['sortOrder', 'deadline', 'progress', 'createdAt']).default('sortOrder'),
 });
 export type ListGoalsQuery = z.infer<typeof listGoalsQuerySchema>;

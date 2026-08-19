@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import type { ShoppingItemResponse } from '@family/shared';
 import { cn } from '@/shared/lib/utils';
-import { SHOPPING_RU, plural } from '../locale';
+import { PLURALS, plural } from '@/shared/lib/i18n';
+import { SHOPPING_RU } from '../locale';
 import { boughtTail, groupByAisle, neededItems } from '../grouping';
 import { ItemRow } from './ItemRow';
 
@@ -76,7 +77,7 @@ export function AisleList(props: {
             />
             {SHOPPING_RU.boughtSection}
             <span className="font-normal normal-case">
-              {tail.length} {plural(tail.length, 'позиция', 'позиции', 'позиций')}
+              {tail.length} {plural(tail.length, PLURALS.lineItem)}
             </span>
           </button>
           {tailOpen ? (

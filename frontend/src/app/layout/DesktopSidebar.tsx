@@ -17,7 +17,7 @@ import { NAV_ITEMS } from './nav-items';
 export function DesktopSidebar() {
   const { can } = useCan();
   const { data: me } = useMe();
-  const familyName = me?.family?.name ?? 'Семья';
+  const familyName = me?.family.name ?? 'Семья';
 
   const items = NAV_ITEMS.filter((item) => !item.perm || can(item.perm));
 

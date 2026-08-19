@@ -121,7 +121,15 @@ export const dashboardMilestoneSchema = z.object({
   targetAmount: minorUnitsSchema,
   savedAmount: minorUnitsSchema,
   remainingAmount: minorUnitsSchema,
-  progressPercent: z.number().int().min(0).max(100),
+  /**
+   * `percentOf(savedAmount, targetAmount)` — the same uncapped value
+   * `contracts/goals.ts` documents, floored at 0 and **not** capped at 100.
+   *
+   * It used to be `.max(100)` here and uncapped there, so an over-funded goal
+   * read «112 %» on the goals screen and «100 %» on the home screen. Clamping
+   * is now a rendering decision (`ringPercent`), not a wire contract.
+   */
+  progressPercent: z.number().int().min(0),
   currency: z.string(),
   deadline: isoDateSchema.nullable(),
 });
@@ -142,6 +150,11 @@ export const dashboardLoadMemberSchema = z.object({
   points: z.number().int(),
   /** `numeric(4,2)` as a decimal string — see `choreWeightSchema`. */
   weight: z.string(),
+  /**
+   * A share of the family's own weekly total, so it is bounded at 100 by
+   * construction (`doneCount <= total`). The cap stays here because it is a
+   * genuine invariant of a share, not a clamp hiding an over-funded value.
+   */
   sharePercent: z.number().int().min(0).max(100),
 });
 export type DashboardLoadMember = z.infer<typeof dashboardLoadMemberSchema>;

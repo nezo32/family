@@ -18,6 +18,23 @@ if (config.RUN_MIGRATIONS_ON_BOOT) {
   await runMigrations();
 }
 
+/**
+ * D11's third rung («escalate to another person») reads `escalation_policies`,
+ * which nothing ever wrote — so it was a permanent no-op. Seeded here rather
+ * than in a migration because it is *configuration*, not schema: the function
+ * writes only when the table is empty, so an admin's edits survive every
+ * restart. Failing here must not stop the API from serving.
+ */
+try {
+  const { getDb } = await import('./core/db.js');
+  const { ensureDefaultEscalationPolicies } = await import(
+    './modules/notifications/notifications.service.js'
+  );
+  await ensureDefaultEscalationPolicies(getDb());
+} catch (err) {
+  logger.error({ err }, 'could not seed the default escalation policies');
+}
+
 const app = await buildApp();
 
 let stopWorkers: (() => Promise<void>) | undefined;

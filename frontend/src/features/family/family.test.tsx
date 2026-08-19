@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Permission } from '@family/shared';
+import type { Permission, Role } from '@family/shared';
 import { clearAccessToken } from '@/shared/api/token-store';
+import { makeMe } from '@/test/me';
 import FamilyPage from './pages/FamilyPage';
 
 /**
@@ -31,18 +32,8 @@ const ADMIN_PERMISSIONS: Permission[] = [
   'task:read:any',
 ];
 
-function meBody(permissions: Permission[], role = 'admin') {
-  return {
-    id: ME_ID,
-    email: 'mama@example.com',
-    displayName: 'Мама',
-    avatarUrl: null,
-    role,
-    status: 'active',
-    timezone: 'Europe/Moscow',
-    permissions,
-    providers: ['google'],
-  };
+function meBody(permissions: Permission[], role: Role = 'admin') {
+  return makeMe({ id: ME_ID, displayName: 'Мама', role, permissions });
 }
 
 function member(overrides: Record<string, unknown>) {

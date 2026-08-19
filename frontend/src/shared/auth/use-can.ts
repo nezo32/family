@@ -114,7 +114,7 @@ export function useCan(): UseCanResult {
   return useMemo<UseCanResult>(() => {
     const list: readonly Permission[] = me?.permissions ?? [];
     const set: ReadonlySet<string> = new Set<string>(list);
-    const userId = me?.id ?? null;
+    const userId = me?.user.id ?? null;
 
     const can: CanFn = (base, resource) => evaluate(set, userId, base, resource);
 

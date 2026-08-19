@@ -1,4 +1,4 @@
-import { pluralize } from '@/shared/lib/i18n';
+import { PLURALS, pluralize } from '@/shared/lib/i18n';
 import type { AuthProvider, UserStatus } from '@family/shared';
 
 /**
@@ -103,4 +103,4 @@ export const STATUS_LABELS_RU: Record<UserStatus, string> = {
 /* Counted phrases                                                             */
 /* -------------------------------------------------------------------------- */
 
-export const requestCount = (n: number): string => pluralize(n, ['заявка', 'заявки', 'заявок']);
+export const requestCount = (n: number): string => pluralize(n, PLURALS.request);
