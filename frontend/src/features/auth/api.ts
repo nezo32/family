@@ -121,7 +121,7 @@ export function startOAuth(provider: OAuthProvider, options: OAuthStartOptions =
 
 /**
  * A provider button is only worth showing when this deployment is configured
- * for it — a dead "Войти через Apple" that 500s is worse than no button.
+ * for it — a dead "Войти через Google" that 500s is worse than no button.
  *
  * Convention: one public build-time variable per provider. None of them is a
  * secret (an OAuth client id is public by definition and the bot username is on
@@ -130,16 +130,15 @@ export function startOAuth(provider: OAuthProvider, options: OAuthStartOptions =
  *
  * Fallback rule: when the build carries **no** provider variables at all — dev
  * shells, tests, a container that never received them — every provider is
- * offered and the backend decides. Silently hiding all three would make the
+ * offered and the backend decides. Silently hiding them all would make the
  * login screen look broken.
  */
 export const PROVIDER_ENV_KEYS: Record<OAuthProvider, string> = {
   google: 'VITE_GOOGLE_CLIENT_ID',
-  apple: 'VITE_APPLE_CLIENT_ID',
   telegram: 'VITE_TELEGRAM_BOT_USERNAME',
 };
 
-export const OAUTH_PROVIDER_ORDER: readonly OAuthProvider[] = ['google', 'apple', 'telegram'];
+export const OAUTH_PROVIDER_ORDER: readonly OAuthProvider[] = ['google', 'telegram'];
 
 type EnvRecord = Record<string, string | boolean | undefined>;
 

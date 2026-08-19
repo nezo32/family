@@ -20,14 +20,12 @@ one or the other is present.
 
 `session` = a valid access token whose `status` claim is `active`.
 
-### 1.1 OAuth — Google / Apple / Telegram
+### 1.1 OAuth — Google / Telegram
 
 | Method | Path                       | Guard  | Purpose                                                                                                                                                                                                                                                          |
 | ------ | -------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET`  | `/auth/google/start`       | public | Build the OIDC authorization URL (code + PKCE), insert the `oauth_transactions` row, `302` to Google. `?intent=link` additionally requires a session.                                                                                                            |
 | `GET`  | `/auth/google/callback`    | public | `?code&state`. Consume the transaction, exchange the code, verify the id_token, resolve or create the identity, issue the session.                                                                                                                               |
-| `GET`  | `/auth/apple/start`        | public | Same, but `response_mode=form_post`, no PKCE (`code_verifier` stays NULL), client secret is an ES256 JWT minted at runtime from the `.p8`.                                                                                                                       |
-| `POST` | `/auth/apple/callback`     | public | **Cross-site form POST.** `code`, `state`, `id_token`, and — on the first authorization only — the unsigned `user` JSON blob. Needs `@fastify/formbody`; CSRF origin checks must exempt this one route, which is safe because `state` is the anti-forgery token. |
 | `GET`  | `/auth/telegram/start`     | public | OIDC at `https://oauth.telegram.org`, scopes `openid profile telegram:bot_access`.                                                                                                                                                                               |
 | `GET`  | `/auth/telegram/callback`  | public | As Google. The bot-access grant is what lets us DM admins about pending signups.                                                                                                                                                                                 |
 | `POST` | `/auth/telegram/widget`    | public | **Legacy fallback.** Hash-verified Login Widget payload (`telegramWidgetPayloadSchema`).                                                                                                                                                                         |
@@ -189,11 +187,6 @@ permission guard. The status gate runs first so a suspended admin gets
   callback for an unknown subject whose email matches an existing user returns
   `409 IDENTITY_ALREADY_LINKED` with copy that says "sign in with your existing
   method, then link from Settings".
-- Apple private-relay addresses (`is_private_email = true`) are never
-  link-eligible and never treated as a contact address.
-- Apple's name arrives **once**, unsigned, in the first callback's `user` field.
-  Persist it to `provider_display_name` in the same transaction that creates the
-  identity, or it is unrecoverable.
 - `raw_profile` stores the leftover claims for debugging. **Strip every
   credential first** — no `access_token`, `refresh_token`, `id_token`, `code` or
   `client_secret` may be written.
@@ -238,6 +231,7 @@ Max-Age=30d`. Server-set `HttpOnly` cookies are **not** subject to iOS's 7-day
 - CSRF: `SameSite=Lax` + POST-only refresh + `Origin` / `Sec-Fetch-Site` checks
   on every mutating request. Non-auth endpoints authenticate with the in-memory
   bearer token and are structurally CSRF-immune.
-- `POST /auth/apple/callback` is the single exemption from the origin check —
-  Apple posts it cross-site by design, and `state` is the anti-forgery token
-  there.
+- The Telegram widget / Mini App fallbacks (`POST /auth/telegram/widget`,
+  `POST /auth/telegram/init-data`) are the only exemptions from the origin
+  check — they arrive cross-site by design and carry no ambient authority at
+  all, being authenticated solely by the HMAC over their payload.

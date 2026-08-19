@@ -144,7 +144,6 @@ export function googleProfileFromClaims(claims: JWTPayload, expectedNonce: strin
     providerUserId: sub,
     email,
     emailVerified: claims.email_verified === true,
-    isPrivateEmail: false,
     displayName: name,
     username: null,
     avatarUrl: picture,

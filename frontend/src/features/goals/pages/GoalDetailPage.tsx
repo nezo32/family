@@ -18,6 +18,7 @@ import { ConfirmDialog } from '@/shared/components/ConfirmDialog';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { PageHeader } from '@/shared/components/PageHeader';
 import { formatDateLong, formatMoney } from '@/shared/lib/format';
+import { displayEmoji } from '@/shared/lib/emoji';
 import { COMMON } from '@/shared/lib/i18n';
 import { ROUTES } from '@/shared/lib/routes';
 import { cn } from '@/shared/lib/utils';
@@ -78,6 +79,7 @@ export default function GoalDetailPage() {
   const reached = goal.status === 'reached' || goal.currentAmount >= goal.targetAmount;
   const days = daysUntil(goal.deadline);
   const accent = goal.color ?? 'var(--primary)';
+  const goalEmoji = displayEmoji(goal.icon);
   const rows = transactions.data?.pages.flatMap((page) => page.items) ?? [];
 
   return (
@@ -94,7 +96,7 @@ export default function GoalDetailPage() {
         }
         title={
           <span className="flex items-center gap-2">
-            {goal.icon ? <span aria-hidden>{goal.icon}</span> : null}
+            {goalEmoji ? <span aria-hidden>{goalEmoji}</span> : null}
             {goal.title}
           </span>
         }

@@ -8,6 +8,7 @@ import { ConfirmDialog } from '@/shared/components/ConfirmDialog';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { Badge } from '@/shared/ui/badge';
 import { useCan } from '@/shared/auth/use-can';
+import { useMe } from '@/shared/auth/use-me';
 import { ADMIN_RU, requestCount } from '../locale';
 import {
   useApproveMember,
@@ -49,6 +50,7 @@ import { RejectDialog } from '../components/RejectDialog';
  */
 export default function MembersPage() {
   const { can, isReady } = useCan();
+  const { data: me } = useMe();
 
   const canApprove = can('member:approve');
   // The affordance for taking access away. The endpoint enforces
@@ -115,7 +117,17 @@ export default function MembersPage() {
   }
 
   const pendingItems = pending.data?.items ?? [];
-  const memberItems = members.data?.items ?? [];
+  /*
+   * The roster endpoint returns *everyone*, the approval queue included, so a
+   * person waiting for a decision was listed twice: once above with
+   * «Одобрить»/«Отклонить», and once here with «Приостановить» — an action that
+   * makes no sense against an account that has never been let in. The queue is
+   * the only place a `pending_approval` row belongs.
+   */
+  const memberItems = (members.data?.items ?? []).filter(
+    (member) => member.status !== 'pending_approval',
+  );
+  const selfId = me?.user.id;
 
   return (
     <>
@@ -134,99 +146,56 @@ export default function MembersPage() {
         </div>
       ) : null}
 
-      {/* ---- the queue --------------------------------------------------- */}
-      <section aria-labelledby="pending-heading" className="mb-8">
-        <div className="mb-2 flex items-center gap-2">
-          <h2 id="pending-heading" className="text-base font-semibold text-foreground">
-            {ADMIN_RU.queueTitle}
-          </h2>
-          {pendingItems.length > 0 ? (
-            <Badge className="tabular-nums">{pendingItems.length}</Badge>
-          ) : null}
-        </div>
+      {/*
+        Two independent lists, so on a genuinely wide screen they sit side by
+        side instead of one 1024px-wide column where «Приостановить» floats 480px
+        away from the name it belongs to. Below `xl` they stack, unchanged.
+      */}
+      <div className="grid items-start gap-8 xl:grid-cols-2">
+        {/* ---- the queue --------------------------------------------------- */}
+        <section aria-labelledby="pending-heading">
+          <div className="mb-2 flex items-center gap-2">
+            <h2 id="pending-heading" className="text-base font-semibold text-foreground">
+              {ADMIN_RU.queueTitle}
+            </h2>
+            {pendingItems.length > 0 ? (
+              <Badge className="tabular-nums">{pendingItems.length}</Badge>
+            ) : null}
+          </div>
 
-        {pending.isPending ? (
-          <ListSkeleton />
-        ) : pending.isError ? (
-          <ErrorState
-            error={pending.error}
-            title={ADMIN_RU.loadErrorTitle}
-            onRetry={() => void pending.refetch()}
-          />
-        ) : pendingItems.length === 0 ? (
-          <EmptyState
-            compact
-            icon={UserCheck}
-            title={ADMIN_RU.queueEmptyTitle}
-            description={ADMIN_RU.queueEmptyDescription}
-          />
-        ) : (
-          <>
-            <p className="mb-2 text-sm text-muted-foreground">
-              {requestCount(pendingItems.length)} · {ADMIN_RU.queueHint}
-            </p>
-            <ul className="flex flex-col gap-3">
-              {pendingItems.map((member) => (
-                <PendingMemberCard
-                  key={member.id}
-                  member={member}
-                  isBusy={busy}
-                  onApprove={() => {
-                    setConflict(false);
-                    setApproveFor(member);
-                  }}
-                  onReject={() => {
-                    setConflict(false);
-                    setRejectFor(member);
-                  }}
-                />
-              ))}
-            </ul>
-          </>
-        )}
-      </section>
-
-      {/* ---- everybody else ---------------------------------------------- */}
-      {/* `useMembers` is enabled on `member:read`, and a disabled query stays
-          `pending` forever — so the section is gated on the same check rather
-          than rendering a skeleton that never resolves. */}
-      {canReadRoster ? (
-        <section aria-labelledby="members-heading">
-          <h2 id="members-heading" className="mb-2 text-base font-semibold text-foreground">
-            {ADMIN_RU.membersTitle}
-          </h2>
-
-          {members.isPending ? (
+          {pending.isPending ? (
             <ListSkeleton />
-          ) : members.isError ? (
+          ) : pending.isError ? (
             <ErrorState
-              error={members.error}
+              error={pending.error}
               title={ADMIN_RU.loadErrorTitle}
-              onRetry={() => void members.refetch()}
+              onRetry={() => void pending.refetch()}
             />
-          ) : memberItems.length === 0 ? (
+          ) : pendingItems.length === 0 ? (
             <EmptyState
               compact
-              title={ADMIN_RU.membersEmptyTitle}
-              description={ADMIN_RU.membersEmptyDescription}
+              icon={UserCheck}
+              title={ADMIN_RU.queueEmptyTitle}
+              description={ADMIN_RU.queueEmptyDescription}
             />
           ) : (
             <>
-              <p className="mb-2 text-sm text-muted-foreground">{ADMIN_RU.membersHint}</p>
-              <ul className="flex flex-col gap-2 pb-safe">
-                {memberItems.map((member) => (
-                  <MemberAdminRow
+              <p className="mb-2 text-sm text-muted-foreground">
+                {requestCount(pendingItems.length)} · {ADMIN_RU.queueHint}
+              </p>
+              <ul className="flex flex-col gap-3">
+                {pendingItems.map((member) => (
+                  <PendingMemberCard
                     key={member.id}
                     member={member}
-                    canModerate={canModerate}
                     isBusy={busy}
-                    onSuspend={() => {
+                    onApprove={() => {
                       setConflict(false);
-                      setSuspendFor(member);
+                      setApproveFor(member);
                     }}
-                    onReactivate={() => {
+                    onReject={() => {
                       setConflict(false);
-                      setReactivateFor(member);
+                      setRejectFor(member);
                     }}
                   />
                 ))}
@@ -234,7 +203,58 @@ export default function MembersPage() {
             </>
           )}
         </section>
-      ) : null}
+
+        {/* ---- everybody else ---------------------------------------------- */}
+        {/* `useMembers` is enabled on `member:read`, and a disabled query stays
+          `pending` forever — so the section is gated on the same check rather
+          than rendering a skeleton that never resolves. */}
+        {canReadRoster ? (
+          <section aria-labelledby="members-heading">
+            <h2 id="members-heading" className="mb-2 text-base font-semibold text-foreground">
+              {ADMIN_RU.membersTitle}
+            </h2>
+
+            {members.isPending ? (
+              <ListSkeleton />
+            ) : members.isError ? (
+              <ErrorState
+                error={members.error}
+                title={ADMIN_RU.loadErrorTitle}
+                onRetry={() => void members.refetch()}
+              />
+            ) : memberItems.length === 0 ? (
+              <EmptyState
+                compact
+                title={ADMIN_RU.membersEmptyTitle}
+                description={ADMIN_RU.membersEmptyDescription}
+              />
+            ) : (
+              <>
+                <p className="mb-2 text-sm text-muted-foreground">{ADMIN_RU.membersHint}</p>
+                <ul className="flex flex-col gap-2 pb-safe">
+                  {memberItems.map((member) => (
+                    <MemberAdminRow
+                      key={member.id}
+                      member={member}
+                      isSelf={member.id === selfId}
+                      canModerate={canModerate}
+                      isBusy={busy}
+                      onSuspend={() => {
+                        setConflict(false);
+                        setSuspendFor(member);
+                      }}
+                      onReactivate={() => {
+                        setConflict(false);
+                        setReactivateFor(member);
+                      }}
+                    />
+                  ))}
+                </ul>
+              </>
+            )}
+          </section>
+        ) : null}
+      </div>
 
       {/* ---- flows -------------------------------------------------------- */}
       <ApproveRoleSheet

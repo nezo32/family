@@ -51,16 +51,24 @@ export function TopAppBar(props: {
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-background/90 pt-safe backdrop-blur-md">
       <div className="flex h-appbar items-center gap-2 px-4">
-        <h2 className="min-w-0 flex-1 truncate text-base font-semibold tracking-tight md:text-lg">
-          {title}
-        </h2>
+        {/*
+          `md:hidden`, not always-on. Below `md` this bar is the only wayfinding
+          there is, so it names the section. From `md` up the sidebar already
+          highlights the active item and the page renders the same words again as
+          its `<h1>` — three copies of «Настройки» stacked down the left edge.
+        */}
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-base font-semibold tracking-tight md:hidden">{title}</h2>
+        </div>
 
         <Button
           variant="ghost"
           size="icon"
           aria-label={unread > 0 ? NOTIFICATIONS_RU.unreadAria(unread) : NOTIFICATIONS_RU.openAria}
           onClick={props.onOpenNotifications}
-          className="relative"
+          // 44px, not the 36px `size="icon"` default: this is a primary target
+          // in a bar that is otherwise all thumb.
+          className="relative size-11"
         >
           <Bell className="size-5" aria-hidden />
           {unread > 0 ? (
@@ -79,7 +87,8 @@ export function TopAppBar(props: {
             <button
               type="button"
               aria-label="Меню профиля"
-              className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              // The avatar itself stays 32px; the target around it is 44.
+              className="flex size-11 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             >
               <UserAvatar
                 user={{

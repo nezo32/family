@@ -3,7 +3,7 @@ import type { OAuthProvider } from '@family/shared';
 import { Button } from '@/shared/ui/button';
 import { AUTH_RU } from '../locale';
 import { enabledOAuthProviders, startOAuth } from '../api';
-import { AppleMark, GoogleMark, TelegramMark } from './BrandMarks';
+import { GoogleMark, TelegramMark } from './BrandMarks';
 
 /**
  * The provider sign-in buttons, shared by the login and registration screens —
@@ -18,7 +18,6 @@ import { AppleMark, GoogleMark, TelegramMark } from './BrandMarks';
 
 const PROVIDER_UI: Record<OAuthProvider, { label: string; mark: ReactNode }> = {
   google: { label: AUTH_RU.login.providerGoogle, mark: <GoogleMark /> },
-  apple: { label: AUTH_RU.login.providerApple, mark: <AppleMark /> },
   telegram: { label: AUTH_RU.login.providerTelegram, mark: <TelegramMark /> },
 };
 

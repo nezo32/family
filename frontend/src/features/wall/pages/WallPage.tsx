@@ -34,7 +34,11 @@ export default function WallPage() {
   const [tab, setTab] = useState<WallTab>('feed');
 
   return (
-    <div className="mx-auto w-full max-w-2xl min-w-0">
+    /* Left-aligned, not `mx-auto`: centring this one page inside the shell put
+       its title at x=505 while every other section starts at x=330, so switching
+       to Стена slid the page sideways. The measure itself is right — a feed is
+       a column of prose — it just must not re-centre. */
+    <div className="w-full max-w-2xl min-w-0">
       <PageHeader
         title={WALL_RU.title}
         description={WALL_RU.description}

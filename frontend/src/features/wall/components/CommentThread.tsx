@@ -36,7 +36,7 @@ export function CommentThread(props: { target: EntityRef; commentCount: number }
       <Button
         type="button"
         variant="ghost"
-        className="min-h-9 px-2 text-sm text-muted-foreground"
+        className="min-h-11 px-2 text-sm text-muted-foreground"
         aria-expanded={open}
         onClick={() => {
           setOpen((value) => !value);
@@ -94,7 +94,7 @@ function CommentList(props: { target: EntityRef }) {
         <Button
           type="button"
           variant="ghost"
-          className="min-h-9 px-2 text-sm"
+          className="min-h-11 px-2 text-sm"
           disabled={query.isFetchingNextPage}
           onClick={() => {
             void query.fetchNextPage();

@@ -50,7 +50,7 @@ export function ReactionBar(props: {
               aria-pressed={summary.reacted}
               aria-label={`${summary.emoji} ${String(summary.count)}`}
               className={cn(
-                'inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-sm transition-colors',
+                'inline-flex min-h-11 items-center gap-1.5 rounded-full border px-3 text-sm transition-colors',
                 'disabled:cursor-default disabled:opacity-70',
                 summary.reacted
                   ? 'border-primary/40 bg-primary/10 text-foreground'
@@ -73,7 +73,7 @@ export function ReactionBar(props: {
             <Button
               type="button"
               variant="ghost"
-              className="min-h-9 rounded-full px-2.5 text-muted-foreground"
+              className="min-h-11 min-w-11 rounded-full px-2.5 text-muted-foreground"
               aria-label={WALL_RU.reactions.addAria}
             >
               <SmilePlus className="size-4" aria-hidden />

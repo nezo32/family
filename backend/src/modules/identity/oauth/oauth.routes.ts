@@ -3,7 +3,6 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import {
-  appleCallbackBodySchema,
   oauthCallbackQuerySchema,
   oauthProviderSchema,
   oauthStartQuerySchema,
@@ -30,12 +29,6 @@ import {
   type IssuedSession,
 } from '../session.service.js';
 import type { UserRow } from '../users.schema.js';
-import {
-  exchangeAppleCode,
-  buildAppleAuthorizationUrl,
-  newAppleAuthNonce,
-  parseAppleUserField,
-} from './apple.js';
 import { buildGoogleAuthorizationUrl, exchangeGoogleCode, newGoogleAuthSecrets } from './google.js';
 import { resolveOAuthIdentityAndNotify, type OAuthProfile } from './linking.js';
 import {
@@ -52,7 +45,7 @@ import {
 } from './transactions.js';
 
 /**
- * OAuth / OIDC routes for Google, Apple and Telegram.
+ * OAuth / OIDC routes for Google and Telegram.
  *
  * Registered under `/api`, so the public paths are `/api/auth/...` — which is
  * exactly what `config.oauth.<provider>.redirectUri` builds and therefore what
@@ -61,9 +54,9 @@ import {
  * Two rules run through everything below:
  *
  * - **`state` is server-side.** Every flow starts by writing an
- *   `oauth_transactions` row and ends by consuming it exactly once. Apple's
- *   `form_post` callback is a cross-site POST, where a `SameSite=Lax` cookie
- *   would not be sent at all.
+ *   `oauth_transactions` row and ends by consuming it exactly once. A cookie
+ *   store would not survive the cross-site POSTs the Telegram fallbacks arrive
+ *   on, where a `SameSite=Lax` cookie is not sent at all.
  * - **No session below `active`.** A `pending_approval` / `rejected` /
  *   `suspended` account gets no token, not even a scoped one; the browser is
  *   redirected to a fully unauthenticated status page instead (D3).
@@ -125,18 +118,6 @@ async function beginAuthorization(
         state,
         authorizationUrl: await buildGoogleAuthorizationUrl({ state, nonce, codeVerifier }),
       };
-    }
-    case 'apple': {
-      // Apple does not support PKCE — `code_verifier` stays NULL and `state` +
-      // `nonce` carry the anti-forgery burden on their own.
-      const nonce = newAppleAuthNonce();
-      const state = await transactions.create({
-        provider: 'apple',
-        nonce,
-        codeVerifier: null,
-        ...common,
-      });
-      return { state, authorizationUrl: buildAppleAuthorizationUrl({ state, nonce }) };
     }
     case 'telegram': {
       const { nonce, codeVerifier } = newTelegramAuthSecrets();
@@ -327,38 +308,6 @@ const oauthRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         codeVerifier: transaction.codeVerifier,
         nonce: transaction.nonce,
       });
-      return finishBrowserFlow(request, reply, profile, transaction);
-    },
-  );
-
-  /* --------------------------- apple callback --------------------------- */
-
-  /**
-   * `allowCrossSite` is mandatory here: Apple posts this form from
-   * `appleid.apple.com`, so `Sec-Fetch-Site: cross-site` is correct and the
-   * security plugin would otherwise reject it. `state` is the anti-forgery token
-   * for this route, and it is single-use and server-side.
-   */
-  r.post(
-    '/auth/apple/callback',
-    {
-      config: { public: true, allowCrossSite: true },
-      schema: { summary: 'Sign in with Apple form_post callback', body: appleCallbackBodySchema },
-    },
-    async (request, reply) => {
-      assertProviderEnabled('apple');
-      const { code, state, error, user } = request.body;
-      if (error) throw providerError('apple', error);
-      if (!code || !state) throw new AppError('BAD_REQUEST', 'Missing code or state');
-
-      const transaction = await store().consume(state, 'apple');
-
-      // Unsigned, and present only on the very first authorization. Parsed
-      // before the exchange so it can be persisted in the same transaction that
-      // creates the identity — there is no second chance at the name.
-      const userField = parseAppleUserField(user);
-
-      const profile = await exchangeAppleCode({ code, nonce: transaction.nonce, userField });
       return finishBrowserFlow(request, reply, profile, transaction);
     },
   );

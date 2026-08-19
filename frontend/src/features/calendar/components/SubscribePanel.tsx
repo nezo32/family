@@ -152,18 +152,22 @@ export function SubscribeDialog(props: { trigger?: React.ReactNode }) {
   );
 }
 
-/** The discoverable teaser that sits under the calendar itself. */
+/**
+ * The discoverable footer line under the calendar.
+ *
+ * It used to be a dashed banner with a filled primary button, which on an empty
+ * month made "put this calendar in another app" the single largest object on the
+ * screen — louder than the month itself. It is a footnote: one sentence and one
+ * quiet control, at the bottom, where an offer that is not today's task belongs.
+ */
 export function SubscribeCard() {
   return (
-    <div className="flex flex-col gap-3 rounded-2xl border border-dashed border-border bg-card/60 p-4 sm:flex-row sm:items-center sm:justify-between">
-      <div className="min-w-0">
-        <p className="text-sm font-medium text-foreground">{CALENDAR_RU.subscribe.title}</p>
-        <p className="text-sm text-pretty text-muted-foreground">{CALENDAR_RU.subscribe.lead}</p>
-      </div>
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border pt-4 text-sm text-muted-foreground">
+      <Rss className="size-4 shrink-0" aria-hidden />
+      <span className="min-w-0 text-pretty">{CALENDAR_RU.subscribe.lead}</span>
       <SubscribeDialog
         trigger={
-          <Button variant="default" className="h-11 shrink-0">
-            <Rss aria-hidden />
+          <Button variant="link" className="h-11 px-1 text-sm">
             {CALENDAR_RU.subscribe.short}
           </Button>
         }

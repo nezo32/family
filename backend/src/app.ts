@@ -1,4 +1,3 @@
-import formbody from '@fastify/formbody';
 import sensible from '@fastify/sensible';
 import swagger from '@fastify/swagger';
 import underPressure from '@fastify/under-pressure';
@@ -62,8 +61,6 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.setSerializerCompiler(serializerCompiler);
 
   await app.register(sensible);
-  // Apple's Sign in with Apple callback is an application/x-www-form-urlencoded POST.
-  await app.register(formbody);
 
   await app.register(securityPlugin);
   await app.register(errorHandlerPlugin);

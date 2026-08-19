@@ -33,8 +33,14 @@
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.2585 0.0195 55);
 
-  /* brand */
-  --primary: oklch(0.6135 0.1495 42);
+  /* brand
+   * L is 0.5535, not the 0.6135 this started at: at 0.6135 the terracotta
+   * against --primary-foreground measured 3.97:1, and every «Войти» /
+   * «Одобрить» / «Пополнить» in the app is that pair. One OKLCH lightness step
+   * down puts it at 5.0:1 on the button and 5.1:1 for `text-primary` on a card,
+   * clearing WCAG AA 4.5:1 with room to spare while staying the same hue. Dark
+   * mode already passed (6.05–6.59:1) and is deliberately left alone. */
+  --primary: oklch(0.5535 0.1545 42);
   --primary-foreground: oklch(0.9905 0.0125 84);
 
   /* warm sand */
@@ -59,7 +65,7 @@
 
   --border: oklch(0.8985 0.0165 78);
   --input: oklch(0.8985 0.0165 78);
-  --ring: oklch(0.6135 0.1495 42);
+  --ring: oklch(0.5535 0.1545 42);
 
   /* data-viz ramp: clay, sage, honey, plum, sky */
   --chart-1: oklch(0.6435 0.1585 42);
@@ -71,12 +77,12 @@
   /* desktop sidebar */
   --sidebar: oklch(0.9705 0.0115 84);
   --sidebar-foreground: oklch(0.2585 0.0195 55);
-  --sidebar-primary: oklch(0.6135 0.1495 42);
+  --sidebar-primary: oklch(0.5535 0.1545 42);
   --sidebar-primary-foreground: oklch(0.9905 0.0125 84);
   --sidebar-accent: oklch(0.9345 0.0225 80);
   --sidebar-accent-foreground: oklch(0.2985 0.0245 55);
   --sidebar-border: oklch(0.8905 0.0185 78);
-  --sidebar-ring: oklch(0.6135 0.1495 42);
+  --sidebar-ring: oklch(0.5535 0.1545 42);
 }
 
 .dark {

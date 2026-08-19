@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CalendarDays, Plus, Trophy, Users } from 'lucide-react';
+import { CalendarDays, PiggyBank, Plus, Trophy, Users } from 'lucide-react';
 import type { GoalResponse, PublicUser } from '@family/shared';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent } from '@/shared/ui/card';
 import { formatMoney } from '@/shared/lib/format';
+import { displayEmoji } from '@/shared/lib/emoji';
 import { cn } from '@/shared/lib/utils';
 import { GOALS_RU, GOAL_STATUS_RU, daysLeftLabel } from '../locale';
 import { goalProgressPercent, remainingAmount, ringPercent } from '../money';
@@ -43,6 +44,9 @@ export function GoalCard(props: {
   const days = daysUntil(goal.deadline);
   const urgent = days !== null && days <= 14 && !reached;
   const accent = goal.color ?? 'var(--primary)';
+  // Never `goal.icon` straight into the DOM: the field is free-form and older
+  // rows hold a lucide icon *name*, which used to print as the word "palmtree".
+  const emoji = displayEmoji(goal.icon);
 
   return (
     <>
@@ -70,7 +74,7 @@ export function GoalCard(props: {
                     className="flex size-8 shrink-0 items-center justify-center rounded-lg text-lg"
                     style={{ backgroundColor: `color-mix(in oklab, ${accent} 18%, transparent)` }}
                   >
-                    {goal.icon}
+                    {emoji ?? <PiggyBank className="size-4 text-muted-foreground" />}
                   </span>
                 ) : null}
                 <h3 className="min-w-0 text-base leading-snug font-semibold text-balance">
@@ -83,8 +87,16 @@ export function GoalCard(props: {
                 </h3>
               </div>
 
+              {/*
+                The figure is `text-foreground`, not the goal's own colour. The
+                colour is an *identity* — which goal this is — and it already says
+                so on the ring and the strip below. Painting the headline number
+                with a seeded sky-blue or emerald made the most important text on
+                the card the least legible thing on it, and made two goals look
+                like two different apps.
+              */}
               <p className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
-                <span className="text-lg font-semibold tabular-nums" style={{ color: accent }}>
+                <span className="text-lg font-semibold text-foreground tabular-nums">
                   {formatMoney(goal.currentAmount)}
                 </span>
                 <span className="text-sm text-muted-foreground">
@@ -153,8 +165,10 @@ export function GoalCard(props: {
           </div>
         </CardContent>
 
-        {/* The progress strip: a wall of these is a wall of progress. */}
-        <div className="h-1.5 w-full bg-muted" aria-hidden>
+        {/* The progress strip: a wall of these is a wall of progress.
+            `rounded-b-xl` matches the card so the fill follows the corner
+            instead of squaring it off against the card's own border. */}
+        <div className="h-1.5 w-full overflow-hidden rounded-b-xl bg-secondary" aria-hidden>
           <div
             className="h-full transition-[width] duration-700 ease-out"
             style={{ width: `${String(ringPercent(percent))}%`, backgroundColor: accent }}

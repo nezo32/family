@@ -121,7 +121,6 @@ export function telegramProfileFromClaims(claims: Record<string, unknown>): OAut
     // Telegram never returns an email. Not "sometimes" — never.
     email: null,
     emailVerified: false,
-    isPrivateEmail: false,
     displayName: typeof claims.name === 'string' ? claims.name : null,
     username,
     avatarUrl: typeof claims.picture === 'string' ? claims.picture : null,
@@ -275,7 +274,6 @@ function telegramProfile(
     providerUserId: user.id,
     email: null,
     emailVerified: false,
-    isPrivateEmail: false,
     displayName: displayNameOf(user.first_name, user.last_name, user.username ?? null),
     username: user.username ?? null,
     avatarUrl: user.photo_url ?? null,

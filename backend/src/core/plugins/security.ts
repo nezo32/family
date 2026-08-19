@@ -76,8 +76,9 @@ export const securityPlugin = fp(
      * (structurally CSRF-immune). This hook closes the remaining gap and makes
      * the guarantee explicit rather than incidental.
      *
-     * OAuth callbacks legitimately arrive cross-site (Apple `form_post`), so
-     * they opt out with `config: { allowCrossSite: true }`.
+     * The Telegram widget / Mini App fallbacks legitimately arrive cross-site
+     * and carry no ambient authority (they are HMAC-authenticated), so they opt
+     * out with `config: { allowCrossSite: true }`.
      */
     app.addHook('onRequest', async (request) => {
       if (SAFE_METHODS.has(request.method)) return;

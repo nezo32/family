@@ -158,8 +158,8 @@ export function assertNotLastLoginMethod(
  * ownership, so knowing the configured string is enough, and the rule runs
  * before the "registration is closed" gate. The `findUserByEmail` collision
  * check does not save you either, because an owner who signed in through
- * Telegram (never has an email) or Apple private relay (stored as NULL) leaves
- * nothing for it to collide with.
+ * Telegram (never has an email, so it is stored as NULL) leaves nothing for it
+ * to collide with.
  */
 export function isBootstrapSignup(
   email: string | null,

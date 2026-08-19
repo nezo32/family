@@ -20,9 +20,15 @@ function statusVariant(status: UserStatus): 'secondary' | 'destructive' | 'outli
  * `useCan()` upstream. A member without the permission does not get a disabled
  * button: a control you can see but never use is worse than one that is not
  * there, and it leaks what the screen is for.
+ *
+ * Your own row carries «Это вы» — the same badge `/family` uses — and no
+ * moderation button. Suspending yourself ends every one of your own sessions,
+ * which is not a mistake worth leaving one tap away.
  */
 export function MemberAdminRow(props: {
   member: MemberRow;
+  /** The signed-in admin's own row. */
+  isSelf?: boolean;
   canModerate: boolean;
   isBusy: boolean;
   onSuspend: () => void;
@@ -43,10 +49,15 @@ export function MemberAdminRow(props: {
           <Badge variant={statusVariant(member.status)} className="font-normal">
             {STATUS_LABELS_RU[member.status]}
           </Badge>
+          {props.isSelf ? (
+            <Badge variant="secondary" className="font-normal">
+              {ADMIN_RU.youBadge}
+            </Badge>
+          ) : null}
         </div>
       </div>
 
-      {props.canModerate ? (
+      {props.canModerate && !props.isSelf ? (
         <Button
           type="button"
           size="sm"

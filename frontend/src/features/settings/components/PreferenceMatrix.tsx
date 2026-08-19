@@ -13,7 +13,6 @@ import {
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card';
 import { Switch } from '@/shared/ui/switch';
-import { Badge } from '@/shared/ui/badge';
 import { notify } from '@/shared/lib/toast';
 import { SETTINGS_RU } from '../locale';
 import { useSavePreferences } from '../hooks';
@@ -143,7 +142,7 @@ export function PreferenceMatrix(props: { data: PreferencesResponse; role: Role 
                   const value = valueFor(type);
 
                   return (
-                    <div key={type} className="rounded-lg border border-border p-3">
+                    <div key={type} className="min-w-0 rounded-lg border border-border p-3">
                       <div className="flex items-start gap-3">
                         <div className="min-w-0 flex-1">
                           <label
@@ -165,29 +164,32 @@ export function PreferenceMatrix(props: { data: PreferencesResponse; role: Role 
                       </div>
 
                       {value.enabled ? (
-                        <div className="mt-3 flex flex-wrap gap-4 border-t border-border pt-3">
+                        <div className="mt-3 flex min-w-0 flex-wrap gap-x-5 gap-y-3 border-t border-border pt-3">
                           <ChannelToggle
                             id={`push-${type}`}
+                            typeLabel={copy.label}
                             label="Push"
                             checked={value.channelPush}
                             disabled={!pushReady}
-                            hint={pushReady ? undefined : T.channelUnavailablePush}
+                            reason={pushReady ? undefined : T.channelUnavailablePush}
                             onChange={(checked) => {
                               patch(type, { channelPush: checked });
                             }}
                           />
                           <ChannelToggle
                             id={`telegram-${type}`}
+                            typeLabel={copy.label}
                             label="Telegram"
                             checked={value.channelTelegram}
                             disabled={!telegramReady}
-                            hint={telegramReady ? undefined : T.channelUnavailableTelegram}
+                            reason={telegramReady ? undefined : T.channelUnavailableTelegram}
                             onChange={(checked) => {
                               patch(type, { channelTelegram: checked });
                             }}
                           />
                           <ChannelToggle
                             id={`inapp-${type}`}
+                            typeLabel={copy.label}
                             label="В приложении"
                             checked={value.channelInApp}
                             onChange={(checked) => {
@@ -217,18 +219,42 @@ export function PreferenceMatrix(props: { data: PreferencesResponse; role: Role 
   );
 }
 
+/**
+ * One channel switch inside one notification row.
+ *
+ * Two things here are deliberate and were both wrong before:
+ *
+ * 1. **`aria-label`, not just `<label htmlFor>`.** There are sixty of these on
+ *    the page and «Push» three rows apart means three different things, so the
+ *    name has to carry the notification type: "Задача выполнена: Push". The
+ *    visible «Push» stays as the visual label.
+ * 2. **The unavailability reason is not a visible pill.** «Push выключен» and
+ *    «Telegram не привязан» are global facts about the account, stated once in
+ *    the banner at the top of the screen. Repeated per row they printed the same
+ *    two sentences 38 times, made the page 5658px tall on a phone and — being
+ *    `w-fit shrink-0` inside a flex row — pushed `scrollWidth` to 439px on a
+ *    390px viewport. The reason now rides on the accessible name and the native
+ *    tooltip, where it explains the disabled switch without being shouted.
+ */
 function ChannelToggle(props: {
   id: string;
+  /** The notification type this switch belongs to, for the accessible name. */
+  typeLabel: string;
   label: string;
   checked: boolean;
   disabled?: boolean;
-  hint?: string;
+  reason?: string;
   onChange: (checked: boolean) => void;
 }) {
+  const name = props.disabled && props.reason
+    ? `${props.typeLabel}: ${props.label} — ${props.reason}`
+    : `${props.typeLabel}: ${props.label}`;
+
   return (
-    <div className="flex min-w-36 items-center gap-2">
+    <div className="flex min-w-0 items-center gap-2" title={props.disabled ? props.reason : undefined}>
       <Switch
         id={props.id}
+        aria-label={name}
         checked={props.checked && !props.disabled}
         disabled={props.disabled}
         onCheckedChange={props.onChange}
@@ -236,15 +262,6 @@ function ChannelToggle(props: {
       <label htmlFor={props.id} className="text-xs">
         {props.label}
       </label>
-      {/*
-        A disabled toggle without a reason reads as a bug. Say which channel is
-        missing and where to fix it.
-      */}
-      {props.hint ? (
-        <Badge variant="outline" className="text-[10px] font-normal">
-          {props.hint}
-        </Badge>
-      ) : null}
     </div>
   );
 }

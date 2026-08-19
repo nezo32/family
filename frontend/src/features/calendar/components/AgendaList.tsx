@@ -23,14 +23,19 @@ export function AgendaList(props: {
   const groups = groupByDay(props.occurrences, props.timeZone);
   const today = todayKey(props.timeZone);
 
+  // The wrapper (and its test id) marks *the agenda view*, empty or not — the
+  // agenda showing nothing for this month is a state of the agenda, not the
+  // absence of one.
   if (groups.length === 0) {
     return (
-      <EmptyState
-        icon={CalendarDays}
-        title={CALENDAR_RU.emptyAgendaTitle}
-        description={CALENDAR_RU.emptyAgendaDescription}
-        action={props.emptyAction}
-      />
+      <div data-testid="agenda-list">
+        <EmptyState
+          icon={CalendarDays}
+          title={CALENDAR_RU.emptyAgendaTitle}
+          description={CALENDAR_RU.emptyAgendaDescription}
+          action={props.emptyAction}
+        />
+      </div>
     );
   }
 

@@ -42,38 +42,47 @@ export default function SettingsPage() {
     <>
       <PageHeader title={SETTINGS_RU.hub.title} description={SETTINGS_RU.hub.description} />
 
-      <Card className="divide-y divide-border overflow-hidden p-0">
-        {items.map((item) => (
-          <Link
-            key={item.to}
-            to={item.to}
-            className="flex min-h-14 items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/50"
+      {/*
+        `max-w-2xl`, left-aligned. The shell is 1024px wide on a desktop and a
+        row of «Профиль …………………… ›» stretched across all of it put a word and its
+        affordance 950px apart. A single column of rows has a readable measure
+        whatever the window does; `mx-auto` is deliberately absent so this page
+        keeps the same left edge as every other section.
+      */}
+      <div className="max-w-2xl">
+        <Card className="divide-y divide-border overflow-hidden p-0">
+          {items.map((item) => (
+            <Link
+              key={item.to}
+              to={item.to}
+              className="flex min-h-14 items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/50"
+            >
+              <item.icon className="size-5 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="flex-1 text-sm font-medium">{item.label}</span>
+              <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+            </Link>
+          ))}
+        </Card>
+
+        <div className="mt-4 flex items-center gap-2 px-1 text-xs text-muted-foreground">
+          <BellRing className="size-3.5 shrink-0" aria-hidden />
+          <span>
+            {SETTINGS_RU.push.sectionTitle}: {pushStatus()}
+          </span>
+        </div>
+
+        <div className="mt-8">
+          <Button
+            variant="outline"
+            className="h-11 w-full sm:w-auto"
+            onClick={() => {
+              setConfirmSignOut(true);
+            }}
           >
-            <item.icon className="size-5 shrink-0 text-muted-foreground" aria-hidden />
-            <span className="flex-1 text-sm font-medium">{item.label}</span>
-            <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-          </Link>
-        ))}
-      </Card>
-
-      <div className="mt-4 flex items-center gap-2 px-1 text-xs text-muted-foreground">
-        <BellRing className="size-3.5 shrink-0" aria-hidden />
-        <span>
-          {SETTINGS_RU.push.sectionTitle}: {pushStatus()}
-        </span>
-      </div>
-
-      <div className="mt-8">
-        <Button
-          variant="outline"
-          className="w-full sm:w-auto"
-          onClick={() => {
-            setConfirmSignOut(true);
-          }}
-        >
-          <LogOut aria-hidden />
-          {SETTINGS_RU.hub.signOut}
-        </Button>
+            <LogOut aria-hidden />
+            {SETTINGS_RU.hub.signOut}
+          </Button>
+        </div>
       </div>
 
       <ConfirmDialog

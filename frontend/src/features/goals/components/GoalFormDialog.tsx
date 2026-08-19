@@ -26,6 +26,7 @@ import { Textarea } from '@/shared/ui/textarea';
 import { InlineSpinner } from '@/shared/components/LoadingScreen';
 import { useMe } from '@/shared/auth/use-me';
 import { COMMON } from '@/shared/lib/i18n';
+import { displayEmoji } from '@/shared/lib/emoji';
 import { cn } from '@/shared/lib/utils';
 import { GOALS_RU, MONEY_ERROR_RU } from '../locale';
 import { formatMinorUnitsForInput, parsePositiveAmount } from '../money';
@@ -44,16 +45,25 @@ import { MoneyInput } from './MoneyInput';
  * exactly one place, at submit (D6).
  */
 
-/** Contract wants `#RRGGBB`; these are the app's chart palette as literal hex. */
+/**
+ * Contract wants `#RRGGBB`, so the theme's OKLCH tokens are inlined as literal
+ * hex here — a goal's colour is stored data, not a CSS variable.
+ *
+ * The first five **are** `--chart-1…5` from `src/index.css` (clay, sage, honey,
+ * plum, sky); the last three extend the same ramp — same lightness band, same
+ * chroma band, three unused hues. The ramp existed and nothing used it, so goals
+ * picked from an unrelated set and a seeded sky-blue sat next to a themed
+ * terracotta looking like two different products.
+ */
 export const GOAL_COLORS = [
-  '#C2703D',
-  '#D9A441',
-  '#6E9B7A',
-  '#4E86A8',
-  '#9A5C8B',
-  '#B4553F',
-  '#7C7F8B',
-  '#3F7F6E',
+  '#DA6635', // --chart-1  clay
+  '#43996C', // --chart-2  sage
+  '#E3AD3E', // --chart-3  honey
+  '#9F599D', // --chart-4  plum
+  '#3B9AC5', // --chart-5  sky
+  '#C1555D', // brick
+  '#6179BD', // indigo
+  '#259B9C', // teal
 ] as const;
 
 const GOAL_ICONS = [
@@ -115,7 +125,10 @@ function toDefaults(goal: GoalResponse | undefined): GoalFormValues {
     targetAmount: goal ? formatMinorUnitsForInput(goal.targetAmount) : '',
     deadline: goal?.deadline ?? '',
     color: goal?.color ?? GOAL_COLORS[0],
-    icon: goal?.icon ?? '',
+    // Drop an icon we cannot draw rather than round-tripping it: this picker
+    // writes emoji, so opening an older goal is the moment its stored lucide
+    // name stops being carried forward.
+    icon: displayEmoji(goal?.icon) ?? '',
     ownership: goal && goal.ownerId !== null ? 'personal' : 'shared',
     isPrivate: goal?.visibility === 'private',
   };

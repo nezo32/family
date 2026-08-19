@@ -16,7 +16,6 @@ export const AUTH_RU = {
 
     // The provider labels are also asserted by the shell smoke test — keep them.
     providerGoogle: 'Войти через Google',
-    providerApple: 'Войти через Apple',
     providerTelegram: 'Войти через Telegram',
     providersHint: 'Быстрее всего — через аккаунт, который у вас уже есть.',
 
@@ -62,7 +61,7 @@ export const AUTH_RU = {
     haveAccountQuestion: 'Уже есть доступ?',
     loginLink: 'Войти',
 
-    providersHint: 'Можно и без пароля — заявку примут и через Google, Apple или Telegram.',
+    providersHint: 'Можно и без пароля — заявку примут и через Google или Telegram.',
   },
 
   status: {

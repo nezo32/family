@@ -441,7 +441,7 @@ describe('unbinding the last login method', () => {
   it('canUnlink() mirrors the server guard', () => {
     expect(canUnlink(identitiesResponse([]))).toBe(false);
     expect(canUnlink(identitiesResponse(['google']))).toBe(false);
-    expect(canUnlink(identitiesResponse(['google', 'apple']))).toBe(true);
+    expect(canUnlink(identitiesResponse(['google', 'telegram']))).toBe(true);
     expect(canUnlink(undefined)).toBe(false);
   });
 });

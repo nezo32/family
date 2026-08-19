@@ -426,7 +426,7 @@ describe('last login method guard', () => {
   });
 
   it('404s for a provider that was never linked', () => {
-    expect(() => assertNotLastLoginMethod(['password', 'google'], 'apple')).toThrowError(
+    expect(() => assertNotLastLoginMethod(['password', 'google'], 'telegram')).toThrowError(
       appError({ code: 'NOT_FOUND' }),
     );
   });
@@ -450,8 +450,8 @@ describe('bootstrap rule', () => {
   });
 
   it('stays one-shot even when the existing owner has no email at all', () => {
-    // A Telegram or Apple-private-relay owner stores NULL, so the duplicate-email
-    // check cannot catch this; the owner count is what closes it.
+    // A Telegram owner stores NULL, so the duplicate-email check cannot catch
+    // this; the owner count is what closes it.
     expect(isBootstrapSignup('owner@example.com', 1, 'owner@example.com', 1)).toBe(false);
   });
 

@@ -174,11 +174,21 @@ export { RU_PLURALS as PLURALS } from '@family/shared';
 /** The `date-fns` locale object, re-exported so components import it from one place. */
 export const dateLocale = ru;
 
-/** "3 минуты назад", "через 2 дня". */
+/**
+ * "3 минуты назад", "51 минуту назад", "через 2 дня".
+ *
+ * `addSuffix`, never `${distance} + ' назад'`. The bare distance is nominative
+ * ("1 минута", "21 минута"), but Russian puts the noun in the accusative in
+ * front of «назад» and after «через» — so the hand-built version printed
+ * «Заявка 51 минута назад» for every count ending in 1 (bar 11). date-fns' ru
+ * locale knows the case and switches it when it is the one adding the suffix.
+ *
+ * Strict, not the fuzzy `formatDistanceToNow`: the fuzzy one rounds 51 minutes
+ * up to «около 1 часа назад», and these timestamps sit next to requests and
+ * announcements where the exact age is the point.
+ */
 export function relativeTime(date: Date | string | number): string {
-  const value = toDate(date);
-  const distance = formatDistanceToNowStrict(value, { locale: ru });
-  return value.getTime() <= Date.now() ? `${distance} назад` : `через ${distance}`;
+  return formatDistanceToNowStrict(toDate(date), { locale: ru, addSuffix: true });
 }
 
 /**

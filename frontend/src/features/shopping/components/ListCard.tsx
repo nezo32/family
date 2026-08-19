@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { ChevronRight, ShoppingBasket } from 'lucide-react';
 import type { ShoppingListResponse } from '@family/shared';
 import { cn } from '@/shared/lib/utils';
+import { displayEmoji } from '@/shared/lib/emoji';
 import { SHOPPING_RU } from '../locale';
 
 /**
@@ -14,6 +15,9 @@ import { SHOPPING_RU } from '../locale';
  */
 export function ListCard(props: { list: ShoppingListResponse; to: string }) {
   const { list } = props;
+  // The `icon` field is free-form; seeded lists hold lucide names like
+  // `spray-can`, which rendered as clipped text inside the coloured circle.
+  const emoji = displayEmoji(list.icon);
   return (
     <li>
       <Link
@@ -29,8 +33,8 @@ export function ListCard(props: { list: ShoppingListResponse; to: string }) {
           className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-secondary text-secondary-foreground"
           style={list.color ? { backgroundColor: list.color, color: '#fff' } : undefined}
         >
-          {list.icon ? (
-            <span className="text-lg leading-none">{list.icon}</span>
+          {emoji ? (
+            <span className="text-lg leading-none">{emoji}</span>
           ) : (
             <ShoppingBasket className="size-5" />
           )}

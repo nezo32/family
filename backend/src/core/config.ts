@@ -61,13 +61,6 @@ const envSchema = z
     GOOGLE_CLIENT_ID: z.string().default(''),
     GOOGLE_CLIENT_SECRET: z.string().default(''),
 
-    // --- OAuth: Apple ---
-    APPLE_CLIENT_ID: z.string().default(''),
-    APPLE_TEAM_ID: z.string().default(''),
-    APPLE_KEY_ID: z.string().default(''),
-    /** Base64 of the AuthKey_XXXX.p8 file. */
-    APPLE_PRIVATE_KEY_BASE64: z.string().default(''),
-
     // --- OAuth / bot: Telegram ---
     TELEGRAM_BOT_TOKEN: z.string().default(''),
     TELEGRAM_BOT_USERNAME: z.string().default(''),
@@ -108,21 +101,6 @@ const envSchema = z
           clientId: env.GOOGLE_CLIENT_ID,
           clientSecret: env.GOOGLE_CLIENT_SECRET,
           redirectUri: `${publicUrl.origin}/api/auth/google/callback`,
-        },
-        apple: {
-          enabled: Boolean(
-            env.APPLE_CLIENT_ID &&
-              env.APPLE_TEAM_ID &&
-              env.APPLE_KEY_ID &&
-              env.APPLE_PRIVATE_KEY_BASE64,
-          ),
-          clientId: env.APPLE_CLIENT_ID,
-          teamId: env.APPLE_TEAM_ID,
-          keyId: env.APPLE_KEY_ID,
-          privateKeyPem: env.APPLE_PRIVATE_KEY_BASE64
-            ? Buffer.from(env.APPLE_PRIVATE_KEY_BASE64, 'base64').toString('utf8')
-            : '',
-          redirectUri: `${publicUrl.origin}/api/auth/apple/callback`,
         },
         telegram: {
           enabled: Boolean(env.TELEGRAM_BOT_TOKEN),

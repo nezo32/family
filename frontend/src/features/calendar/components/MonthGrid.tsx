@@ -66,9 +66,12 @@ export function MonthGrid(props: {
                 props.onSelectDay(dateKey);
               }}
               className={cn(
-                'flex min-h-11 min-w-0 flex-col items-stretch gap-0.5 bg-background p-1 text-left transition-colors sm:min-h-24',
+                'flex min-h-11 min-w-0 flex-col items-stretch gap-0.5 bg-card p-1 text-left transition-colors sm:min-h-24',
                 'focus-visible:z-10 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none',
-                !inMonth && 'bg-muted/35',
+                // Recede, don't darken. `bg-muted/35` gave the days that are not
+                // in this month a *heavier* fill than the days that are, so the
+                // grid's strongest blocks were its least relevant cells.
+                !inMonth && 'bg-background',
                 isSelected && 'bg-accent/60',
                 'hover:bg-accent/40',
               )}

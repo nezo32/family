@@ -100,7 +100,8 @@ export default function ProfilePage() {
     <>
       <PageHeader title={T.title} description={T.description} />
 
-      <form onSubmit={submit} className="space-y-4">
+      {/* A 1000px-wide «Имя» field is not a form. Same measure as /settings. */}
+      <form onSubmit={submit} className="max-w-2xl space-y-4">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-3">
@@ -225,7 +226,7 @@ export default function ProfilePage() {
         </Card>
 
         <div className="flex items-center gap-3">
-          <Button type="submit" disabled={!dirty || update.isPending}>
+          <Button type="submit" className="h-11" disabled={!dirty || update.isPending}>
             {update.isPending ? T.saving : T.save}
           </Button>
           {!dirty ? <span className="text-xs text-muted-foreground">{T.nothingToSave}</span> : null}

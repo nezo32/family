@@ -25,7 +25,6 @@ const T = SETTINGS_RU.accounts;
 
 const PROVIDER_LABELS: Record<AuthProvider, string> = {
   google: T.providerGoogle,
-  apple: T.providerApple,
   telegram: T.providerTelegram,
   password: T.providerPassword,
 };
@@ -47,8 +46,9 @@ const PROVIDER_LABELS: Record<AuthProvider, string> = {
  *    and saying why in a sentence a person can act on.
  *
  * Note what is *absent*: any auto-linking on a matching email. D3 forbids it
- * outright — Apple private-relay addresses make email a lie, and "sign in with
- * your existing method, then link from Settings" is the only safe flow.
+ * outright — a provider asserting an address is not the human proving they
+ * control the account, so "sign in with your existing method, then link from
+ * Settings" is the only safe flow.
  */
 export default function AccountsPage() {
   const { data, isPending, error, refetch } = useIdentities();
@@ -103,62 +103,64 @@ export default function AccountsPage() {
     <>
       <PageHeader title={T.title} description={T.description} />
 
-      {/* The whole point of the screen, said before anything can go wrong. */}
-      {!unlinkAllowed && linked.length > 0 ? (
-        <Alert className="mb-4">
-          <ShieldAlert aria-hidden />
-          <AlertTitle>{T.lastMethodTitle}</AlertTitle>
-          <AlertDescription>{T.lastMethodText}</AlertDescription>
-        </Alert>
-      ) : null}
+      <div className="max-w-2xl">
+        {/* The whole point of the screen, said before anything can go wrong. */}
+        {!unlinkAllowed && linked.length > 0 ? (
+          <Alert className="mb-4">
+            <ShieldAlert aria-hidden />
+            <AlertTitle>{T.lastMethodTitle}</AlertTitle>
+            <AlertDescription>{T.lastMethodText}</AlertDescription>
+          </Alert>
+        ) : null}
 
-      <Card className="mb-4">
-        <CardHeader>
-          <CardTitle>{T.linkedTitle}</CardTitle>
-          <CardDescription>{T.addSecondHint}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {linked.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{T.empty}</p>
-          ) : (
-            linked.map((identity) => (
-              <IdentityRow
-                key={identity.provider}
-                identity={identity}
-                canUnlink={unlinkAllowed}
-                busy={unlink.isPending}
-                onUnlink={() => {
-                  setConfirmUnlink(identity.provider);
-                }}
-              />
-            ))
-          )}
-        </CardContent>
-      </Card>
-
-      {available.length > 0 ? (
-        <Card>
+        <Card className="mb-4">
           <CardHeader>
-            <CardTitle>{T.availableTitle}</CardTitle>
-            <CardDescription>{T.neverAutoLinkHint}</CardDescription>
+            <CardTitle>{T.linkedTitle}</CardTitle>
+            <CardDescription>{T.addSecondHint}</CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
-            {available.map((provider) => (
-              <Button
-                key={provider}
-                variant="outline"
-                disabled={pendingLink !== null}
-                onClick={() => {
-                  beginLink(provider);
-                }}
-              >
-                <Link2 aria-hidden />
-                {pendingLink === provider ? T.linking : `${T.link} ${PROVIDER_LABELS[provider]}`}
-              </Button>
-            ))}
+          <CardContent className="space-y-3">
+            {linked.length === 0 ? (
+              <p className="text-sm text-muted-foreground">{T.empty}</p>
+            ) : (
+              linked.map((identity) => (
+                <IdentityRow
+                  key={identity.provider}
+                  identity={identity}
+                  canUnlink={unlinkAllowed}
+                  busy={unlink.isPending}
+                  onUnlink={() => {
+                    setConfirmUnlink(identity.provider);
+                  }}
+                />
+              ))
+            )}
           </CardContent>
         </Card>
-      ) : null}
+
+        {available.length > 0 ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>{T.availableTitle}</CardTitle>
+              <CardDescription>{T.neverAutoLinkHint}</CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-2">
+              {available.map((provider) => (
+                <Button
+                  key={provider}
+                  variant="outline"
+                  disabled={pendingLink !== null}
+                  onClick={() => {
+                    beginLink(provider);
+                  }}
+                >
+                  <Link2 aria-hidden />
+                  {pendingLink === provider ? T.linking : `${T.link} ${PROVIDER_LABELS[provider]}`}
+                </Button>
+              ))}
+            </CardContent>
+          </Card>
+        ) : null}
+      </div>
 
       <ConfirmDialog
         open={confirmUnlink !== null}

@@ -9,8 +9,10 @@ const alertVariants = cva(
     variants: {
       variant: {
         default: "bg-card text-card-foreground",
-        destructive:
-          "bg-card text-destructive *:data-[slot=alert-description]:text-destructive/90 [&>svg]:text-current",
+        // Red on the icon and the title only. `AlertDescription` keeps its own
+        // muted foreground: eight lines of destructive-red body copy is not an
+        // eight-times-louder warning, it is an unreadable paragraph.
+        destructive: "bg-card text-destructive [&>svg]:text-current",
       },
     },
     defaultVariants: {

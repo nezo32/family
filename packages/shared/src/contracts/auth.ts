@@ -21,12 +21,12 @@ import { publicUserSchema, userStatusSchema } from './users.js';
  * without it here, a user could unlink their last OAuth identity and lock
  * themselves out of an account that still has a password.
  */
-export const AUTH_PROVIDERS = ['google', 'apple', 'telegram', 'password'] as const;
+export const AUTH_PROVIDERS = ['google', 'telegram', 'password'] as const;
 export const authProviderSchema = z.enum(AUTH_PROVIDERS);
 export type AuthProvider = z.infer<typeof authProviderSchema>;
 
-/** The three that actually run an OAuth/OIDC round trip. */
-export const OAUTH_PROVIDERS = ['google', 'apple', 'telegram'] as const;
+/** The ones that actually run an OAuth/OIDC round trip. */
+export const OAUTH_PROVIDERS = ['google', 'telegram'] as const;
 export const oauthProviderSchema = z.enum(OAUTH_PROVIDERS);
 export type OAuthProvider = z.infer<typeof oauthProviderSchema>;
 
@@ -184,34 +184,6 @@ export const oauthCallbackQuerySchema = z.object({
   error_description: z.string().optional(),
 });
 export type OAuthCallbackQuery = z.infer<typeof oauthCallbackQuerySchema>;
-
-/**
- * Apple callback — `response_mode=form_post`, so this arrives as a cross-site
- * POST body (hence the server-side state store).
- *
- * `user` is a **JSON string**, present only on the very first authorization, and
- * is **unsigned** — trust it for the display name and nothing else. Parse it with
- * `appleUserPayloadSchema` and persist immediately or lose it forever.
- */
-export const appleCallbackBodySchema = z.object({
-  code: z.string().optional(),
-  state: z.string().optional(),
-  id_token: z.string().optional(),
-  user: z.string().max(4096).optional(),
-  error: z.string().optional(),
-});
-export type AppleCallbackBody = z.infer<typeof appleCallbackBodySchema>;
-
-export const appleUserPayloadSchema = z.object({
-  name: z
-    .object({
-      firstName: z.string().max(100).optional(),
-      lastName: z.string().max(100).optional(),
-    })
-    .optional(),
-  email: z.string().max(254).optional(),
-});
-export type AppleUserPayload = z.infer<typeof appleUserPayloadSchema>;
 
 /* -------------------------------------------------------------------------- */
 /* Telegram legacy fallbacks                                                   */

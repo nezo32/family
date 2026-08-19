@@ -4,6 +4,8 @@
  * Cross-cutting words (Сохранить, Отмена, weekday names) come from
  * `@/shared/lib/i18n` — this file only owns calendar vocabulary.
  */
+import { PLURALS, pluralize } from '@/shared/lib/i18n';
+
 export const CALENDAR_RU = {
   title: 'Календарь',
   description: 'Общие события, встречи, праздники и дни рождения.',
@@ -22,7 +24,8 @@ export const CALENDAR_RU = {
   emptyMonthTitle: 'В этом месяце пусто',
   emptyMonthDescription: 'Добавьте событие — его увидят все в семье.',
   emptyAgendaTitle: 'Ближайших событий нет',
-  emptyAgendaDescription: 'Здесь появятся встречи, праздники и дни рождения.',
+  emptyAgendaDescription:
+    'Здесь появятся встречи, праздники и дни рождения. Соседние месяцы — стрелками выше.',
   loadFailed: 'Не удалось загрузить календарь',
 
   /* ---- actions -------------------------------------------------------- */
@@ -52,7 +55,8 @@ export const CALENDAR_RU = {
   birthday: 'День рождения',
   birthdayNotEditable: 'День рождения нельзя изменить здесь',
   birthdayHint: 'Дата рождения меняется в профиле участника.',
-  age: (n: number) => `исполняется ${String(n)}`,
+  /** «исполняется 36 лет» — the bare number read as an unfinished sentence. */
+  age: (n: number) => `исполняется ${pluralize(n, PLURALS.year)}`,
 
   /* ---- RSVP ----------------------------------------------------------- */
   rsvpQuestion: 'Вы придёте?',

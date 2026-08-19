@@ -58,12 +58,22 @@ export default function CalendarPage() {
   const byDay = useMemo(() => indexByDay(occurrences, timeZone), [occurrences, timeZone]);
 
   /**
-   * In the agenda, the current month starts at today: a family opening the app
-   * wants the next thing, not the school run from three weeks ago.
+   * The agenda shows **the navigated month**, and in the current month it starts
+   * at today: a family opening the app wants the next thing, not the school run
+   * from three weeks ago.
+   *
+   * The month filter is not redundant. `monthGridRange` fetches the whole 6×7
+   * grid, so the window spills a few days either side — and the agenda used to
+   * list them, which is how a toolbar reading «Август 2026» ended up with
+   * «четверг, 3 сентября» as its only entry. The neighbouring month is one tap
+   * on the arrow; a heading that lies is not fixable by the reader.
    */
   const agendaOccurrences = useMemo(() => {
-    if (monthKeyOf(today) !== monthKey) return occurrences;
-    return occurrences.filter((occurrence) => occurrence.localDate >= today);
+    const inMonth = occurrences.filter(
+      (occurrence) => monthKeyOf(occurrence.localDate) === monthKey,
+    );
+    if (monthKeyOf(today) !== monthKey) return inMonth;
+    return inMonth.filter((occurrence) => occurrence.localDate >= today);
   }, [occurrences, monthKey, today]);
 
   const openDetail = (occurrence: EventOccurrenceResponse): void => {
@@ -100,7 +110,15 @@ export default function CalendarPage() {
         description={CALENDAR_RU.description}
         actions={
           <>
-            <SubscribeDialog />
+            {/*
+              Desktop only. On a phone this button, the card at the bottom of the
+              page and that card's own button put «Подписаться» on screen three
+              times at once; the card is the discoverable one, so the header
+              action stands down where space is tight.
+            */}
+            <div className="hidden sm:block">
+              <SubscribeDialog />
+            </div>
             {createButton}
           </>
         }

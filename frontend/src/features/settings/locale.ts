@@ -87,7 +87,6 @@ export const SETTINGS_RU = {
     primaryBadge: 'Текущий вход',
 
     providerGoogle: 'Google',
-    providerApple: 'Apple',
     providerTelegram: 'Telegram',
     providerPassword: 'Почта и пароль',
 
@@ -199,7 +198,8 @@ export const SETTINGS_RU = {
 
     statusOn: 'Включены',
     statusOff: 'Выключены',
-    statusDenied: 'Запрещены в настройках телефона',
+    /** Not «в настройках телефона»: this same screen runs in Chrome on a desktop. */
+    statusDenied: 'Запрещены в настройках устройства',
     statusUnsupported: 'Недоступны в этом браузере',
     statusNotInstalled: 'Нужно установить приложение',
 
@@ -230,7 +230,7 @@ export const SETTINGS_RU = {
 
     deniedTitle: 'Уведомления запрещены',
     deniedText:
-      'Разрешение спрашивают один раз, и здесь его уже не переспросить — снять запрет можно только в настройках телефона.',
+      'Разрешение спрашивают один раз, и здесь его уже не переспросить — снять запрет можно только в настройках устройства.',
     deniedStepsTitle: 'Как вернуть на iPhone',
     deniedSteps: [
       'Откройте «Настройки» на телефоне',
@@ -240,7 +240,8 @@ export const SETTINGS_RU = {
     ] as readonly string[],
     deniedStepsAndroid:
       'На Android: «Настройки» → «Приложения» → «Семья» → «Уведомления». В браузере — значок замка слева от адреса.',
-    deniedRetry: 'Я разрешил, проверить снова',
+    /* Not «Я разрешил» — half the family would say «разрешила». */
+    deniedRetry: 'Готово, проверить снова',
 
     /* --- the reconcile / re-enable card ------------------------------------- */
 

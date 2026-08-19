@@ -18,9 +18,9 @@ import { users, type UserRow } from '../users.schema.js';
  *
  * The whole module exists to make one rule impossible to get wrong: **the join
  * key is always `(provider, provider_user_id)` and email is never a key**, in
- * either direction. Google recycles addresses inside Workspace domains, Apple
- * hands out per-app relay addresses, and Telegram has no email at all — an
- * email-keyed merge is an account-takeover primitive, not a convenience.
+ * either direction. Google recycles addresses inside Workspace domains and
+ * Telegram has no email at all — an email-keyed merge is an account-takeover
+ * primitive, not a convenience.
  *
  * `decideLinkOutcome` is pure and holds every rule. `resolveOAuthIdentity` is
  * the thin database wrapper around it. Splitting them that way is what makes the
@@ -38,8 +38,6 @@ export interface OAuthProfile {
   providerUserId: string;
   email: string | null;
   emailVerified: boolean;
-  /** Apple private relay. Never link-eligible, never a contact address. */
-  isPrivateEmail: boolean;
   displayName: string | null;
   username: string | null;
   avatarUrl: string | null;
@@ -104,13 +102,13 @@ export interface LinkDecisionInput {
   sessionUserId: string | null;
   profile: Pick<
     OAuthProfile,
-    'provider' | 'providerUserId' | 'email' | 'emailVerified' | 'isPrivateEmail'
+    'provider' | 'providerUserId' | 'email' | 'emailVerified'
   >;
   /** The row for `(provider, provider_user_id)`, if any. */
   existingIdentity: { id: string; userId: string } | null;
   /** The session user's existing identity for this same provider, if any. */
   sessionUserProviderIdentity: { id: string } | null;
-  /** A user owning this email. Callers must pass `null` for Telegram and for relay addresses. */
+  /** A user owning this email. Callers must pass `null` for Telegram, which has no email. */
   emailOwnerUserId: string | null;
   /** `family_settings.allow_registration`. */
   registrationAllowed: boolean;
@@ -162,11 +160,11 @@ export function decideLinkOutcome(input: LinkDecisionInput): LinkDecision {
    *
    * NEVER auto-link on email match, even when both sides are verified. A
    * provider asserting an address is not the same as the human proving they
-   * control the existing account — and Google/Apple/Telegram disagree about
-   * what "verified" even means. The user signs in with their existing method
-   * and links from Settings, which is an authenticated, deliberate act.
+   * control the existing account — and Google and Telegram disagree about what
+   * "verified" even means. The user signs in with their existing method and
+   * links from Settings, which is an authenticated, deliberate act.
    */
-  const linkEligibleEmail = profile.isPrivateEmail ? null : profile.email;
+  const linkEligibleEmail = profile.email;
   if (linkEligibleEmail && input.emailOwnerUserId) {
     return { kind: 'conflict', reason: 'email_belongs_to_existing_user' };
   }
@@ -250,10 +248,9 @@ function profileSnapshot(profile: OAuthProfile, existingDisplayName?: string | n
     providerEmail: profile.email,
     providerEmailVerified: profile.emailVerified,
     providerUsername: profile.username,
-    // Apple sends the name exactly once. Never overwrite a stored name with null.
+    // A provider may stop sending the name. Never overwrite a stored one with null.
     providerDisplayName: profile.displayName ?? existingDisplayName ?? null,
     providerAvatarUrl: profile.avatarUrl,
-    isPrivateEmail: profile.isPrivateEmail,
     rawProfile: sanitizeRawProfile(profile.rawProfile),
   };
 }
@@ -299,12 +296,11 @@ export async function resolveOAuthIdentity(
   }
 
   /**
-   * Telegram never yields an email, and an Apple relay address is not a real
-   * mailbox — neither may ever participate in an email lookup, so the query is
-   * not even issued for them.
+   * Telegram never yields an email, so it may never participate in an email
+   * lookup — the query is not even issued when there is nothing to look up.
    */
   let emailOwnerUserId: string | null = null;
-  if (!existingIdentity && intent === 'login' && profile.email && !profile.isPrivateEmail) {
+  if (!existingIdentity && intent === 'login' && profile.email) {
     const [owner] = await db
       .select({ id: users.id })
       .from(users)
@@ -390,9 +386,8 @@ export async function resolveOAuthIdentity(
   const [created] = await db
     .insert(users)
     .values({
-      // A relay address is not a contact address, so it never lands on `users`.
-      email: profile.isPrivateEmail ? null : (profile.email?.trim().toLowerCase() ?? null),
-      emailVerified: profile.isPrivateEmail ? false : profile.emailVerified,
+      email: profile.email?.trim().toLowerCase() ?? null,
+      emailVerified: profile.emailVerified,
       displayName: fallbackDisplayName(profile),
       avatarUrl: profile.avatarUrl,
       role: decision.asOwner ? 'owner' : 'child',
@@ -409,8 +404,6 @@ export async function resolveOAuthIdentity(
       userId: created.id,
       provider: profile.provider,
       providerUserId: profile.providerUserId,
-      // Apple's name arrives once, unsigned, in this very callback. It is
-      // persisted here, in the same transaction, or it is gone forever.
       ...profileSnapshot(profile),
       lastLoginAt: now,
     })
@@ -418,7 +411,7 @@ export async function resolveOAuthIdentity(
   if (!identity) throw new AppError('INTERNAL_ERROR', 'Could not create the identity');
 
   /**
-   * A signup through Google/Apple/Telegram lands in `pending_approval` exactly
+   * A signup through Google or Telegram lands in `pending_approval` exactly
    * like a password signup, and until now nobody was told about either. The
    * person is locked out of the family app until an admin happens to open the
    * members screen — so the admins get the same `high`-priority

@@ -89,7 +89,7 @@ function ViewButton(props: {
       aria-checked={props.active}
       onClick={props.onClick}
       className={cn(
-        'flex h-9 items-center gap-1.5 rounded-md px-3 text-sm transition-colors',
+        'flex h-11 items-center gap-1.5 rounded-md px-3 text-sm transition-colors',
         'focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none',
         props.active
           ? 'bg-background font-medium text-foreground shadow-sm'

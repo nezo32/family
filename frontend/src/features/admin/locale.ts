@@ -28,7 +28,8 @@ export const ADMIN_RU = {
   queueHint: 'Человек узнает о решении при следующей попытке войти.',
   queueEmptyTitle: 'Новых заявок нет',
   queueEmptyDescription: 'Как только кто-то попросит доступ, заявка появится здесь.',
-  requestedPrefix: 'Заявка',
+  /** Reads as a sentence next to a relative time: «Заявка подана 53 минуты назад». */
+  requestedPrefix: 'Заявка подана',
   signedInWith: 'Вход через',
   emailUnknown: 'Почты нет',
 
@@ -61,6 +62,8 @@ export const ADMIN_RU = {
   /* roster & moderation --------------------------------------------------- */
   membersTitle: 'Участники семьи',
   membersHint: 'Доступ можно приостановить и вернуть.',
+  /** Same wording as `/family`, so the roster reads the same in both places. */
+  youBadge: 'Это вы',
   membersEmptyTitle: 'Участников пока нет',
   membersEmptyDescription: 'Здесь появятся все, кто получил доступ к семье.',
 
@@ -86,7 +89,6 @@ export const ADMIN_RU = {
 /** Which sign-in method the request arrived through. */
 export const PROVIDER_LABELS_RU: Record<AuthProvider, string> = {
   google: 'Google',
-  apple: 'Apple',
   telegram: 'Telegram',
   password: 'Почта и пароль',
 };

@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { useCan } from '@/shared/auth/use-can';
+import { cn } from '@/shared/lib/utils';
 import { useMe } from '@/shared/auth/use-me';
 import { ApprovalsWidget } from '../components/ApprovalsWidget';
 import { EventsWidget } from '../components/EventsWidget';
@@ -87,6 +88,25 @@ export default function TodayPage() {
   const openEvents = showEvents ? events.today.length + events.tomorrow.length : 0;
   const dayIsFree = isDayEmpty(data);
 
+  /*
+   * How many widgets each desktop column will actually hold. The split used to
+   * be a hard `1.6fr / 1fr` whatever the day looked like, which on a quiet day
+   * gave 60% of the width to a column that ended at y=470 while the 1fr column
+   * ran to y=940 — the page pointed at its emptier half. The wider primary
+   * column is worth it only when there is something in it.
+   */
+  const primaryWidgets =
+    (dayIsFree ? 1 : 0) +
+    (showTasks && tasks.overdue.length > 0 ? 1 : 0) +
+    (showTasks && !dayIsFree ? 1 : 0) +
+    (showEvents && !dayIsFree ? 1 : 0);
+  const asideWidgets =
+    (approvals && approvals.length > 0 ? 1 : 0) +
+    (shopping && shopping.urgent.length > 0 ? 1 : 0) +
+    (goals ? 1 : 0) +
+    (fairness ? 1 : 0);
+  const leanPrimary = primaryWidgets < asideWidgets;
+
   return (
     <>
       <GreetingHeader
@@ -96,7 +116,14 @@ export default function TodayPage() {
         events={openEvents}
       />
 
-      <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] lg:items-start lg:gap-6">
+      <div
+        className={cn(
+          'flex flex-col gap-4 lg:grid lg:items-start lg:gap-6',
+          leanPrimary
+            ? 'lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]'
+            : 'lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]',
+        )}
+      >
         {/* Primary column on desktop; on mobile these flow into the parent. */}
         <div className="contents lg:flex lg:flex-col lg:gap-6">
           {dayIsFree ? (

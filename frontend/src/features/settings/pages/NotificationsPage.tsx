@@ -36,7 +36,9 @@ export default function NotificationsPage() {
     <>
       <PageHeader title={T.title} description={T.description} />
 
-      <div className="space-y-4">
+      {/* Sixty switches read down a 1024px column; the measure keeps each row
+          short enough that a label and its toggle stay in the same glance. */}
+      <div className="max-w-2xl space-y-4">
         <PushSection />
         <TestNotificationCard />
 

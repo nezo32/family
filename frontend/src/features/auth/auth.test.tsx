@@ -175,7 +175,7 @@ describe('LoginPage — providers', () => {
   });
 
   it('offers every provider when the build carries no provider configuration', () => {
-    expect(enabledOAuthProviders({})).toEqual(['google', 'apple', 'telegram']);
+    expect(enabledOAuthProviders({})).toEqual(['google', 'telegram']);
   });
 
   it('hides a provider whose environment variable is absent', () => {

@@ -30,7 +30,7 @@ import { users } from './users.schema.js';
  * unlink guard counts, so it has to be enumerable alongside the OAuth ones even
  * though the credential itself lives in `users.password_hash`.
  */
-export const authProvider = pgEnum('auth_provider', ['google', 'apple', 'telegram', 'password']);
+export const authProvider = pgEnum('auth_provider', ['google', 'telegram', 'password']);
 
 /* -------------------------------------------------------------------------- */
 /* user_identities                                                            */
@@ -41,9 +41,8 @@ export const authProvider = pgEnum('auth_provider', ['google', 'apple', 'telegra
  *
  * Per D3 the join key is **always `(provider, provider_user_id)`** — the
  * provider's stable subject id. Email is never a key: Google addresses get
- * recycled inside Workspace domains, Apple hands out per-app relay addresses,
- * and Telegram has no email at all. There is deliberately no unique index on
- * `provider_email`.
+ * recycled inside Workspace domains and Telegram has no email at all. There is
+ * deliberately no unique index on `provider_email`.
  */
 export const userIdentities = pgTable(
   'user_identities',
@@ -66,17 +65,10 @@ export const userIdentities = pgTable(
     /** Telegram handle. Mutable on the provider side, so display-only. */
     providerUsername: text(),
 
-    /**
-     * Apple sends the human's name **only on the very first authorization**, in
-     * the unsigned `user` form field, and never again. Persist it here on the
-     * first callback or it is gone forever.
-     */
+    /** The provider's snapshot of the human's name. Display-only. */
     providerDisplayName: text(),
 
     providerAvatarUrl: text(),
-
-    /** Apple private relay (`@privaterelay.appleid.com`). Never link-eligible. */
-    isPrivateEmail: boolean().notNull().default(false),
 
     /**
      * The remaining claims, for debugging and future profile enrichment.
@@ -120,9 +112,9 @@ export type OAuthIntent = 'login' | 'link';
  * Rows have a 10-minute TTL and are **deleted on use** (`DELETE ... RETURNING`),
  * which makes the delete itself the single-use guard against replay.
  *
- * Why a table and not a cookie: Apple's `response_mode=form_post` callback is a
- * cross-site POST, and `SameSite=Lax` cookies are not sent on cross-site POSTs.
- * A cookie store therefore fails for Apple only, and only in production.
+ * Why a table and not a cookie: the provider fallbacks that arrive as cross-site
+ * POSTs would never see a `SameSite=Lax` cookie, so a cookie store fails in
+ * production only — exactly where it must not.
  */
 export const oauthTransactions = pgTable(
   'oauth_transactions',
@@ -135,7 +127,7 @@ export const oauthTransactions = pgTable(
     /** Replayed into the OIDC request and compared against the id_token claim. */
     nonce: text().notNull(),
 
-    /** PKCE verifier. NULL for Apple, which does not support PKCE. */
+    /** PKCE verifier. Nullable — not every provider supports PKCE. */
     codeVerifier: text(),
 
     /**

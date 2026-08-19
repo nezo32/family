@@ -16,11 +16,10 @@ import { oauthTransactions, type OAuthIntent } from '../identity.schema.js';
  * the delete itself the replay guard: a `state` can be redeemed exactly once,
  * even under concurrent callbacks, because `DELETE ... RETURNING` is atomic.
  *
- * Why not a cookie: Apple's `response_mode=form_post` callback is a **cross-site
- * POST**, and a `SameSite=Lax` cookie is not sent on cross-site POSTs. A
- * cookie-backed state store therefore fails for Apple only, and only in
- * production — the worst possible failure mode. The same class of bug bites the
- * installed iOS PWA, where the return navigation is likewise not same-site.
+ * Why not a cookie: the provider fallbacks that arrive as **cross-site POSTs**
+ * never see a `SameSite=Lax` cookie, so a cookie-backed state store fails in
+ * production only — the worst possible failure mode. The same class of bug bites
+ * the installed iOS PWA, where the return navigation is likewise not same-site.
  * Keeping the state on the server takes the browser out of the trust path.
  */
 
@@ -36,7 +35,7 @@ export interface CreateOAuthTransactionInput {
   provider: OAuthProvider;
   /** Replayed into the authorization request and compared against the id_token claim. */
   nonce: string;
-  /** PKCE verifier. NULL for Apple, which does not support PKCE. */
+  /** PKCE verifier. Nullable — not every provider supports PKCE. */
   codeVerifier?: string | null;
   intent?: OAuthIntent;
   /** Required when `intent === 'link'` — the already authenticated user. */
@@ -85,7 +84,7 @@ export function assertTransactionUsable(
     throw new AppError('BAD_REQUEST', 'OAuth state has expired');
   }
   if (row.provider !== expectedProvider) {
-    // A state minted for Google must never be redeemable at Apple's callback.
+    // A state minted for Google must never be redeemable at Telegram's callback.
     throw new AppError('BAD_REQUEST', 'OAuth state does not belong to this provider');
   }
   return row;

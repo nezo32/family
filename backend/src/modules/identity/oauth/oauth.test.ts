@@ -1,21 +1,12 @@
 import { createHash, createHmac } from 'node:crypto';
 
 import cookie from '@fastify/cookie';
-import formbody from '@fastify/formbody';
 import { fastify, type RouteOptions } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { decodeJwt, decodeProtectedHeader, exportPKCS8, generateKeyPair } from 'jose';
 import { describe, expect, it } from 'vitest';
 
 import { AppError } from '../../../core/errors.js';
 import { errorHandlerPlugin } from '../../../core/plugins/error-handler.js';
-import {
-  APPLE_MAX_CLIENT_SECRET_LIFETIME_SECONDS,
-  appleProfileFromClaims,
-  coerceAppleBoolean,
-  parseAppleUserField,
-  signAppleClientSecret,
-} from './apple.js';
 import { googleProfileFromClaims } from './google.js';
 import oauthRoutes from './oauth.routes.js';
 import { decideLinkOutcome, sanitizeRawProfile, type LinkDecisionInput } from './linking.js';
@@ -281,154 +272,6 @@ describe('telegram Mini App initData HMAC', () => {
 });
 
 /* ========================================================================== */
-/* Apple                                                                      */
-/* ========================================================================== */
-
-describe('apple string-or-boolean coercion', () => {
-  it('accepts real booleans', () => {
-    expect(coerceAppleBoolean(true)).toBe(true);
-    expect(coerceAppleBoolean(false)).toBe(false);
-  });
-
-  it('accepts the string forms Apple also sends', () => {
-    expect(coerceAppleBoolean('true')).toBe(true);
-    expect(coerceAppleBoolean('True')).toBe(true);
-    // The dangerous one: a naive truthiness check turns this into `true`.
-    expect(coerceAppleBoolean('false')).toBe(false);
-  });
-
-  it('treats anything else as false', () => {
-    expect(coerceAppleBoolean(undefined)).toBe(false);
-    expect(coerceAppleBoolean(null)).toBe(false);
-    expect(coerceAppleBoolean(1)).toBe(false);
-    expect(coerceAppleBoolean('yes')).toBe(false);
-  });
-
-  it('applies the coercion to id_token claims', () => {
-    const stringy = appleProfileFromClaims(
-      {
-        sub: '001122.abc.3344',
-        nonce: 'n-1',
-        email: 'zzz@privaterelay.appleid.com',
-        email_verified: 'true',
-        is_private_email: 'true',
-      },
-      'n-1',
-    );
-    expect(stringy.emailVerified).toBe(true);
-    expect(stringy.isPrivateEmail).toBe(true);
-
-    const booleany = appleProfileFromClaims(
-      {
-        sub: '001122.abc.3344',
-        nonce: 'n-1',
-        email: 'real@example.com',
-        email_verified: true,
-        is_private_email: false,
-      },
-      'n-1',
-    );
-    expect(booleany.emailVerified).toBe(true);
-    expect(booleany.isPrivateEmail).toBe(false);
-
-    const stringFalse = appleProfileFromClaims(
-      { sub: 's', nonce: 'n-1', email_verified: 'false', is_private_email: 'false' },
-      'n-1',
-    );
-    expect(stringFalse.emailVerified).toBe(false);
-    expect(stringFalse.isPrivateEmail).toBe(false);
-  });
-
-  it('rejects an id_token whose nonce does not match', () => {
-    expect(() => appleProfileFromClaims({ sub: 's', nonce: 'other' }, 'n-1')).toThrowError(
-      /nonce does not match/,
-    );
-  });
-});
-
-describe('apple `user` field (first authorization only, unsigned)', () => {
-  it('parses the name into a display name', () => {
-    const parsed = parseAppleUserField(
-      JSON.stringify({ name: { firstName: 'Иван', lastName: 'Петров' }, email: 'a@b.com' }),
-    );
-    expect(parsed.displayName).toBe('Иван Петров');
-    expect(parsed.email).toBe('a@b.com');
-  });
-
-  it('survives a missing, empty or malformed field without failing the login', () => {
-    expect(parseAppleUserField(undefined)).toEqual({ displayName: null, email: null });
-    expect(parseAppleUserField('')).toEqual({ displayName: null, email: null });
-    expect(parseAppleUserField('{not json')).toEqual({ displayName: null, email: null });
-    expect(parseAppleUserField('{"name":{}}')).toEqual({ displayName: null, email: null });
-  });
-
-  it('never lets the unsigned field override the verified email', () => {
-    const profile = appleProfileFromClaims(
-      { sub: 'apple-sub', nonce: 'n', email: 'verified@example.com', email_verified: 'true' },
-      'n',
-      parseAppleUserField(JSON.stringify({ email: 'attacker@evil.example' })),
-    );
-    expect(profile.email).toBe('verified@example.com');
-    // The name is the only thing taken from the unsigned blob.
-    expect(profile.displayName).toBeNull();
-  });
-});
-
-describe('apple client secret JWT', () => {
-  const params = {
-    teamId: 'TEAM123456',
-    clientId: 'com.example.family.web',
-    keyId: 'KEY7654321',
-  };
-
-  const withKey = async () => {
-    const { privateKey } = await generateKeyPair('ES256', { extractable: true });
-    return exportPKCS8(privateKey);
-  };
-
-  it('signs ES256 with `kid` in the header and Apple’s claim layout', async () => {
-    const privateKeyPem = await withKey();
-    const now = new Date('2026-08-19T10:00:00.000Z');
-
-    const { token, expiresAt } = await signAppleClientSecret({ privateKeyPem, ...params, now });
-
-    const header = decodeProtectedHeader(token);
-    expect(header.alg).toBe('ES256');
-    // `kid` lives in the header, not the claims — Apple cannot pick the key otherwise.
-    expect(header.kid).toBe('KEY7654321');
-
-    const claims = decodeJwt(token);
-    expect(claims.iss).toBe('TEAM123456'); // Team ID
-    expect(claims.sub).toBe('com.example.family.web'); // Services ID
-    expect(claims.aud).toBe('https://appleid.apple.com');
-
-    const issuedAt = Math.floor(now.getTime() / 1000);
-    expect(claims.iat).toBe(issuedAt);
-    expect(claims.exp).toBe(expiresAt);
-    expect(expiresAt - issuedAt).toBe(30 * 60);
-    // Apple's hard cap. Exceed it and the token endpoint returns invalid_client.
-    expect(expiresAt - issuedAt).toBeLessThanOrEqual(APPLE_MAX_CLIENT_SECRET_LIFETIME_SECONDS);
-  });
-
-  it('refuses a lifetime beyond Apple’s cap', async () => {
-    const privateKeyPem = await withKey();
-    await expect(
-      signAppleClientSecret({
-        privateKeyPem,
-        ...params,
-        lifetimeSeconds: APPLE_MAX_CLIENT_SECRET_LIFETIME_SECONDS + 1,
-      }),
-    ).rejects.toThrowError(/lifetime must be between/);
-  });
-
-  it('rejects a key that is not a PKCS#8 PEM', async () => {
-    await expect(
-      signAppleClientSecret({ privateKeyPem: 'not-a-key', ...params }),
-    ).rejects.toBeInstanceOf(AppError);
-  });
-});
-
-/* ========================================================================== */
 /* Google                                                                     */
 /* ========================================================================== */
 
@@ -497,7 +340,6 @@ describe('decideLinkOutcome', () => {
       providerUserId: 'sub-123',
       email: 'ivan@example.com',
       emailVerified: true,
-      isPrivateEmail: false,
     },
     existingIdentity: null,
     sessionUserProviderIdentity: null,
@@ -584,22 +426,6 @@ describe('decideLinkOutcome', () => {
     expect(decision).toEqual({ kind: 'conflict', reason: 'email_belongs_to_existing_user' });
   });
 
-  it('never treats an Apple private-relay address as link-eligible', () => {
-    const decision = decideLinkOutcome({
-      ...base,
-      profile: {
-        provider: 'apple',
-        providerUserId: 'apple-sub',
-        email: 'xyz@privaterelay.appleid.com',
-        emailVerified: true,
-        isPrivateEmail: true,
-      },
-      emailOwnerUserId: 'user-7',
-    });
-    // A relay address is not an identity, so it cannot even produce a conflict.
-    expect(decision).toEqual({ kind: 'create', asOwner: false });
-  });
-
   it('never email-links a Telegram identity (it has no email at all)', () => {
     const decision = decideLinkOutcome({
       ...base,
@@ -608,7 +434,6 @@ describe('decideLinkOutcome', () => {
         providerUserId: '987654321',
         email: null,
         emailVerified: false,
-        isPrivateEmail: false,
       },
       emailOwnerUserId: 'user-7',
     });
@@ -623,15 +448,6 @@ describe('decideLinkOutcome', () => {
   it('auto-approves the bootstrap owner, case-insensitively', () => {
     const decision = decideLinkOutcome({ ...base, bootstrapOwnerEmail: 'IVAN@Example.com ' });
     expect(decision).toEqual({ kind: 'create', asOwner: true });
-  });
-
-  it('does not grant ownership to a relay address that happens to match', () => {
-    const decision = decideLinkOutcome({
-      ...base,
-      profile: { ...base.profile, isPrivateEmail: true },
-      bootstrapOwnerEmail: 'ivan@example.com',
-    });
-    expect(decision).toEqual({ kind: 'create', asOwner: false });
   });
 });
 
@@ -663,10 +479,10 @@ describe('oauth transaction store', () => {
     });
   });
 
-  it('defaults intent to login and leaves the PKCE verifier null (Apple)', async () => {
+  it('defaults intent to login and leaves the PKCE verifier null when unset', async () => {
     const store = createMemoryOAuthTransactionStore();
-    const state = await store.create({ provider: 'apple', nonce: 'n' });
-    const row = await store.consume(state, 'apple');
+    const state = await store.create({ provider: 'telegram', nonce: 'n' });
+    const row = await store.consume(state, 'telegram');
     expect(row.intent).toBe('login');
     expect(row.codeVerifier).toBeNull();
   });
@@ -692,7 +508,7 @@ describe('oauth transaction store', () => {
     const store = createMemoryOAuthTransactionStore();
     const state = await store.create({ provider: 'google', nonce: 'n' });
 
-    await expect(store.consume(state, 'apple')).rejects.toThrowError(/does not belong/);
+    await expect(store.consume(state, 'telegram')).rejects.toThrowError(/does not belong/);
     // A cross-provider probe must not leave the state usable.
     await expect(store.consume(state, 'google')).rejects.toThrowError(
       /unknown or has already been used/,
@@ -721,7 +537,7 @@ describe('oauth transaction store', () => {
     let now = new Date('2026-08-19T10:00:00.000Z');
     const store = createMemoryOAuthTransactionStore(() => now);
     await store.create({ provider: 'google', nonce: 'a' });
-    await store.create({ provider: 'apple', nonce: 'b' });
+    await store.create({ provider: 'telegram', nonce: 'b' });
 
     now = new Date(now.getTime() + OAUTH_TRANSACTION_TTL_MS + 1_000);
     await expect(store.sweep()).resolves.toBe(2);
@@ -769,7 +585,6 @@ describe('oauth route plugin', () => {
     app.decorateRequest('auth', null);
     app.decorateRequest('scope', null);
     await app.register(cookie);
-    await app.register(formbody);
     await app.register(errorHandlerPlugin);
     await app.register(oauthRoutes, { prefix: '/api' });
     await app.ready();
@@ -794,7 +609,6 @@ describe('oauth route plugin', () => {
       'GET /api/auth/:provider/start',
       'GET /api/auth/google/callback',
       'GET /api/auth/telegram/callback',
-      'POST /api/auth/apple/callback',
       'POST /api/auth/telegram/miniapp',
       'POST /api/auth/telegram/widget',
     ]);
@@ -815,9 +629,8 @@ describe('oauth route plugin', () => {
 
   it('exempts the cross-site provider POSTs from the Sec-Fetch-Site check', async () => {
     const { app, routes } = await buildTestApp();
-    // Apple posts this form from appleid.apple.com; without the opt-out the
-    // security plugin rejects the callback in production only.
-    expect(configOf(routes, 'POST', '/api/auth/apple/callback').allowCrossSite).toBe(true);
+    // The Telegram fallbacks post from Telegram's own origin; without the
+    // opt-out the security plugin rejects them in production only.
     expect(configOf(routes, 'POST', '/api/auth/telegram/widget').allowCrossSite).toBe(true);
     expect(configOf(routes, 'POST', '/api/auth/telegram/miniapp').allowCrossSite).toBe(true);
     // The GET callbacks are top-level navigations, so they need no exemption.
@@ -841,13 +654,11 @@ describe('oauth route plugin', () => {
     expect(start.json<{ error: { code: string } }>().error.code).toBe('SERVICE_UNAVAILABLE');
 
     // Reaches no database: the provider check runs before the state lookup.
-    const apple = await app.inject({
-      method: 'POST',
-      url: '/api/auth/apple/callback',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      payload: 'code=abc&state=whatever',
+    const callback = await app.inject({
+      method: 'GET',
+      url: '/api/auth/google/callback?code=abc&state=whatever',
     });
-    expect(apple.statusCode).toBe(503);
+    expect(callback.statusCode).toBe(503);
 
     await app.close();
   });

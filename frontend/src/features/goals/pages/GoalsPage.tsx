@@ -83,13 +83,13 @@ export default function GoalsPage() {
           }}
         >
           <TabsList className="h-11">
-            <TabsTrigger value="all" className="min-h-9 px-3">
+            <TabsTrigger value="all" className="min-h-11 px-3">
               {GOALS_RU.scopeAll}
             </TabsTrigger>
-            <TabsTrigger value="family" className="min-h-9 px-3">
+            <TabsTrigger value="family" className="min-h-11 px-3">
               {GOALS_RU.scopeFamily}
             </TabsTrigger>
-            <TabsTrigger value="mine" className="min-h-9 px-3">
+            <TabsTrigger value="mine" className="min-h-11 px-3">
               {GOALS_RU.scopeMine}
             </TabsTrigger>
           </TabsList>

@@ -1,5 +1,5 @@
 {
-  "id": "04e7c25e-24a5-4505-869b-d7afa54724b8",
+  "id": "aace84f7-4342-41a0-ab12-f5d77f18986e",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -814,13 +814,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
-        },
-        "is_private_email": {
-          "name": "is_private_email",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         },
         "raw_profile": {
           "name": "raw_profile",
@@ -5776,7 +5769,6 @@
       "schema": "public",
       "values": [
         "google",
-        "apple",
         "telegram",
         "password"
       ]

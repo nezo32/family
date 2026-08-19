@@ -12,7 +12,13 @@ function Progress({
     <ProgressPrimitive.Root
       data-slot="progress"
       className={cn(
-        "relative h-2 w-full overflow-hidden rounded-full bg-primary/20",
+        // The track is `bg-secondary`, not the stock `bg-primary/20`: a 20%
+        // primary tint is a *lighter shade of the fill*, so an empty bar and a
+        // full one differed only in saturation and «0 %» rendered as a solid
+        // edge-to-edge terracotta strip. In dark mode the two were
+        // indistinguishable. Track and fill are now different colours, not
+        // different opacities of one colour.
+        "relative h-2 w-full overflow-hidden rounded-full bg-secondary",
         className
       )}
       {...props}

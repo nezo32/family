@@ -1,6 +1,6 @@
 CREATE TYPE "public"."user_role" AS ENUM('owner', 'admin', 'adult', 'teen', 'child', 'guest');--> statement-breakpoint
 CREATE TYPE "public"."user_status" AS ENUM('pending_approval', 'active', 'rejected', 'suspended');--> statement-breakpoint
-CREATE TYPE "public"."auth_provider" AS ENUM('google', 'apple', 'telegram', 'password');--> statement-breakpoint
+CREATE TYPE "public"."auth_provider" AS ENUM('google', 'telegram', 'password');--> statement-breakpoint
 CREATE TYPE "public"."occurrence_status" AS ENUM('scheduled', 'done', 'skipped', 'cancelled');--> statement-breakpoint
 CREATE TYPE "public"."visibility" AS ENUM('household', 'private', 'restricted');--> statement-breakpoint
 CREATE TYPE "public"."assigned_via" AS ENUM('rotation', 'manual', 'swap', 'claimed');--> statement-breakpoint
@@ -110,7 +110,6 @@ CREATE TABLE "user_identities" (
 	"provider_username" text,
 	"provider_display_name" text,
 	"provider_avatar_url" text,
-	"is_private_email" boolean DEFAULT false NOT NULL,
 	"raw_profile" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"linked_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"last_login_at" timestamp with time zone,

@@ -136,8 +136,10 @@ function SignIn({ next }: { next: string | null }) {
                     <Button
                       type="button"
                       variant="ghost"
-                      size="icon-sm"
-                      className="absolute top-1.5 right-1.5 text-muted-foreground"
+                      size="icon"
+                      // 44px: `icon-sm` made the only control that rescues a
+                      // mistyped password a 32px target.
+                      className="absolute top-0.5 right-0.5 size-11 text-muted-foreground"
                       aria-label={
                         showPassword ? AUTH_RU.login.hidePassword : AUTH_RU.login.showPassword
                       }
