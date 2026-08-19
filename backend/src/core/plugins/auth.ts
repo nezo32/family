@@ -32,6 +32,13 @@ import { AppError } from '../errors.js';
  * narrow its query without re-deriving anything.
  */
 
+/**
+ * Routes registered by third-party plugins that we do not author. The OpenAPI
+ * reference is deliberately reachable without a session — it is documentation
+ * and exposes no data.
+ */
+const EXEMPT_PREFIXES = ['/documentation', '/docs'];
+
 export interface RouteAccessConfig {
   public?: boolean;
   authenticated?: boolean;
@@ -123,6 +130,7 @@ export const authPlugin = fp(
        * that a missing resource must look missing.
        */
       if (request.is404) return;
+      if (EXEMPT_PREFIXES.some((prefix) => request.url.startsWith(prefix))) return;
 
       const access = accessConfigOf(request);
       if (access.public) return;
@@ -148,8 +156,10 @@ export const authPlugin = fp(
      * Every registered route must opt in to exactly one access mode.
      */
     const undeclared: string[] = [];
+
     app.addHook('onRoute', (route: RouteOptions) => {
-      if (route.method === 'HEAD' || route.url.startsWith('/documentation')) return;
+      if (route.method === 'HEAD') return;
+      if (EXEMPT_PREFIXES.some((prefix) => route.url.startsWith(prefix))) return;
       const access = (route.config ?? {}) as RouteAccessConfig;
       const declared =
         access.public ??

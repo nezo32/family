@@ -85,9 +85,7 @@ import { sendTelegramMessage } from './telegram.adapter.js';
  * `member_pending_approval` even if you address it to `everyone`.
  */
 export type NotificationAudience =
-  | { users: readonly string[] }
-  | { roles: readonly Role[] }
-  | { everyone: true };
+  { users: readonly string[] } | { roles: readonly Role[] } | { everyone: true };
 
 export interface EmitIntentInput {
   /** What happened. Drives the renderer, the preference row and the priority. */
@@ -182,7 +180,8 @@ export async function emitIntent(x: Executor, input: EmitIntentInput): Promise<E
     return {
       intentId,
       deduped: false,
-      dispatch: () => enqueue('notification.dispatch', { intentId }, { jobId: `fanout:${intentId}` }),
+      dispatch: () =>
+        enqueue('notification.dispatch', { intentId }, { jobId: `fanout:${intentId}` }),
     };
   }
 
@@ -223,11 +222,17 @@ function parseAudience(raw: Record<string, unknown>): {
   const notifyActor = raw.notifyActor === true;
   const users = raw.users;
   if (Array.isArray(users)) {
-    return { audience: { users: users.filter((u): u is string => typeof u === 'string') }, notifyActor };
+    return {
+      audience: { users: users.filter((u): u is string => typeof u === 'string') },
+      notifyActor,
+    };
   }
   const roles = raw.roles;
   if (Array.isArray(roles)) {
-    return { audience: { roles: roles.filter((r): r is Role => typeof r === 'string') }, notifyActor };
+    return {
+      audience: { roles: roles.filter((r): r is Role => typeof r === 'string') },
+      notifyActor,
+    };
   }
   return { audience: { everyone: true }, notifyActor };
 }
@@ -366,7 +371,11 @@ export async function dispatchIntent(db: Db, intentId: string, now = new Date())
     const decision = resolveQuietDecision(windows, timezone, now, intent.priority);
 
     const status: DeliveryStatus =
-      decision.action === 'send' ? 'pending' : decision.action === 'defer' ? 'scheduled' : 'suppressed';
+      decision.action === 'send'
+        ? 'pending'
+        : decision.action === 'defer'
+          ? 'scheduled'
+          : 'suppressed';
     const scheduledFor = decision.action === 'defer' ? decision.scheduledFor : null;
 
     if (pref.push) {
@@ -428,11 +437,7 @@ async function resolveRecipients(
   return candidates.filter((user) => {
     // §3.4 self-suppression — you are never told about your own action. The
     // exceptions are explicit: system alerts and the "send me a test" path.
-    if (
-      !notifyActor &&
-      intent.actorId === user.id &&
-      intent.type !== 'system_alert'
-    ) {
+    if (!notifyActor && intent.actorId === user.id && intent.type !== 'system_alert') {
       return false;
     }
     return mayReceive(user, intent.type);
@@ -444,11 +449,7 @@ async function enqueueDeliveries(rows: NotificationDeliveryRow[], now: Date): Pr
   for (const row of rows) {
     if (row.channel === 'in_app') continue;
     if (row.status === 'pending') {
-      await enqueue(
-        'notification.deliver',
-        { deliveryId: row.id },
-        { jobId: `deliver:${row.id}` },
-      );
+      await enqueue('notification.deliver', { deliveryId: row.id }, { jobId: `deliver:${row.id}` });
     } else if (row.status === 'scheduled' && row.scheduledFor) {
       // A BullMQ delayed job *is* the quiet-hours release mechanism. The daily
       // maintenance sweep re-enqueues anything a Redis flush lost.
@@ -569,7 +570,10 @@ async function reschedule(db: Db, deliveryId: string, at: Date | null, now: Date
   await enqueue(
     'notification.deliver',
     { deliveryId },
-    { jobId: `deliver:${deliveryId}:${target.getTime()}`, delay: Math.max(0, target.getTime() - now.getTime()) },
+    {
+      jobId: `deliver:${deliveryId}:${target.getTime()}`,
+      delay: Math.max(0, target.getTime() - now.getTime()),
+    },
   );
 }
 
@@ -581,13 +585,17 @@ async function deliverPush(
   now: Date,
 ): Promise<void> {
   if (!delivery.subscriptionId) {
-    await repo.advanceDeliveryStatus(db, delivery.id, 'suppressed', { lastError: 'no_subscription' });
+    await repo.advanceDeliveryStatus(db, delivery.id, 'suppressed', {
+      lastError: 'no_subscription',
+    });
     return;
   }
 
   const subscription = await repo.getPushSubscription(db, delivery.subscriptionId);
   if (!subscription || subscription.expiredAt) {
-    await repo.advanceDeliveryStatus(db, delivery.id, 'suppressed', { lastError: 'subscription_gone' });
+    await repo.advanceDeliveryStatus(db, delivery.id, 'suppressed', {
+      lastError: 'subscription_gone',
+    });
     return;
   }
 
@@ -652,7 +660,9 @@ async function deliverTelegram(
 ): Promise<void> {
   const link = await repo.getTelegramLink(db, delivery.userId);
   if (!link || !link.canDm) {
-    await repo.advanceDeliveryStatus(db, delivery.id, 'suppressed', { lastError: 'telegram_unavailable' });
+    await repo.advanceDeliveryStatus(db, delivery.id, 'suppressed', {
+      lastError: 'telegram_unavailable',
+    });
     return;
   }
 
@@ -680,7 +690,13 @@ async function deliverTelegram(
     return;
   }
 
-  await failOrRetry(db, delivery, result.action === 'retry', result.reason, result.retryAfterSeconds);
+  await failOrRetry(
+    db,
+    delivery,
+    result.action === 'retry',
+    result.reason,
+    result.retryAfterSeconds,
+  );
 }
 
 /**
@@ -1051,7 +1067,9 @@ async function escalateToAnotherPerson(
     ? policies.map((policy) =>
         policy.escalateToRole
           ? ({ roles: [policy.escalateToRole as Role] } satisfies NotificationAudience)
-          : ({ users: policy.escalateToUserId ? [policy.escalateToUserId] : [] } satisfies NotificationAudience),
+          : ({
+              users: policy.escalateToUserId ? [policy.escalateToUserId] : [],
+            } satisfies NotificationAudience),
       )
     : // No policy configured: for a genuinely critical event, reaching *somebody*
       // beats reaching nobody. Adults and admins only.
@@ -1119,7 +1137,11 @@ export async function runEscalationSweep(db: Db, now = new Date()): Promise<numb
     if (seen.has(intent.id)) continue;
     seen.add(intent.id);
     const outcome = await escalateIntent(db, intent.id, now);
-    if (outcome === 'redelivered' || outcome === 'channel_fallback' || outcome === 'person_escalated') {
+    if (
+      outcome === 'redelivered' ||
+      outcome === 'channel_fallback' ||
+      outcome === 'person_escalated'
+    ) {
       escalated += 1;
     }
   }
@@ -1163,7 +1185,8 @@ export async function listInbox(
 
   const page = rows.slice(0, options.limit);
   const last = page.at(-1);
-  const nextCursor = rows.length > options.limit && last ? encodeCursor(last.createdAt, last.id) : null;
+  const nextCursor =
+    rows.length > options.limit && last ? encodeCursor(last.createdAt, last.id) : null;
 
   return {
     items: page.map((row) => {
@@ -1223,6 +1246,23 @@ export async function markRead(
 /* Subscriptions                                                               */
 /* ========================================================================== */
 
+/**
+ * D11 — "this device has stopped receiving anything".
+ *
+ * Pure, so the threshold can be pinned by a test. `consecutiveNoAck` counts
+ * sends since the last arrival ack; on iOS this is the *only* evidence we ever
+ * get that a subscription has died, because Safari never fires
+ * `pushsubscriptionchange` and the endpoint keeps returning 201 regardless.
+ */
+export function isSubscriptionUnhealthy(row: {
+  consecutiveNoAck: number;
+  expiredAt: Date | null;
+  unhealthyAt: Date | null;
+}): boolean {
+  if (row.expiredAt !== null || row.unhealthyAt !== null) return true;
+  return row.consecutiveNoAck >= NOTIFICATION_LIMITS.maxSendsWithoutAck;
+}
+
 function toSummary(row: PushSubscriptionRow, currentEndpoint?: string): PushSubscriptionSummary {
   return {
     id: row.id,
@@ -1238,7 +1278,7 @@ function toSummary(row: PushSubscriptionRow, currentEndpoint?: string): PushSubs
     lastDeliveredAt: row.lastDeliveredAt?.toISOString() ?? null,
     consecutiveNoAck: row.consecutiveNoAck,
     unhealthyAt: row.unhealthyAt?.toISOString() ?? null,
-    isHealthy: row.expiredAt === null && row.unhealthyAt === null,
+    isHealthy: !isSubscriptionUnhealthy(row),
   };
   // NOTE: `endpoint`, `p256dh` and `auth` are deliberately absent. The endpoint
   // is a capability URL — anyone holding it can push to that device.
@@ -1273,11 +1313,7 @@ export async function upsertSubscription(
   return toSummary(row, input.endpoint);
 }
 
-export async function removeSubscription(
-  db: Db,
-  userId: string,
-  endpoint: string,
-): Promise<void> {
+export async function removeSubscription(db: Db, userId: string, endpoint: string): Promise<void> {
   // Idempotent: unsubscribing a device that is already gone is a success, not a
   // 404. The client calls this from an unload path where it cannot retry.
   await repo.deletePushSubscription(db, userId, endpoint);
@@ -1330,11 +1366,7 @@ export interface PreferencesView {
  * a row per user and lets a changed default reach the people who never opened
  * the settings screen.
  */
-export async function getPreferences(
-  db: Db,
-  userId: string,
-  role: Role,
-): Promise<PreferencesView> {
+export async function getPreferences(db: Db, userId: string, role: Role): Promise<PreferencesView> {
   const [stored, quiet, counts, telegram] = await Promise.all([
     repo.listPreferencesForUser(db, userId),
     repo.listQuietHoursForUser(db, userId),
@@ -1520,9 +1552,7 @@ export async function sendTestNotification(
   }
 
   const all = await repo.listPushSubscriptions(db, userId, { liveOnly: true });
-  const targets = request.subscriptionId
-    ? all.filter((s) => s.id === request.subscriptionId)
-    : all;
+  const targets = request.subscriptionId ? all.filter((s) => s.id === request.subscriptionId) : all;
 
   if (targets.length === 0) {
     results.push({
@@ -1770,7 +1800,10 @@ function isDigestDue(weekday: number, timeOfDay: string, timezone: string, now: 
  * Everything here is idempotent and safe to run twice: the counters are
  * conditional updates and the sweeps re-enqueue jobs whose ids already exist.
  */
-export async function runPushHealthCheck(db: Db, now = new Date()): Promise<{
+export async function runPushHealthCheck(
+  db: Db,
+  now = new Date(),
+): Promise<{
   unhealthy: number;
   expired: number;
   requeued: number;
@@ -1805,12 +1838,20 @@ export async function runPushHealthCheck(db: Db, now = new Date()): Promise<{
   // 3. Safety nets for anything a Redis flush lost.
   const due = await repo.listDueDeliveries(db, now);
   for (const row of due) {
-    await enqueue('notification.deliver', { deliveryId: row.id }, { jobId: `deliver:${row.id}:sweep` });
+    await enqueue(
+      'notification.deliver',
+      { deliveryId: row.id },
+      { jobId: `deliver:${row.id}:sweep` },
+    );
   }
   const orphans = await repo.listUndispatchedIntents(db, new Date(now.getTime() - 5 * 60_000));
   for (const intent of orphans) {
     logger.warn({ intentId: intent.id }, 'intent had no deliveries — producer forgot dispatch()');
-    await enqueue('notification.dispatch', { intentId: intent.id }, { jobId: `fanout:${intent.id}:sweep` });
+    await enqueue(
+      'notification.dispatch',
+      { intentId: intent.id },
+      { jobId: `fanout:${intent.id}:sweep` },
+    );
   }
 
   // 4. The D11 enforcement loop.

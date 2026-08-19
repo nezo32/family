@@ -2,6 +2,7 @@ import { migrate } from 'drizzle-orm/postgres-js/migrator';
 
 import { closeDb, createDbClient } from '../core/db.js';
 import { logger } from '../core/logger.js';
+import { pathToFileURL } from 'node:url';
 
 /**
  * Applies pending SQL migrations from `drizzle/`.
@@ -22,7 +23,11 @@ export async function runMigrations(): Promise<void> {
 }
 
 // Executed directly: `pnpm --filter @family/backend run db:migrate`
-if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, '/')}`) {
+// Hand-building a `file://` string gets the slash count wrong on Windows
+// (`file://E:/...` vs the real `file:///E:/...`), so this guard silently never
+// fired and the script exited having done nothing. Let Node do the conversion.
+const entrypoint = process.argv[1] ? pathToFileURL(process.argv[1]).href : '';
+if (import.meta.url === entrypoint) {
   try {
     await runMigrations();
     await closeDb();

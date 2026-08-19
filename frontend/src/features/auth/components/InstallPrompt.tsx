@@ -122,9 +122,7 @@ export function InstallPrompt({
           </span>
           <div className="min-w-0 space-y-1">
             <p className="font-medium text-balance">{AUTH_RU.install.cardTitle}</p>
-            <p className="text-sm text-muted-foreground text-pretty">
-              {AUTH_RU.install.cardText}
-            </p>
+            <p className="text-sm text-muted-foreground text-pretty">{AUTH_RU.install.cardText}</p>
           </div>
         </div>
 
@@ -183,7 +181,9 @@ export function InstallPrompt({
             ) : (
               <ol className="space-y-3">
                 <Step index={1} glyph={<IOSShareGlyph className="size-4" />}>
-                  {isIPadPlatform() ? AUTH_RU.install.stepShareIpad : AUTH_RU.install.stepShareIphone}
+                  {isIPadPlatform()
+                    ? AUTH_RU.install.stepShareIpad
+                    : AUTH_RU.install.stepShareIphone}
                   <span className="mt-1 block text-xs text-muted-foreground">
                     {AUTH_RU.install.shareGlyphHint}
                   </span>

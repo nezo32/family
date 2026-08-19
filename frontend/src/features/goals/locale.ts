@@ -1,3 +1,5 @@
+import type { MoneyParseError } from './money';
+
 /**
  * Russian strings for the moneybox ("Копилки") feature.
  *
@@ -149,6 +151,15 @@ export const GOALS_RU = {
   notFound: 'Копилка не найдена',
   notFoundDescription: 'Возможно, её удалили или у вас нет к ней доступа.',
 } as const;
+
+/** Why an amount could not be parsed → what the user is told. */
+export const MONEY_ERROR_RU: Record<MoneyParseError, string> = {
+  empty: GOALS_RU.errorAmountEmpty,
+  invalid: GOALS_RU.errorAmountInvalid,
+  precision: GOALS_RU.errorAmountPrecision,
+  tooLarge: GOALS_RU.errorAmountTooLarge,
+  notPositive: GOALS_RU.errorAmountNotPositive,
+};
 
 /** Ledger `kind` → Russian label. */
 export const GOAL_TXN_KIND_RU = {

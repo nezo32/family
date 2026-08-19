@@ -457,10 +457,7 @@ export async function sendPush(
     return { ok: true, statusCode: result.statusCode, bytes, degraded };
   } catch (error) {
     if (error instanceof webpush.WebPushError) {
-      const classification = classifyPushFailure(
-        error.statusCode,
-        parseRetryAfter(error.headers),
-      );
+      const classification = classifyPushFailure(error.statusCode, parseRetryAfter(error.headers));
       logPushFailure(target, message, error.statusCode, classification, error.body);
       return { ok: false, statusCode: error.statusCode, bytes, ...classification };
     }

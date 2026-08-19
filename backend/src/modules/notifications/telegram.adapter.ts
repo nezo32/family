@@ -118,7 +118,7 @@ const BLOCKED_MARKERS = [
   'bot was blocked by the user',
   'user is deactivated',
   'chat not found',
-  'bot can\'t initiate conversation',
+  "bot can't initiate conversation",
   'peer_id_invalid',
   'the group chat was deleted',
 ];
@@ -154,7 +154,10 @@ export function classifyTelegramFailure(
   }
 
   if (statusCode === 400) {
-    return { action: 'abort', reason: text.includes('parse entities') ? 'bad_markup' : 'bad_request' };
+    return {
+      action: 'abort',
+      reason: text.includes('parse entities') ? 'bad_markup' : 'bad_request',
+    };
   }
 
   if (statusCode === 401 || statusCode === 404) {

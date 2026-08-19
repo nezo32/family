@@ -47,9 +47,7 @@ export function OverdueWidget(props: {
           />
         ))}
       </ul>
-      {rest > 0 ? (
-        <p className="pt-2 text-xs text-muted-foreground">+ {taskCount(rest)}</p>
-      ) : null}
+      {rest > 0 ? <p className="pt-2 text-xs text-muted-foreground">+ {taskCount(rest)}</p> : null}
     </WidgetCard>
   );
 }

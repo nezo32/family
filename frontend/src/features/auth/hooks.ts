@@ -13,14 +13,7 @@ import { ROUTES } from '@/shared/lib/routes';
 import { meKeys } from '@/shared/auth/use-me';
 import { setAccessToken } from '@/shared/api/token-store';
 import { resetRefreshState, signOut } from '@/shared/api/refresh';
-import {
-  authKeys,
-  fetchAccountStatus,
-  forgetTicket,
-  login,
-  register,
-  rememberTicket,
-} from './api';
+import { authKeys, fetchAccountStatus, forgetTicket, login, register, rememberTicket } from './api';
 
 /**
  * TanStack Query wrappers for the auth feature.
@@ -92,7 +85,9 @@ function applyAuthOutcome(outcome: AuthOutcome, context: OutcomeContext): void {
 /* mutations                                                                   */
 /* -------------------------------------------------------------------------- */
 
-export function useLogin(next?: string | null): UseMutationResult<AuthOutcome, Error, LoginRequest> {
+export function useLogin(
+  next?: string | null,
+): UseMutationResult<AuthOutcome, Error, LoginRequest> {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 

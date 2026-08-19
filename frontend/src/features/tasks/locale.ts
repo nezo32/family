@@ -268,6 +268,18 @@ export const TASKS_RU = {
     exception: 'Этот раз изменён вручную',
   },
 
+  /**
+   * Field-level validation copy. The shared zod schemas carry English default
+   * messages for the generic constraints, and D7 forbids showing the user a
+   * string that was not written for them — so issue codes are mapped here.
+   */
+  validation: {
+    required: 'Заполните это поле',
+    tooLong: 'Слишком длинное значение',
+    tooShort: 'Слишком короткое значение',
+    invalid: 'Проверьте это поле',
+  },
+
   /* ---- toasts ---- */
   toast: {
     completed: 'Отмечено выполненным',

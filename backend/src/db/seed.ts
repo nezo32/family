@@ -11,6 +11,7 @@ import { goalMilestones, goalTransactions, savingsGoals } from '../modules/goals
 import { shoppingItems, shoppingLists } from '../modules/shopping/shopping.schema.js';
 import { taskSeries } from '../modules/tasks/tasks.schema.js';
 import { posts } from '../modules/wall/wall.schema.js';
+import { pathToFileURL } from 'node:url';
 
 /**
  * Development seed.
@@ -320,7 +321,11 @@ async function seed(db: Db): Promise<void> {
   logger.info('seed complete');
 }
 
-if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, '/')}`) {
+// Hand-building a `file://` string gets the slash count wrong on Windows
+// (`file://E:/...` vs the real `file:///E:/...`), so this guard silently never
+// fired and the script exited having done nothing. Let Node do the conversion.
+const entrypoint = process.argv[1] ? pathToFileURL(process.argv[1]).href : '';
+if (import.meta.url === entrypoint) {
   const { sql: client, db } = createDbClient();
   try {
     await seed(db);

@@ -161,8 +161,7 @@ const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
         response: { 200: deliveryAckResponseSchema },
       },
     },
-    async (request) =>
-      ackRoute(auth(request).userId, request.params.id, request.body, 'delivered'),
+    async (request) => ackRoute(auth(request).userId, request.params.id, request.body, 'delivered'),
   );
 
   /** Called from `notificationclick`, before navigating. */

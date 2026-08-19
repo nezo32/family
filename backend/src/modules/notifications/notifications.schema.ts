@@ -13,7 +13,13 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 
-import { createdAt, emptyJsonObject, emptyTextArray, primaryId, timestamps } from '../../db/base.js';
+import {
+  createdAt,
+  emptyJsonObject,
+  emptyTextArray,
+  primaryId,
+  timestamps,
+} from '../../db/base.js';
 import { users } from '../identity/users.schema.js';
 
 /**
@@ -562,7 +568,11 @@ export const escalationPolicies = pgTable(
 
     ...timestamps(),
   },
-  (t) => [index('escalation_policies_type_idx').on(t.type).where(sql`${t.enabled}`)],
+  (t) => [
+    index('escalation_policies_type_idx')
+      .on(t.type)
+      .where(sql`${t.enabled}`),
+  ],
 );
 
 /* -------------------------------------------------------------------------- */

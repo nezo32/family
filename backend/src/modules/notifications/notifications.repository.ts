@@ -1,4 +1,18 @@
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  ne,
+  or,
+  sql,
+} from 'drizzle-orm';
 
 import {
   DELIVERY_STATUS_RANK,
@@ -124,7 +138,10 @@ export async function listActiveUsersByIds(x: Executor, ids: string[]): Promise<
     .where(and(eq(users.status, 'active'), inArray(users.id, ids)));
 }
 
-export async function listActiveUsersByRoles(x: Executor, roles: string[]): Promise<RecipientRow[]> {
+export async function listActiveUsersByRoles(
+  x: Executor,
+  roles: string[],
+): Promise<RecipientRow[]> {
   if (roles.length === 0) return [];
   return x
     .select(recipientColumns)
@@ -218,9 +235,7 @@ export async function advanceEscalationState(
   const rows = await x
     .update(notificationIntents)
     .set({ escalationState: to, escalatedAt: at })
-    .where(
-      and(eq(notificationIntents.id, intentId), eq(notificationIntents.escalationState, from)),
-    )
+    .where(and(eq(notificationIntents.id, intentId), eq(notificationIntents.escalationState, from)))
     .returning({ id: notificationIntents.id });
   return rows.length > 0;
 }
@@ -258,10 +273,7 @@ export async function listPreferencesForUsers(
     .select()
     .from(notificationPreferences)
     .where(
-      and(
-        inArray(notificationPreferences.userId, userIds),
-        eq(notificationPreferences.type, type),
-      ),
+      and(inArray(notificationPreferences.userId, userIds), eq(notificationPreferences.type, type)),
     );
 }
 
@@ -269,10 +281,7 @@ export async function listPreferencesForUser(
   x: Executor,
   userId: string,
 ): Promise<NotificationPreferenceRow[]> {
-  return x
-    .select()
-    .from(notificationPreferences)
-    .where(eq(notificationPreferences.userId, userId));
+  return x.select().from(notificationPreferences).where(eq(notificationPreferences.userId, userId));
 }
 
 export async function upsertPreferences(
@@ -314,10 +323,7 @@ export async function listQuietHoursForUsers(
   return x.select().from(quietHours).where(inArray(quietHours.userId, userIds));
 }
 
-export async function listQuietHoursForUser(
-  x: Executor,
-  userId: string,
-): Promise<QuietHoursRow[]> {
+export async function listQuietHoursForUser(x: Executor, userId: string): Promise<QuietHoursRow[]> {
   return x.select().from(quietHours).where(eq(quietHours.userId, userId));
 }
 
@@ -525,7 +531,10 @@ export async function listStalePushSubscriptions(
         isNull(pushSubscriptions.expiredAt),
         or(
           and(isNull(pushSubscriptions.lastSuccessAt), lt(pushSubscriptions.createdAt, before)),
-          and(isNotNull(pushSubscriptions.lastSuccessAt), lt(pushSubscriptions.lastSuccessAt, before)),
+          and(
+            isNotNull(pushSubscriptions.lastSuccessAt),
+            lt(pushSubscriptions.lastSuccessAt, before),
+          ),
         ),
       ),
     );

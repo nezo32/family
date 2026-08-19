@@ -22,6 +22,11 @@ const app = await buildApp();
 
 let stopWorkers: (() => Promise<void>) | undefined;
 if (config.ENABLE_WORKERS) {
+  // Handlers register themselves on import, so this must precede startWorkers()
+  // or every enqueued job would fail with "no handler registered".
+  const { registerAllJobHandlers } = await import('./modules/jobs.js');
+  await registerAllJobHandlers();
+
   const { startWorkers } = await import('./core/queue/workers.js');
   stopWorkers = await startWorkers();
 }

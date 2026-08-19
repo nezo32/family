@@ -1,19 +1,36 @@
 /// <reference lib="webworker" />
 /**
- * Service worker — precache + navigation fallback skeleton.
+ * Service worker — precache, navigation fallback and Web Push.
  *
  * Built with `strategies: 'injectManifest'` (D7): vite-plugin-pwa replaces
  * `self.__WB_MANIFEST` with the build's precache entries and otherwise leaves
  * this file alone.
  *
- * Deliberately dependency-free: `workbox-precaching` is not a declared
- * dependency of this package (only `workbox-window` is), and adding one is the
- * lead's call. The hand-rolled precache below is ~60 lines and does exactly
- * what we need for a single-page app.
+ * No Workbox runtime: `workbox-precaching` is not a declared dependency of this
+ * package (only `workbox-window` is), and adding one is the lead's call. The
+ * hand-rolled precache below is ~60 lines and does exactly what we need for a
+ * single-page app.
  *
- * Push notification handling is NOT implemented here — see the TODO(push)
- * section at the bottom. A later agent owns it.
+ * The push section at the bottom implements the three handlers the platform
+ * gives us (`push`, `notificationclick`, `pushsubscriptionchange`) plus the D11
+ * delivery acks. Read `docs/research/ios-pwa-push.md` before touching it — most
+ * of the code there exists to satisfy a hard iOS constraint whose failure mode
+ * is silent.
+ *
+ * **Imports are relative on purpose.** vite-plugin-pwa builds this file in a
+ * separate child build; a relative specifier resolves there without depending on
+ * whether the `@/` alias is inherited. The three modules it pulls in are pure
+ * (no DOM, no React), so the SW bundle stays small.
  */
+
+import {
+  deliveryIdFromNotificationData,
+  navigateFromNotificationData,
+  notificationOptions,
+  parsePushPayload,
+} from './features/settings/push/payload';
+import { ackDelivery } from './features/settings/push/ack-queue';
+import { ACKS_PENDING, PUSH_NAVIGATE, TOKEN_REQUEST } from './features/settings/push/messages';
 
 export {};
 
@@ -131,25 +148,304 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
-/* -------------------------------------------------------------------------
- * TODO(push) — owned by the notifications agent, do not implement here yet.
+/* ==========================================================================
+ *                              WEB PUSH  (D10 / D11)
+ * ==========================================================================
  *
- * Required handlers:
- *   self.addEventListener('push', ...)            decode the VAPID payload,
- *                                                 respect quiet hours already
- *                                                 applied server-side (D10),
- *                                                 call showNotification() with
- *                                                 Russian title/body, tag by
- *                                                 intent id so repeats collapse
- *   self.addEventListener('notificationclick',..) focus an existing client or
- *                                                 openWindow() the deep link
- *   self.addEventListener('notificationclose',..) optional delivery telemetry
- *   self.addEventListener('pushsubscriptionchange', ...) re-register the device
- *                                                 against POST /api/push/subscriptions
+ * Everything below is governed by `docs/research/ios-pwa-push.md`. The four
+ * rules that shape the code:
  *
- * Notes for whoever picks this up:
- *  - iOS only delivers push to a PWA installed to the Home Screen, and only
- *    after Notification.requestPermission() was called from a user gesture.
- *  - A push event MUST show a notification on every delivery or Chrome will
- *    eventually revoke the permission.
- * ---------------------------------------------------------------------- */
+ *  1. **Every push must show a notification.** Not "should" — after ~3 pushes
+ *     where the SW ran silently, iOS revokes the subscription with no signal to
+ *     the user or to us. So `showNotification()` is unconditional, comes first,
+ *     and a malformed payload degrades to generic copy instead of throwing.
+ *  2. **The ack must never block or fail the notification** (D11). It runs
+ *     after `showNotification()` resolves, it swallows every error, and a
+ *     failure lands in IndexedDB for the app to flush on next foreground.
+ *  3. **iOS ignores `icon`, `badge`, `actions`, `tag` and `renotify`.** We do
+ *     not build behaviour on any of them; coalescing is the backend's job.
+ *  4. **`client.navigate()` is unreliable in an installed iOS PWA.** We focus an
+ *     existing client and `postMessage` a navigate instruction that React Router
+ *     executes, and only fall back to `openWindow()` when nothing is open.
+ */
+
+/** Same-origin API base. `apiUrl()` in the app resolves to the same thing. */
+const API_ORIGIN = self.location.origin;
+
+/**
+ * Borrow the in-memory access token from an open window.
+ *
+ * D3 keeps the access JWT out of every storage a service worker can read, and
+ * the ack endpoints are guarded by `notification:manage:own`. When the app is
+ * open we can ask it; when the app is swiped away — the normal case for a push —
+ * we get `null` and the ack goes to the queue instead. The timeout is short and
+ * absolute: an unanswered request must not delay the ack, let alone hold the
+ * service worker alive.
+ */
+async function borrowAccessToken(timeoutMs = 400): Promise<string | null> {
+  let clientList: readonly Client[];
+  try {
+    clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  } catch {
+    return null;
+  }
+  const target = clientList.find((client) => client.url.startsWith(API_ORIGIN));
+  if (!target) return null;
+
+  return new Promise<string | null>((resolve) => {
+    let settled = false;
+    const done = (token: string | null) => {
+      if (settled) return;
+      settled = true;
+      resolve(token);
+    };
+
+    const channel = new MessageChannel();
+    channel.port1.onmessage = (event: MessageEvent) => {
+      const data: unknown = event.data;
+      const token =
+        typeof data === 'object' && data !== null ? (data as { token?: unknown }).token : null;
+      done(typeof token === 'string' && token.length > 0 ? token : null);
+    };
+
+    try {
+      target.postMessage({ type: TOKEN_REQUEST }, [channel.port2]);
+    } catch {
+      done(null);
+      return;
+    }
+    setTimeout(() => {
+      done(null);
+    }, timeoutMs);
+  });
+}
+
+/** Tell every open window that the ack queue has something in it. */
+async function notifyAcksPending(): Promise<void> {
+  try {
+    const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const client of clientList) client.postMessage({ type: ACKS_PENDING });
+  } catch {
+    // The page also flushes on every foreground; this is only a nudge.
+  }
+}
+
+/**
+ * Record a D11 receipt. Fire-and-forget by construction: it resolves, always.
+ *
+ * `occurredAt` is stamped by the *caller*, at the moment the event happened, and
+ * travels with the queued ack — the server clamps it into `[sentAt - skew, now]`
+ * so a replay hours later still reports the truth.
+ */
+async function ack(
+  deliveryId: string | null,
+  kind: 'delivered' | 'interacted',
+  occurredAt: string,
+): Promise<void> {
+  if (!deliveryId) return;
+  try {
+    const token = await borrowAccessToken();
+    await ackDelivery(deliveryId, kind, { apiBase: API_ORIGIN, token, occurredAt });
+    if (!token) await notifyAcksPending();
+  } catch {
+    // Unreachable in practice — `ackDelivery` swallows its own failures — but an
+    // ack is never allowed to reject into `waitUntil`.
+  }
+}
+
+/**
+ * The Badging API is unavailable in some browsers and inside some WebViews.
+ * `0` clears rather than showing an empty dot, which is the whole reason for
+ * the explicit branch.
+ */
+function applyAppBadge(count: number | null): void {
+  if (count === null) return;
+  const badging = navigator as Navigator & {
+    setAppBadge?: (contents?: number) => Promise<void>;
+    clearAppBadge?: () => Promise<void>;
+  };
+  try {
+    if (count <= 0) {
+      void badging.clearAppBadge?.().catch(() => undefined);
+      return;
+    }
+    void badging.setAppBadge?.(count).catch(() => undefined);
+  } catch {
+    // Badging is cosmetic; never let it interfere with the notification.
+  }
+}
+
+/* ------------------------------- push -------------------------------------- */
+
+self.addEventListener('push', (event) => {
+  // Stamped now, not when the ack finally goes out: this is the instant the
+  // message actually reached the device (D11 `deliveredAt`).
+  const occurredAt = new Date().toISOString();
+
+  event.waitUntil(
+    (async () => {
+      // `data.text()` can itself throw on a malformed frame.
+      let raw: string | null = null;
+      try {
+        raw = event.data ? event.data.text() : null;
+      } catch {
+        raw = null;
+      }
+
+      const push = parsePushPayload(raw, API_ORIGIN);
+
+      // HARD RULE — this happens first and is never conditional.
+      try {
+        await self.registration.showNotification(push.title, notificationOptions(push));
+      } catch {
+        // Last-ditch: a plain title-only notification still counts as "shown"
+        // and is what keeps the subscription alive.
+        try {
+          await self.registration.showNotification(push.title);
+        } catch {
+          // Nothing more we can do; do not let it reject `waitUntil`.
+        }
+      }
+
+      applyAppBadge(push.appBadge);
+
+      // Only now, and only ever after the notification is on screen.
+      await ack(push.deliveryId, 'delivered', occurredAt);
+    })(),
+  );
+});
+
+/* --------------------------- notificationclick ------------------------------ */
+
+self.addEventListener('notificationclick', (event) => {
+  const occurredAt = new Date().toISOString();
+  const data: unknown = event.notification.data;
+  const url = navigateFromNotificationData(data, API_ORIGIN);
+  const deliveryId = deliveryIdFromNotificationData(data);
+
+  event.notification.close();
+
+  event.waitUntil(
+    (async () => {
+      // The ack runs first so that a `focus()` that consumes the SW's remaining
+      // lifetime cannot lose the receipt — it is durably queued either way.
+      await ack(deliveryId, 'interacted', occurredAt);
+
+      let clientList: readonly WindowClient[] = [];
+      try {
+        clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      } catch {
+        clientList = [];
+      }
+
+      const existing =
+        clientList.find((client) => client.url.startsWith(API_ORIGIN) && client.focused) ??
+        clientList.find((client) => client.url.startsWith(API_ORIGIN));
+
+      if (existing) {
+        try {
+          await existing.focus();
+        } catch {
+          // Focus can be refused; the postMessage below still routes the app.
+        }
+        // `client.navigate()` is unreliable in a standalone iOS PWA (it can
+        // reload the app to `start_url`, or do nothing at all), so we hand the
+        // path to React Router and let it do a client-side navigation.
+        try {
+          existing.postMessage({ type: PUSH_NAVIGATE, url, deliveryId });
+          return;
+        } catch {
+          // Fall through to opening a window.
+        }
+      }
+
+      try {
+        await self.clients.openWindow(url);
+      } catch {
+        // Nothing left to try.
+      }
+    })(),
+  );
+});
+
+/* ------------------------ pushsubscriptionchange ---------------------------- */
+
+/**
+ * Free on Chrome, absent on Safari.
+ *
+ * MDN BCD has `safari: false, safari_ios: false`, so on the platform that needs
+ * it most this handler never runs. The real repair loop is the foreground
+ * reconcile in `features/settings/push/push.ts`: on every
+ * `visibilitychange -> visible` the app re-POSTs `getSubscription()`. This
+ * handler is here because it costs nothing and fixes rotations silently for
+ * everybody else.
+ *
+ * Resubscribing needs the same `applicationServerKey`; we take it from the old
+ * subscription when the browser gives us one and fall back to the build-time
+ * VAPID key. The POST needs a session, which the SW usually does not have — so a
+ * failure here is expected and harmless: the next foreground reconcile fixes it.
+ */
+self.addEventListener('pushsubscriptionchange', ((event: Event) => {
+  const change = event as Event & {
+    oldSubscription?: PushSubscription | null;
+    newSubscription?: PushSubscription | null;
+    waitUntil: (promise: Promise<unknown>) => void;
+  };
+
+  change.waitUntil(
+    (async () => {
+      try {
+        let subscription = change.newSubscription ?? null;
+
+        if (!subscription) {
+          const applicationServerKey =
+            change.oldSubscription?.options.applicationServerKey ??
+            urlBase64ToUint8Array(import.meta.env.VITE_VAPID_PUBLIC_KEY);
+          if (!applicationServerKey) return;
+          subscription = await self.registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey,
+          });
+        }
+
+        const token = await borrowAccessToken();
+        if (!token) return;
+
+        await fetch(`${API_ORIGIN}/api/notifications/subscriptions`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            accept: 'application/json',
+            authorization: `Bearer ${token}`,
+          },
+          credentials: 'same-origin',
+          cache: 'no-store',
+          body: JSON.stringify({ ...subscription.toJSON(), isStandalone: true }),
+        });
+      } catch {
+        // Expected without a session. The foreground reconcile is the real fix.
+      }
+    })(),
+  );
+}) as EventListener);
+
+/**
+ * base64url -> `Uint8Array`, the only form `applicationServerKey` accepts.
+ *
+ * Duplicated from `features/settings/push/push.ts` rather than imported: that
+ * module reaches into `window` and must not be pulled into the service-worker
+ * bundle.
+ */
+function urlBase64ToUint8Array(base64: string | undefined): Uint8Array | null {
+  if (!base64) return null;
+  try {
+    const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+    const normalized = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const binary = atob(normalized);
+    const output = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) output[i] = binary.charCodeAt(i);
+    return output;
+  } catch {
+    return null;
+  }
+}

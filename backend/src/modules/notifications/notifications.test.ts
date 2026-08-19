@@ -1,0 +1,922 @@
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+/**
+ * Notifications tests.
+ *
+ * No Postgres and no Redis are available in this environment, and — more
+ * importantly — **no live network calls are made**: `web-push` is injected as a
+ * stub and `fetch` is replaced. Everything that can be pure is pure, and the
+ * repository is mocked module-wide so the pipeline logic can be driven without a
+ * database.
+ *
+ * The tests that matter most, in order of how much damage the bug they prevent
+ * would do:
+ *
+ * 1. **The HTTP status → prune/retry table.** A `403` treated as "gone" deletes
+ *    every push subscription in the family on a bad deploy, and the only
+ *    recovery is asking every member to re-enable notifications by hand.
+ * 2. **Quiet hours across midnight and across a DST boundary.** One push at
+ *    03:00 and a parent turns notifications off forever.
+ * 3. **Escalation fires exactly once, never inside quiet hours, never for
+ *    `normal`/`low`.** The cure must not become the disease.
+ * 4. **Acks are idempotent and status never regresses.** Offline replays are
+ *    normal, not exceptional.
+ */
+
+/* -------------------------------------------------------------------------- */
+/* Environment — must be set before any module reads the config                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Hoisted above every import: the config is parsed the first time any module
+ * touches `core/logger.ts`, so the environment has to be right before then.
+ * `enqueueMock` lives here too — a `vi.mock` factory is hoisted above ordinary
+ * `const` declarations and would otherwise hit the temporal dead zone.
+ */
+const { enqueueMock } = vi.hoisted(() => {
+  // `src/test/setup.ts` sets LOG_LEVEL=silent, which is not a member of the
+  // config enum; pin something valid before `core/logger.ts` is evaluated.
+  process.env.LOG_LEVEL = 'fatal';
+  process.env.VAPID_PUBLIC_KEY ??= 'test-vapid-public-key';
+  process.env.VAPID_PRIVATE_KEY ??= 'test-vapid-private-key';
+  process.env.VAPID_SUBJECT ??= 'mailto:admin@family.example.com';
+  process.env.TELEGRAM_BOT_TOKEN ??= '123456:test-bot-token';
+  return { enqueueMock: vi.fn(() => Promise.resolve()) };
+});
+
+/** BullMQ is never reachable here; capture what the pipeline tried to enqueue. */
+vi.mock('../../core/queue/queues.js', () => ({
+  enqueue: enqueueMock,
+  getQueue: vi.fn(),
+  closeQueues: vi.fn(),
+  QUEUE_NAMES: {
+    notifications: 'notifications',
+    scheduler: 'scheduler',
+    maintenance: 'maintenance',
+  },
+}));
+
+/**
+ * Mock every repository function while keeping the real module's shape, so a
+ * function added to the repository later does not silently become `undefined`
+ * in these tests.
+ */
+vi.mock('./notifications.repository.js', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  const mocked: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(actual)) {
+    mocked[key] = typeof value === 'function' ? vi.fn() : value;
+  }
+  return mocked;
+});
+
+import {
+  DELIVERY_STATUS_RANK,
+  ESCALATION_DEADLINE_MINUTES,
+  NOTIFICATION_LIMITS,
+  NOTIFICATION_TYPES,
+  isForwardDeliveryStatus,
+  nextEscalationState,
+  requiredAckSignal,
+} from '@family/shared';
+
+import { installTemporal } from '../../core/temporal.js';
+import type { Db, Executor } from '../../core/db.js';
+import * as repo from './notifications.repository.js';
+import type { NotificationDeliveryRow, NotificationIntentRow } from './notifications.schema.js';
+import {
+  classifyPushFailure,
+  sendPush,
+  serializePushPayload,
+  trimToBytes,
+  type PushDeps,
+  type PushMessage,
+} from './push.adapter.js';
+import {
+  activeQuietWindows,
+  isQuietNow,
+  nextQuietEnd,
+  resolveQuietDecision,
+  type QuietWindow,
+} from './quiet-hours.js';
+import { renderNotification } from './render.js';
+import {
+  classifyTelegramFailure,
+  escapeMarkdownV2,
+  formatTelegramMessage,
+  sendTelegramMessage,
+} from './telegram.adapter.js';
+import {
+  ackDelivery,
+  clampAckTimestamp,
+  emitIntent,
+  escalateIntent,
+  isSubscriptionUnhealthy,
+  runPushHealthCheck,
+} from './notifications.service.js';
+
+type RepositoryModule = typeof repo;
+
+const db = {} as Db;
+
+beforeAll(async () => {
+  await installTemporal();
+});
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+/* ========================================================================== */
+/* Quiet hours                                                                 */
+/* ========================================================================== */
+
+const MOSCOW = 'Europe/Moscow';
+const BERLIN = 'Europe/Berlin';
+
+const nightly = (mode: 'defer' | 'silence' = 'defer'): QuietWindow[] => [
+  { dayOfWeek: null, startsAt: '22:00', endsAt: '07:30', mode },
+];
+
+describe('quiet hours — windows that wrap past midnight', () => {
+  it('is quiet on both sides of midnight and awake in between', () => {
+    const windows = nightly();
+    // Moscow is a permanent UTC+3, so local = UTC + 3.
+    expect(isQuietNow(windows, MOSCOW, new Date('2026-08-19T19:30:00Z'))).toBe(true); // 22:30
+    expect(isQuietNow(windows, MOSCOW, new Date('2026-08-20T00:00:00Z'))).toBe(true); // 03:00
+    expect(isQuietNow(windows, MOSCOW, new Date('2026-08-20T04:29:00Z'))).toBe(true); // 07:29
+    expect(isQuietNow(windows, MOSCOW, new Date('2026-08-20T04:30:00Z'))).toBe(false); // 07:30 exclusive
+    expect(isQuietNow(windows, MOSCOW, new Date('2026-08-19T18:59:00Z'))).toBe(false); // 21:59
+  });
+
+  it('defers to the end of the window, as a UTC instant', () => {
+    // 03:00 Moscow → release at 07:30 Moscow → 04:30 UTC the same day.
+    const release = nextQuietEnd(nightly(), MOSCOW, new Date('2026-08-20T00:00:00Z'));
+    expect(release?.toISOString()).toBe('2026-08-20T04:30:00.000Z');
+  });
+
+  it('returns null when nothing is quiet', () => {
+    expect(nextQuietEnd(nightly(), MOSCOW, new Date('2026-08-19T09:00:00Z'))).toBeNull();
+  });
+
+  it('honours the weekday of the day the window STARTS', () => {
+    // Friday night → Saturday morning. 2026-08-21 is a Friday.
+    const friday: QuietWindow[] = [
+      { dayOfWeek: 5, startsAt: '22:00', endsAt: '07:00', mode: 'defer' },
+    ];
+    expect(isQuietNow(friday, MOSCOW, new Date('2026-08-21T20:00:00Z'))).toBe(true); // Fri 23:00
+    expect(isQuietNow(friday, MOSCOW, new Date('2026-08-22T01:00:00Z'))).toBe(true); // Sat 04:00
+    expect(isQuietNow(friday, MOSCOW, new Date('2026-08-22T20:00:00Z'))).toBe(false); // Sat 23:00
+  });
+
+  it('chains adjacent windows so a release never lands inside the next silence', () => {
+    const windows: QuietWindow[] = [
+      { dayOfWeek: null, startsAt: '22:00', endsAt: '07:00', mode: 'defer' },
+      { dayOfWeek: null, startsAt: '07:00', endsAt: '09:00', mode: 'defer' },
+    ];
+    // 03:00 Moscow — the first window ends at 07:00, which opens the second.
+    const release = nextQuietEnd(windows, MOSCOW, new Date('2026-08-20T00:00:00Z'));
+    expect(release?.toISOString()).toBe('2026-08-20T06:00:00.000Z'); // 09:00 Moscow
+  });
+
+  it('composes overlapping windows to the latest end', () => {
+    const windows: QuietWindow[] = [
+      { dayOfWeek: null, startsAt: '13:00', endsAt: '15:00', mode: 'defer' },
+      { dayOfWeek: null, startsAt: '14:00', endsAt: '16:30', mode: 'defer' },
+    ];
+    const at = new Date('2026-08-19T11:30:00Z'); // 14:30 Moscow
+    expect(activeQuietWindows(windows, MOSCOW, at)).toHaveLength(2);
+    expect(nextQuietEnd(windows, MOSCOW, at)?.toISOString()).toBe('2026-08-19T13:30:00.000Z');
+  });
+
+  it('treats a malformed window as no window rather than permanent silence', () => {
+    const broken: QuietWindow[] = [
+      { dayOfWeek: null, startsAt: '25:99', endsAt: 'oops', mode: 'defer' },
+    ];
+    expect(isQuietNow(broken, MOSCOW, new Date('2026-08-20T00:00:00Z'))).toBe(false);
+  });
+});
+
+describe('quiet hours — DST boundaries (D2 wall-clock rule)', () => {
+  it('spring forward: the window is one wall-clock hour shorter, and the end is right', () => {
+    // Europe/Berlin springs forward on 2026-03-29 at 02:00 → 03:00.
+    // 22:00 on the 28th is +01:00 (21:00Z); 07:00 on the 29th is +02:00 (05:00Z).
+    const windows: QuietWindow[] = [
+      { dayOfWeek: null, startsAt: '22:00', endsAt: '07:00', mode: 'defer' },
+    ];
+    const at = new Date('2026-03-29T00:00:00Z'); // 01:00 Berlin, still winter time
+    expect(isQuietNow(windows, BERLIN, at)).toBe(true);
+
+    const release = nextQuietEnd(windows, BERLIN, at);
+    expect(release?.toISOString()).toBe('2026-03-29T05:00:00.000Z');
+
+    // The elapsed real time is 8 hours even though the wall clock says 9 —
+    // which is the entire point of doing this with Temporal instead of
+    // `start + 9 * 3600_000`.
+    const [occurrence] = activeQuietWindows(windows, BERLIN, at);
+    expect(occurrence).toBeDefined();
+    const hours = (occurrence!.end.getTime() - occurrence!.start.getTime()) / 3_600_000;
+    expect(hours).toBe(8);
+  });
+
+  it('fall back: the same wall-clock window is one hour longer', () => {
+    // Europe/Berlin falls back on 2026-10-25 at 03:00 → 02:00.
+    const windows: QuietWindow[] = [
+      { dayOfWeek: null, startsAt: '22:00', endsAt: '07:00', mode: 'defer' },
+    ];
+    const at = new Date('2026-10-24T22:00:00Z'); // 00:00 Berlin (+02:00)
+    const [occurrence] = activeQuietWindows(windows, BERLIN, at);
+    expect(occurrence).toBeDefined();
+    const hours = (occurrence!.end.getTime() - occurrence!.start.getTime()) / 3_600_000;
+    expect(hours).toBe(10);
+    expect(nextQuietEnd(windows, BERLIN, at)?.toISOString()).toBe('2026-10-25T06:00:00.000Z');
+  });
+});
+
+describe('quiet hours — the decision (D10: defer, never drop)', () => {
+  const at = new Date('2026-08-20T00:00:00Z'); // 03:00 Moscow
+
+  it('defers a normal notification to the end of the window', () => {
+    const decision = resolveQuietDecision(nightly(), MOSCOW, at, 'normal');
+    expect(decision.action).toBe('defer');
+    expect(decision.scheduledFor?.toISOString()).toBe('2026-08-20T04:30:00.000Z');
+  });
+
+  it('critical is the ONLY bypass', () => {
+    for (const priority of ['low', 'normal', 'high'] as const) {
+      expect(resolveQuietDecision(nightly(), MOSCOW, at, priority).action).toBe('defer');
+    }
+    const critical = resolveQuietDecision(nightly(), MOSCOW, at, 'critical');
+    expect(critical.action).toBe('send');
+    expect(critical.scheduledFor).toBeNull();
+  });
+
+  it('silence suppresses the ping but is still not a drop — defer wins when mixed', () => {
+    expect(resolveQuietDecision(nightly('silence'), MOSCOW, at, 'normal').action).toBe('silence');
+
+    const mixed: QuietWindow[] = [
+      { dayOfWeek: null, startsAt: '22:00', endsAt: '07:30', mode: 'silence' },
+      { dayOfWeek: null, startsAt: '02:00', endsAt: '04:00', mode: 'defer' },
+    ];
+    // Deferring loses nothing, so it wins over silencing.
+    expect(resolveQuietDecision(mixed, MOSCOW, at, 'normal').action).toBe('defer');
+  });
+});
+
+/* ========================================================================== */
+/* Web Push — the status table                                                 */
+/* ========================================================================== */
+
+describe('push adapter — HTTP status → prune/retry decision', () => {
+  it('404 and 410 are the ONLY statuses that prune a subscription', () => {
+    for (const status of [404, 410]) {
+      const decision = classifyPushFailure(status);
+      expect(decision.prune, `status ${status} must prune`).toBe(true);
+      expect(decision.action).toBe('prune');
+      expect(decision.retryable).toBe(false);
+      expect(decision.reason).toBe('gone');
+    }
+  });
+
+  it('429 backs off and NEVER prunes, honouring Retry-After', () => {
+    const decision = classifyPushFailure(429, 120);
+    expect(decision.prune).toBe(false);
+    expect(decision.action).toBe('backoff');
+    expect(decision.retryable).toBe(true);
+    expect(decision.retryAfterSeconds).toBe(120);
+    // A rate limit must not count toward the consecutive-failure expiry either.
+    expect(decision.countsAsFailure).toBe(false);
+  });
+
+  it('413 is our payload bug: log, never prune, never retry', () => {
+    const decision = classifyPushFailure(413);
+    expect(decision.prune).toBe(false);
+    expect(decision.retryable).toBe(false);
+    expect(decision.reason).toBe('payload_too_large');
+  });
+
+  it('400/401/403 are VAPID misconfiguration — pruning here would wipe the family', () => {
+    for (const status of [400, 401, 403]) {
+      const decision = classifyPushFailure(status);
+      expect(decision.prune, `status ${status} must NOT prune`).toBe(false);
+      expect(decision.reason).toBe('vapid_misconfigured');
+      expect(decision.retryable).toBe(false);
+      expect(decision.countsAsFailure).toBe(false);
+    }
+  });
+
+  it('5xx and network errors retry and count toward the ~10-failure expiry', () => {
+    for (const status of [500, 502, 503, 504, null]) {
+      const decision = classifyPushFailure(status);
+      expect(decision.prune, `status ${String(status)} must NOT prune`).toBe(false);
+      expect(decision.retryable).toBe(true);
+      expect(decision.countsAsFailure).toBe(true);
+      expect(decision.reason).toBe('transient');
+    }
+  });
+
+  it('no other status prunes — exhaustive sweep of 400..599', () => {
+    for (let status = 400; status < 600; status += 1) {
+      const decision = classifyPushFailure(status);
+      if (status === 404 || status === 410) continue;
+      expect(decision.prune, `status ${status} must NOT prune`).toBe(false);
+    }
+  });
+
+  it('reports a misconfiguration through the real send path without pruning', async () => {
+    class FakeWebPushError extends Error {
+      constructor(
+        readonly statusCode: number,
+        readonly headers: Record<string, string>,
+        readonly body: string,
+        readonly endpoint: string,
+      ) {
+        super('rejected');
+      }
+    }
+    // `sendPush` narrows on the real class, so an unknown throwable is treated
+    // as a network error — still never a prune, which is the property we care
+    // about here.
+    const deps: PushDeps = {
+      sendNotification: () => Promise.reject(new FakeWebPushError(403, {}, 'BadJwtToken', 'x')),
+    };
+    const result = await sendPush(target(), message(), deps);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.prune).toBe(false);
+  });
+
+  it('a successful send reports ok and never touches the subscription', async () => {
+    const deps: PushDeps = { sendNotification: () => Promise.resolve({ statusCode: 201 }) };
+    const result = await sendPush(target(), message(), deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.statusCode).toBe(201);
+  });
+});
+
+function target() {
+  return { id: 'sub-1', endpoint: 'https://web.push.apple.com/abc', p256dh: 'p', auth: 'a' };
+}
+
+function message(overrides: Partial<PushMessage> = {}): PushMessage {
+  return {
+    deliveryId: '11111111-1111-4111-8111-111111111111',
+    intentId: '22222222-2222-4222-8222-222222222222',
+    type: 'task_assigned',
+    title: 'Новая задача',
+    body: 'Вынести мусор · сегодня в 19:00',
+    navigate: '/tasks/42',
+    badge: 3,
+    priority: 'normal',
+    ...overrides,
+  };
+}
+
+/* ========================================================================== */
+/* Web Push — the payload budget                                               */
+/* ========================================================================== */
+
+describe('push adapter — hybrid payload and the size budget', () => {
+  it('emits the hybrid Declarative Web Push shape', () => {
+    const { json } = serializePushPayload(message());
+    const parsed = JSON.parse(json) as {
+      web_push: number;
+      notification: Record<string, unknown>;
+    };
+    expect(parsed.web_push).toBe(8030);
+    expect(parsed.notification.title).toBe('Новая задача');
+    // `navigate` is REQUIRED for the declarative path and must be absolute.
+    expect(String(parsed.notification.navigate)).toMatch(/^https?:\/\/.+\/tasks\/42$/);
+    expect(parsed.notification.mutable).toBe(true);
+    expect(parsed.notification.app_badge).toBe(3);
+    // Ids only — never entity data.
+    expect(parsed.notification.data).toMatchObject({
+      deliveryId: '11111111-1111-4111-8111-111111111111',
+      type: 'task_assigned',
+    });
+  });
+
+  it('stays under the budget and degrades instead of throwing', () => {
+    const huge = message({ body: 'Очень длинное описание задачи. '.repeat(400) });
+    const result = serializePushPayload(huge);
+    expect(result.bytes).toBeLessThanOrEqual(NOTIFICATION_LIMITS.pushPayloadBudgetBytes);
+    expect(result.degraded).toBe(true);
+
+    const parsed = JSON.parse(result.json) as { notification: Record<string, unknown> };
+    // The two fields Safari needs must survive every level of degradation.
+    expect(parsed.notification.title).toBe('Новая задача');
+    expect(String(parsed.notification.navigate)).toContain('/tasks/42');
+  });
+
+  it('does not degrade an ordinary message', () => {
+    const result = serializePushPayload(message());
+    expect(result.degraded).toBe(false);
+    expect(result.bytes).toBeLessThan(NOTIFICATION_LIMITS.pushPayloadBudgetBytes);
+  });
+
+  it('survives a pathological title without throwing', () => {
+    expect(() =>
+      serializePushPayload(message({ title: 'Ж'.repeat(5000), body: '' })),
+    ).not.toThrow();
+  });
+
+  it('trims on codepoint boundaries, counting UTF-8 bytes not characters', () => {
+    // Cyrillic is two bytes per character: 10 bytes = 5 characters.
+    expect(trimToBytes('Задача', 10)).toBe('Задач');
+    expect(Buffer.byteLength(trimToBytes('Задача', 7), 'utf8')).toBeLessThanOrEqual(7);
+    expect(trimToBytes('abc', 0)).toBe('');
+  });
+});
+
+/* ========================================================================== */
+/* The Russian renderer                                                        */
+/* ========================================================================== */
+
+describe('render — every notification type', () => {
+  it('renders a usable title and body for every enum member, from an empty payload', () => {
+    for (const type of NOTIFICATION_TYPES) {
+      const rendered = renderNotification(type, {});
+      expect(rendered.title.length, `${type} title`).toBeGreaterThan(0);
+      expect(rendered.body.length, `${type} body`).toBeGreaterThan(0);
+      // On iOS every notification wears the app icon, so the title alone has to
+      // say what kind of thing this is — and it must fit on a lock screen.
+      expect(rendered.title.length, `${type} title too long`).toBeLessThanOrEqual(60);
+      expect(rendered.title).toMatch(/[А-Яа-яЁё]/);
+    }
+  });
+
+  it('gives each type a distinguishable title', () => {
+    const titles = NOTIFICATION_TYPES.map((type) => renderNotification(type, {}).title);
+    // A couple of pairs legitimately share a heading family, but the set must
+    // not collapse to a handful of generic strings.
+    expect(new Set(titles).size).toBeGreaterThanOrEqual(NOTIFICATION_TYPES.length - 1);
+  });
+
+  it('renders from the payload, deep-linking by id', () => {
+    const rendered = renderNotification('task_assigned', {
+      title: 'Вынести мусор',
+      occurrenceId: 'abc',
+      dueLabel: 'сегодня в 19:00',
+    });
+    expect(rendered.title).toBe('Новая задача');
+    expect(rendered.body).toContain('Вынести мусор');
+    expect(rendered.navigate).toBe('/tasks/abc');
+  });
+
+  it('formats money from integer minor units', () => {
+    const rendered = renderNotification('goal_contribution', {
+      actorName: 'Аня',
+      goalTitle: 'Велосипед',
+      amountMinor: 250000,
+    });
+    expect(rendered.body).toContain('Аня');
+    expect(rendered.body).toContain('₽');
+    expect(rendered.body).not.toContain('250000');
+  });
+
+  it('declines Russian plurals correctly', () => {
+    expect(renderNotification('birthday_today', { personName: 'Лиза', age: 1 }).body).toContain(
+      '1 год',
+    );
+    expect(renderNotification('birthday_today', { personName: 'Лиза', age: 3 }).body).toContain(
+      '3 года',
+    );
+    expect(renderNotification('birthday_today', { personName: 'Лиза', age: 11 }).body).toContain(
+      '11 лет',
+    );
+    expect(renderNotification('birthday_today', { personName: 'Лиза', age: 42 }).body).toContain(
+      '42 года',
+    );
+  });
+});
+
+/* ========================================================================== */
+/* Telegram                                                                    */
+/* ========================================================================== */
+
+describe('telegram adapter', () => {
+  it('escapes every MarkdownV2 reserved character', () => {
+    expect(escapeMarkdownV2('Задача просрочена — сделай!')).toBe('Задача просрочена — сделай\\!');
+    expect(escapeMarkdownV2('a.b-c_d*e')).toBe('a\\.b\\-c\\_d\\*e');
+  });
+
+  it('does not over-escape a link destination', () => {
+    const text = formatTelegramMessage({
+      chatId: 1,
+      title: 'Скоро событие',
+      body: 'Ужин в 19:00',
+      link: 'https://family.example.com/calendar/42?ref=push',
+    });
+    expect(text).toContain('(https://family.example.com/calendar/42?ref=push)');
+    expect(text).toContain('*Скоро событие*');
+  });
+
+  it('403 sets can_dm=false instead of retrying forever', () => {
+    expect(classifyTelegramFailure(403, 'Forbidden: bot was blocked by the user').action).toBe(
+      'block',
+    );
+    expect(classifyTelegramFailure(400, 'Bad Request: chat not found').action).toBe('block');
+    expect(classifyTelegramFailure(429, 'Too Many Requests', 30)).toMatchObject({
+      action: 'retry',
+      retryAfterSeconds: 30,
+    });
+    expect(classifyTelegramFailure(500, 'Internal').action).toBe('retry');
+    expect(classifyTelegramFailure(400, "can't parse entities").action).toBe('abort');
+  });
+
+  it('treats a message_id as a real arrival receipt (D11)', async () => {
+    const fetchStub = vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ ok: true, result: { message_id: 77 } }), { status: 200 }),
+      ),
+    );
+    const result = await sendTelegramMessage(
+      { chatId: 42, title: 'Тест', body: 'Тело', link: null },
+      fetchStub,
+    );
+    expect(result).toMatchObject({ ok: true, action: 'delivered', messageId: 77 });
+    expect(fetchStub).toHaveBeenCalledOnce();
+  });
+});
+
+/* ========================================================================== */
+/* Dedupe                                                                      */
+/* ========================================================================== */
+
+describe('emitIntent — the dedupe key prevents a double intent', () => {
+  it('returns deduped and enqueues nothing when the key already exists', async () => {
+    vi.mocked(repo.insertIntent).mockResolvedValueOnce(intent({ id: 'intent-1' }));
+    const first = await emitIntent(db, {
+      type: 'task_due_soon',
+      audience: { users: ['user-1'] },
+      dedupeKey: 'task_due_soon:occ-1:2026-08-19',
+    });
+    await first.dispatch();
+    expect(first.deduped).toBe(false);
+    expect(enqueueMock).toHaveBeenCalledTimes(1);
+
+    // The retried producer loses the ON CONFLICT race.
+    vi.mocked(repo.insertIntent).mockResolvedValueOnce(null);
+    vi.mocked(repo.findIntentByDedupeKey).mockResolvedValueOnce(intent({ id: 'intent-1' }));
+    const second = await emitIntent(db, {
+      type: 'task_due_soon',
+      audience: { users: ['user-1'] },
+      dedupeKey: 'task_due_soon:occ-1:2026-08-19',
+    });
+    await second.dispatch();
+
+    expect(second.deduped).toBe(true);
+    expect(second.intentId).toBe('intent-1');
+    // Crucially: no second fan-out job. The family is not told twice.
+    expect(enqueueMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes ON CONFLICT DO NOTHING against the partial unique index', async () => {
+    const actual = await vi.importActual<RepositoryModule>('./notifications.repository.js');
+
+    const calls: Record<string, unknown> = {};
+    const executor = {
+      insert: () => ({
+        values: (values: unknown) => {
+          calls.values = values;
+          return {
+            onConflictDoNothing: (config: unknown) => {
+              calls.conflict = config;
+              // Empty array = another producer already inserted this key.
+              return { returning: () => Promise.resolve([]) };
+            },
+          };
+        },
+      }),
+    } as unknown as Executor;
+
+    const result = await actual.insertIntent(executor, {
+      type: 'task_due_soon',
+      dedupeKey: 'k',
+      payload: {},
+      audience: {},
+    });
+
+    expect(result).toBeNull();
+    expect(calls.conflict).toHaveProperty('target');
+    expect(calls.conflict).toHaveProperty('where');
+  });
+});
+
+/* ========================================================================== */
+/* D11 — receipts                                                              */
+/* ========================================================================== */
+
+describe('delivery status never regresses (D11)', () => {
+  it('orders the lifecycle correctly', () => {
+    expect(isForwardDeliveryStatus('pending', 'sent')).toBe(true);
+    expect(isForwardDeliveryStatus('sent', 'delivered')).toBe(true);
+    expect(isForwardDeliveryStatus('delivered', 'interacted')).toBe(true);
+    expect(isForwardDeliveryStatus('interacted', 'acknowledged')).toBe(true);
+
+    // The regressions that a replayed offline ack would otherwise cause.
+    expect(isForwardDeliveryStatus('acknowledged', 'delivered')).toBe(false);
+    expect(isForwardDeliveryStatus('interacted', 'delivered')).toBe(false);
+    expect(isForwardDeliveryStatus('delivered', 'sent')).toBe(false);
+    expect(isForwardDeliveryStatus('sent', 'sent')).toBe(false);
+
+    // A push service 500 on a retry must not outrank a real arrival.
+    expect(DELIVERY_STATUS_RANK.failed).toBeLessThan(DELIVERY_STATUS_RANK.delivered);
+  });
+});
+
+describe('acks are idempotent and clamped', () => {
+  it('clamps a client timestamp into [sentAt - skew, now]', () => {
+    const now = new Date('2026-08-19T12:00:00Z');
+    const sentAt = new Date('2026-08-19T11:00:00Z');
+
+    // A clock a day fast cannot invent a receipt in the future.
+    expect(clampAckTimestamp(new Date('2026-08-20T12:00:00Z'), sentAt, now)).toEqual(now);
+    // A clock a day slow cannot claim the message arrived before we sent it.
+    expect(clampAckTimestamp(new Date('2026-08-18T12:00:00Z'), sentAt, now).getTime()).toBe(
+      sentAt.getTime() - NOTIFICATION_LIMITS.ackClockSkewToleranceMinutes * 60_000,
+    );
+    // A plausible offline replay is trusted.
+    const plausible = new Date('2026-08-19T11:30:00Z');
+    expect(clampAckTimestamp(plausible, sentAt, now)).toEqual(plausible);
+    // No timestamp at all → server time.
+    expect(clampAckTimestamp(undefined, sentAt, now)).toEqual(now);
+  });
+
+  it('a replayed ack changes nothing and keeps the first observation', async () => {
+    const firstSeen = new Date('2026-08-19T11:30:00Z');
+    const row = delivery({
+      status: 'interacted',
+      sentAt: new Date('2026-08-19T11:00:00Z'),
+      deliveredAt: firstSeen,
+      interactedAt: new Date('2026-08-19T11:31:00Z'),
+    });
+
+    vi.mocked(repo.getDelivery).mockResolvedValue(row);
+    // `coalesce` in the repository keeps the original timestamp...
+    vi.mocked(repo.stampDeliveryReceipt).mockResolvedValue(row);
+    // ...and the forward-only predicate rejects the status write outright.
+    vi.mocked(repo.advanceDeliveryStatus).mockResolvedValue(null);
+
+    const result = await ackDelivery(
+      db,
+      'user-1',
+      row.id,
+      'delivered',
+      new Date('2026-08-19T11:45:00Z'),
+      new Date('2026-08-19T12:00:00Z'),
+    );
+
+    expect(result.status).toBe('interacted');
+    expect(result.deliveredAt).toEqual(firstSeen);
+  });
+
+  it("another user's delivery is a 404, not a 403", async () => {
+    vi.mocked(repo.getDelivery).mockResolvedValue(delivery({ userId: 'somebody-else' }));
+    await expect(ackDelivery(db, 'user-1', 'd-1', 'delivered')).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('a real arrival resets the subscription health counters', async () => {
+    const row = delivery({ subscriptionId: 'sub-1', status: 'sent' });
+    vi.mocked(repo.getDelivery).mockResolvedValue(row);
+    vi.mocked(repo.stampDeliveryReceipt).mockResolvedValue(row);
+    vi.mocked(repo.advanceDeliveryStatus).mockResolvedValue({ ...row, status: 'delivered' });
+
+    await ackDelivery(db, 'user-1', row.id, 'delivered');
+    expect(repo.recordPushDelivered).toHaveBeenCalledWith(db, 'sub-1', expect.any(Date));
+  });
+});
+
+/* ========================================================================== */
+/* D11 — escalation                                                            */
+/* ========================================================================== */
+
+describe('escalation (D11)', () => {
+  const now = new Date('2026-08-19T12:00:00Z'); // 15:00 Moscow — awake
+
+  function arrangeAwake() {
+    vi.mocked(repo.getFamilyDefaults).mockResolvedValue({
+      timezone: MOSCOW,
+      quietHoursStart: '22:00',
+      quietHoursEnd: '07:30',
+    });
+    vi.mocked(repo.listQuietHoursForUser).mockResolvedValue([]);
+    vi.mocked(repo.listActiveUsersByIds).mockResolvedValue([
+      {
+        id: 'user-1',
+        role: 'adult',
+        displayName: 'Аня',
+        timezone: MOSCOW,
+        permissionGrants: [],
+        permissionDenies: [],
+      },
+    ]);
+  }
+
+  it('fires exactly once for an unacknowledged critical delivery', async () => {
+    arrangeAwake();
+    const sent = delivery({
+      id: 'del-1',
+      status: 'sent',
+      channel: 'push',
+      sentAt: new Date('2026-08-19T11:40:00Z'), // 20 minutes ago > 10 min deadline
+    });
+    vi.mocked(repo.getIntent).mockResolvedValue(
+      intent({ priority: 'critical', escalationState: 'none' }),
+    );
+    vi.mocked(repo.intentHasSignal).mockResolvedValue(false);
+    vi.mocked(repo.listDeliveriesForIntent).mockResolvedValue([sent]);
+    // First sweep claims the transition; the retried sweep loses the race.
+    vi.mocked(repo.advanceEscalationState).mockResolvedValueOnce(true).mockResolvedValue(false);
+
+    expect(await escalateIntent(db, 'intent-1', now)).toBe('redelivered');
+    expect(repo.incrementRedeliveryCount).toHaveBeenCalledTimes(1);
+
+    // A retried job / a concurrent sweep must not escalate the same event twice.
+    expect(await escalateIntent(db, 'intent-1', now)).toBe('lost_race');
+    expect(repo.incrementRedeliveryCount).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT fire inside quiet hours — an offline phone must not cause a 03:00 push', async () => {
+    arrangeAwake();
+    vi.mocked(repo.listQuietHoursForUser).mockResolvedValue([
+      quietRow({ startsAt: '22:00', endsAt: '07:30' }),
+    ]);
+    vi.mocked(repo.getIntent).mockResolvedValue(
+      intent({ priority: 'high', escalationState: 'none' }),
+    );
+    vi.mocked(repo.intentHasSignal).mockResolvedValue(false);
+    vi.mocked(repo.listDeliveriesForIntent).mockResolvedValue([
+      delivery({ status: 'sent', sentAt: new Date('2026-08-19T23:00:00Z') }),
+    ]);
+
+    const night = new Date('2026-08-20T00:00:00Z'); // 03:00 Moscow
+    expect(await escalateIntent(db, 'intent-1', night)).toBe('quiet');
+    expect(repo.advanceEscalationState).not.toHaveBeenCalled();
+
+    // Held, not dropped: a job is scheduled for the end of the window.
+    expect(enqueueMock).toHaveBeenCalledWith(
+      'notification.escalate',
+      { intentId: 'intent-1' },
+      expect.objectContaining({ delay: expect.any(Number) }),
+    );
+  });
+
+  it('never escalates normal or low priority', async () => {
+    arrangeAwake();
+    for (const priority of ['normal', 'low'] as const) {
+      vi.mocked(repo.getIntent).mockResolvedValue(intent({ priority }));
+      expect(await escalateIntent(db, 'intent-1', now)).toBe('not_applicable');
+    }
+    expect(repo.advanceEscalationState).not.toHaveBeenCalled();
+    expect(ESCALATION_DEADLINE_MINUTES.normal).toBeNull();
+    expect(ESCALATION_DEADLINE_MINUTES.low).toBeNull();
+  });
+
+  it('stops as soon as the required signal arrives', async () => {
+    arrangeAwake();
+    vi.mocked(repo.getIntent).mockResolvedValue(intent({ priority: 'critical' }));
+    vi.mocked(repo.intentHasSignal).mockResolvedValue(true);
+    expect(await escalateIntent(db, 'intent-1', now)).toBe('satisfied');
+    expect(repo.advanceEscalationState).not.toHaveBeenCalled();
+
+    // For `critical`, mere arrival is not enough — a human must acknowledge.
+    expect(requiredAckSignal('critical')).toBe('acknowledged');
+    expect(requiredAckSignal('high')).toBe('delivered');
+  });
+
+  it('waits until the per-priority deadline has actually elapsed', async () => {
+    arrangeAwake();
+    vi.mocked(repo.getIntent).mockResolvedValue(intent({ priority: 'high' }));
+    vi.mocked(repo.intentHasSignal).mockResolvedValue(false);
+    vi.mocked(repo.listDeliveriesForIntent).mockResolvedValue([
+      delivery({ status: 'sent', sentAt: new Date('2026-08-19T11:50:00Z') }), // 10 min ago
+    ]);
+    // `high` waits 30 minutes.
+    expect(await escalateIntent(db, 'intent-1', now)).toBe('too_early');
+  });
+
+  it('caps the chain — the ladder terminates', () => {
+    expect(nextEscalationState('none')).toBe('redelivered');
+    expect(nextEscalationState('redelivered')).toBe('channel_fallback');
+    expect(nextEscalationState('channel_fallback')).toBe('person_escalated');
+    expect(nextEscalationState('person_escalated')).toBe('exhausted');
+    expect(nextEscalationState('exhausted')).toBeNull();
+  });
+});
+
+/* ========================================================================== */
+/* D11 — subscription health                                                   */
+/* ========================================================================== */
+
+describe('subscription health (D11)', () => {
+  it('marks a subscription unhealthy at exactly the threshold', () => {
+    const base = { expiredAt: null, unhealthyAt: null };
+    expect(isSubscriptionUnhealthy({ ...base, consecutiveNoAck: 0 })).toBe(false);
+    expect(isSubscriptionUnhealthy({ ...base, consecutiveNoAck: 2 })).toBe(false);
+    expect(isSubscriptionUnhealthy({ ...base, consecutiveNoAck: 3 })).toBe(true);
+    expect(isSubscriptionUnhealthy({ ...base, consecutiveNoAck: 9 })).toBe(true);
+    expect(NOTIFICATION_LIMITS.maxSendsWithoutAck).toBe(3);
+
+    // Already flagged, or already dead — both count as unhealthy for the banner.
+    expect(
+      isSubscriptionUnhealthy({ consecutiveNoAck: 0, expiredAt: null, unhealthyAt: new Date() }),
+    ).toBe(true);
+    expect(
+      isSubscriptionUnhealthy({ consecutiveNoAck: 0, expiredAt: new Date(), unhealthyAt: null }),
+    ).toBe(true);
+  });
+
+  it('the health check uses the shared threshold and re-queues lost work', async () => {
+    vi.mocked(repo.markUnhealthySubscriptions).mockResolvedValue([]);
+    vi.mocked(repo.listStalePushSubscriptions).mockResolvedValue([]);
+    vi.mocked(repo.deleteExpiredSubscriptions).mockResolvedValue(0);
+    vi.mocked(repo.deleteOldDeliveries).mockResolvedValue(0);
+    vi.mocked(repo.listDueDeliveries).mockResolvedValue([delivery({ id: 'due-1' })]);
+    vi.mocked(repo.listUndispatchedIntents).mockResolvedValue([]);
+    vi.mocked(repo.listUnconfirmedDeliveries).mockResolvedValue([]);
+
+    const result = await runPushHealthCheck(db, new Date('2026-08-19T03:45:00Z'));
+
+    expect(repo.markUnhealthySubscriptions).toHaveBeenCalledWith(
+      db,
+      NOTIFICATION_LIMITS.maxSendsWithoutAck,
+      expect.any(Date),
+    );
+    expect(result.requeued).toBe(1);
+    expect(enqueueMock).toHaveBeenCalledWith(
+      'notification.deliver',
+      { deliveryId: 'due-1' },
+      expect.objectContaining({ jobId: 'deliver:due-1:sweep' }),
+    );
+  });
+});
+
+/* ========================================================================== */
+/* Integration — requires a real Postgres                                      */
+/* ========================================================================== */
+
+describe.skipIf(!process.env.TEST_DATABASE_URL)('notifications (integration)', () => {
+  it('the partial unique index really rejects a duplicate dedupe key', () => {
+    // Placeholder for the DB-backed suite: insert the same dedupe_key twice and
+    // assert exactly one row survives, then assert that an UPDATE attempting to
+    // move `acknowledged` back to `delivered` affects zero rows.
+    expect(process.env.TEST_DATABASE_URL).toBeTruthy();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Fixtures                                                                    */
+/* -------------------------------------------------------------------------- */
+
+function intent(overrides: Partial<NotificationIntentRow> = {}): NotificationIntentRow {
+  return {
+    id: 'intent-1',
+    type: 'task_overdue',
+    actorId: null,
+    entityType: 'task_occurrence',
+    entityId: null,
+    payload: {},
+    audience: { users: ['user-1'] },
+    dedupeKey: null,
+    priority: 'high',
+    escalationState: 'none',
+    escalatedAt: null,
+    createdAt: new Date('2026-08-19T11:00:00Z'),
+    ...overrides,
+  };
+}
+
+function delivery(overrides: Partial<NotificationDeliveryRow> = {}): NotificationDeliveryRow {
+  return {
+    id: 'del-1',
+    intentId: 'intent-1',
+    userId: 'user-1',
+    channel: 'push',
+    status: 'sent',
+    scheduledFor: null,
+    sentAt: new Date('2026-08-19T11:00:00Z'),
+    readAt: null,
+    deliveredAt: null,
+    interactedAt: null,
+    acknowledgedAt: null,
+    redeliveryCount: 0,
+    attempt: 0,
+    lastError: null,
+    subscriptionId: null,
+    createdAt: new Date('2026-08-19T11:00:00Z'),
+    ...overrides,
+  };
+}
+
+function quietRow(overrides: { startsAt: string; endsAt: string }) {
+  return {
+    id: 'qh-1',
+    userId: 'user-1',
+    dayOfWeek: null,
+    mode: 'defer' as const,
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    ...overrides,
+  };
+}

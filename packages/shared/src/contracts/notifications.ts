@@ -801,7 +801,10 @@ export const digestSubscriptionSchema = z.object({
   weekday: z.number().int().min(0).max(6).default(0),
   /** Local wall clock; the digest job resolves it per user timezone. */
   timeOfDay: timeOfDaySchema.default('19:00'),
-  sections: z.array(digestSectionSchema).min(1).default([...DEFAULT_DIGEST_SECTIONS]),
+  sections: z
+    .array(digestSectionSchema)
+    .min(1)
+    .default([...DEFAULT_DIGEST_SECTIONS]),
   lastSentAt: isoDateTimeSchema.nullish(),
 });
 export type DigestSubscription = z.infer<typeof digestSubscriptionSchema>;

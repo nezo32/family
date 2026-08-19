@@ -111,7 +111,8 @@ export function isIPad(): boolean {
 export function isIOSSafari(): boolean {
   if (!isIOS()) return false;
   const ua = userAgent();
-  const otherBrowser = /CriOS|FxiOS|EdgiOS|OPiOS|OPT\/|YaBrowser|Yowser|DuckDuckGo|Brave|SamsungBrowser|GSA/i;
+  const otherBrowser =
+    /CriOS|FxiOS|EdgiOS|OPiOS|OPT\/|YaBrowser|Yowser|DuckDuckGo|Brave|SamsungBrowser|GSA/i;
   if (otherBrowser.test(ua)) return false;
   // In-app web views (Telegram, VK, Instagram) drop the `Safari` token.
   return /Safari/.test(ua);

@@ -1,4 +1,4 @@
-import { pluralize } from '@/shared/lib/i18n';
+import { plural, pluralize } from '@/shared/lib/i18n';
 
 /**
  * Every user-facing string on the «Сегодня» screen (D7).
@@ -23,7 +23,6 @@ export const TODAY_RU = {
   /* overdue -------------------------------------------------------------- */
   overdueTitle: 'Требует внимания',
   overdueHint: 'Сроки прошли — можно сделать сейчас или перенести.',
-  overdueBadge: 'Просрочено',
 
   /* my tasks ------------------------------------------------------------- */
   tasksTitle: 'Мои дела на сегодня',
@@ -36,9 +35,7 @@ export const TODAY_RU = {
   tasksAll: 'Все задачи',
   complete: 'Отметить выполненным',
   completed: 'Выполнено',
-  completing: 'Отмечаем…',
   completeErrorTitle: 'Не удалось отметить',
-  pointsSuffix: 'б',
   dueAt: 'до',
 
   /* events --------------------------------------------------------------- */
@@ -66,7 +63,7 @@ export const TODAY_RU = {
   loadTitle: 'Ваша неделя',
   loadDone: 'сделано',
   loadPlanned: 'запланировано',
-  loadEarned: 'баллов за неделю',
+  loadExpected: 'ожидаемая',
   loadFairShare: 'Ваша доля недели',
   loadEmpty: 'На этой неделе дел за вами не закреплено.',
 
@@ -95,9 +92,8 @@ export const TODAY_RU = {
 export const taskCount = (n: number): string => pluralize(n, ['задача', 'задачи', 'задач']);
 export const eventCount = (n: number): string => pluralize(n, ['событие', 'события', 'событий']);
 export const itemCount = (n: number): string => pluralize(n, ['товар', 'товара', 'товаров']);
-export const memberCount = (n: number): string =>
-  pluralize(n, ['участник', 'участника', 'участников']);
 export const requestCount = (n: number): string => pluralize(n, ['заявка', 'заявки', 'заявок']);
 export const pointCount = (n: number): string => pluralize(n, ['балл', 'балла', 'баллов']);
+/** The bare word, for a figure that is already rendered next to it. */
+export const pointWord = (n: number): string => plural(n, ['балл', 'балла', 'баллов']);
 export const choreCount = (n: number): string => pluralize(n, ['дело', 'дела', 'дел']);
-export const dayCount = (n: number): string => pluralize(n, ['день', 'дня', 'дней']);
