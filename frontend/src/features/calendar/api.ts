@@ -13,8 +13,8 @@ import { api } from '@/shared/api/client';
  * Typed fetchers for the Календарь feature.
  *
  * Endpoints follow §8 of `docs/architecture/scheduling.md`. The one addition is
- * `GET /events/feed` — the metadata call that hands the caller its personal,
- * signed `feed.ics` URL. See the note on `CalendarFeed` below.
+ * `GET /events/feed/token` — the metadata call that hands the caller its
+ * personal signed `feed.ics` URL. See the note on `CalendarFeed` below.
  */
 
 /* -------------------------------------------------------------------------- */
@@ -200,9 +200,11 @@ export async function fetchFamilyMembers(signal?: AbortSignal): Promise<PublicUs
  * panel still works if the backend hands out the token alone.
  */
 export interface CalendarFeedResponse {
-  url?: string;
-  feedUrl?: string;
   token?: string;
+  url?: string;
+  /** The backend also returns this; iOS opens `webcal://` natively. */
+  webcalUrl?: string;
+  feedUrl?: string;
 }
 
 export interface CalendarFeed {
@@ -213,11 +215,13 @@ export interface CalendarFeed {
 }
 
 export async function fetchCalendarFeed(signal?: AbortSignal): Promise<CalendarFeed> {
-  const raw = await api.get<CalendarFeedResponse>('/events/feed', {
+  const raw = await api.get<CalendarFeedResponse>('/events/feed/token', {
     ...(signal ? { signal } : {}),
   });
   const url = absoluteFeedUrl(raw);
-  return { url, webcalUrl: url.replace(/^https?:/, 'webcal:') };
+  // Prefer the server's own webcal URL — it knows the public origin, which is
+  // what matters when the PWA is reached over a tunnel or a LAN address.
+  return { url, webcalUrl: raw.webcalUrl ?? url.replace(/^https?:/, 'webcal:') };
 }
 
 function absoluteFeedUrl(raw: CalendarFeedResponse): string {

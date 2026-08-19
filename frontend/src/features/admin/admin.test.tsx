@@ -124,7 +124,8 @@ function installFetch(scenario: Scenario) {
       const method = (init?.method ?? 'GET').toUpperCase();
       calls.push({ url, method });
 
-      if (url.includes('/api/me')) return Promise.resolve(json(200, scenario.me));
+      // `/api/me` must be matched exactly: `/api/members` starts with it.
+      if (url.endsWith('/api/me')) return Promise.resolve(json(200, scenario.me));
 
       if (url.includes('/api/members/pending')) {
         const items = scenario.pending ?? [];

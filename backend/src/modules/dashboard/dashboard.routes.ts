@@ -97,8 +97,7 @@ const dashboardRoutes: FastifyPluginAsync = async (instance: FastifyInstance) =>
         response: { 200: weekResponseSchema },
       },
     },
-    async (request) =>
-      getWeek(createDashboardPort(getDb()), actorOf(request.auth), request.query),
+    async (request) => getWeek(createDashboardPort(getDb()), actorOf(request.auth), request.query),
   );
 
   app.post(

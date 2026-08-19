@@ -594,9 +594,7 @@ export function createDashboardPort(exec: Executor): DashboardPort {
           goalMilestones,
           and(eq(goalMilestones.goalId, savingsGoals.id), isNull(goalMilestones.reachedAt)),
         )
-        .where(
-          and(isNull(savingsGoals.deletedAt), eq(savingsGoals.status, 'active'), visible),
-        )
+        .where(and(isNull(savingsGoals.deletedAt), eq(savingsGoals.status, 'active'), visible))
         .limit(DASHBOARD_LIMITS.goalRows);
 
       return rows.map((r) => ({
@@ -986,10 +984,7 @@ export async function getToday(
     port.loadMembers(),
     access.tasks
       ? port.loadMyTasks(actor.userId, {
-          sinceUtc: startOfLocalDay(
-            addLocalDays(window.today, -OVERDUE_LOOKBACK_DAYS),
-            timezone,
-          ),
+          sinceUtc: startOfLocalDay(addLocalDays(window.today, -OVERDUE_LOOKBACK_DAYS), timezone),
           untilUtc: window.startOfTomorrow,
           doneSinceUtc: window.startOfToday,
         })

@@ -200,9 +200,7 @@ export const todayResponseSchema = z.object({
   /** `null` when the caller lacks `shopping:read`. */
   shopping: dashboardShoppingSchema.nullable(),
   /** `null` when the caller lacks `goal:read` — every child, by design (D4). */
-  goals: z
-    .object({ nearestMilestone: dashboardMilestoneSchema.nullable() })
-    .nullable(),
+  goals: z.object({ nearestMilestone: dashboardMilestoneSchema.nullable() }).nullable(),
 
   unreadNotifications: z.number().int().min(0),
 

@@ -10,10 +10,7 @@ import {
   type Permission,
   type Role,
 } from '@family/shared';
-import type {
-  DigestBlock,
-  DigestPreviewResponse,
-} from '@family/shared/contracts/dashboard';
+import type { DigestBlock, DigestPreviewResponse } from '@family/shared/contracts/dashboard';
 
 import type { Executor } from '../../core/db.js';
 import { notFound } from '../../core/errors.js';
@@ -787,9 +784,7 @@ function buildShopping(data: DigestData): SectionResult {
   const { neededCount, urgentCount, items } = data.shopping;
   if (neededCount > 0) {
     const urgentPart =
-      urgentCount > 0
-        ? `, из них ${urgentCount} ${pluralRu(urgentCount, RU_PLURALS.urgent)}`
-        : '';
+      urgentCount > 0 ? `, из них ${urgentCount} ${pluralRu(urgentCount, RU_PLURALS.urgent)}` : '';
     lines.push(`В списках ${countRu(neededCount, RU_PLURALS.purchase)}${urgentPart}.`);
   }
   for (const item of items.filter((i) => i.isUrgent).slice(0, 5)) {
@@ -975,7 +970,10 @@ export async function gatherDigestData(
   const access = resolveAccess(actor);
   const today = localDateOf(now, timezone);
   const periodEnd = addLocalDays(today, 7);
-  const ahead = { fromUtc: startOfLocalDay(today, timezone), toUtc: startOfLocalDay(periodEnd, timezone) };
+  const ahead = {
+    fromUtc: startOfLocalDay(today, timezone),
+    toUtc: startOfLocalDay(periodEnd, timezone),
+  };
   const behind = {
     fromUtc: startOfLocalDay(addLocalDays(today, -7), timezone),
     toUtc: ahead.fromUtc,
@@ -1011,9 +1009,7 @@ export async function gatherDigestData(
         ? port.loadGoals(actor.userId, access.everyGoal)
         : Promise.resolve<GoalRow[] | null>(null),
       wants('goals') ? port.loadGoalContributions(behind) : Promise.resolve<number | null>(null),
-      wants('shopping')
-        ? port.loadShopping(12)
-        : Promise.resolve<ShoppingSnapshot | null>(null),
+      wants('shopping') ? port.loadShopping(12) : Promise.resolve<ShoppingSnapshot | null>(null),
       wants('wall') ? port.loadWallCounts(behind) : Promise.resolve<WallCounts | null>(null),
       wants('points') ? port.loadLoad(behind) : Promise.resolve<LoadRow[] | null>(null),
     ]);
@@ -1092,7 +1088,12 @@ export async function sendDigest(
   const timezone = resolveTimezone(subscriber.userTimezone, familyTimezone);
   const decision = digestDueDecision({ schedule: subscriber.schedule, timezone, now });
   if (!decision.due) {
-    return { userId: subscriber.userId, sent: false, reason: decision.reason, weekKey: decision.weekKey };
+    return {
+      userId: subscriber.userId,
+      sent: false,
+      reason: decision.reason,
+      weekKey: decision.weekKey,
+    };
   }
 
   const actor = actorForSubscriber(subscriber);
@@ -1132,4 +1133,3 @@ export async function sendDigest(
     weekKey: decision.weekKey,
   };
 }
-

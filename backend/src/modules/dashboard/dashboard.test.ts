@@ -209,7 +209,10 @@ function makePort(state: World): FakePort {
   return {
     calls,
     loadViewer: (userId) =>
-      track('loadViewer', userId === state.viewer.userId ? state.viewer : { ...state.viewer, userId }),
+      track(
+        'loadViewer',
+        userId === state.viewer.userId ? state.viewer : { ...state.viewer, userId },
+      ),
     loadMembers: () => track('loadMembers', state.members),
     loadMyTasks: (userId, range) =>
       track(
@@ -484,7 +487,7 @@ describe('permission gating of the aggregate', () => {
     expect(payload.shopping?.neededCount).toBe(4);
   });
 
-  it("gives an adult the goal tile and an admin the pending approvals", async () => {
+  it('gives an adult the goal tile and an admin the pending approvals', async () => {
     const state = stateWithMoney();
     const adult = await getToday(makePort(state), actorFor('adult', ADULT_ID, MOSCOW), NOW);
     expect(adult.goals?.nearestMilestone?.goalTitle).toBe('Велосипед');
@@ -562,7 +565,13 @@ describe('nearest milestone', () => {
 
   it('picks the smallest remaining amount across goals and milestones', () => {
     const nearest = pickNearestMilestone([
-      goal({ goalId: 'a', saved: 100_000, milestoneId: 'm1', milestoneTitle: 'Первый шаг', milestoneTarget: 900_000 }),
+      goal({
+        goalId: 'a',
+        saved: 100_000,
+        milestoneId: 'm1',
+        milestoneTitle: 'Первый шаг',
+        milestoneTarget: 900_000,
+      }),
       goal({ goalId: 'b', goalTarget: 500_000, saved: 480_000 }),
     ]);
     expect(nearest?.goalId).toBe('b');
@@ -574,7 +583,13 @@ describe('nearest milestone', () => {
 
   it('skips a milestone the balance has already passed', () => {
     const nearest = pickNearestMilestone([
-      goal({ goalId: 'a', saved: 900_000, milestoneId: 'm', milestoneTitle: 'Половина', milestoneTarget: 500_000 }),
+      goal({
+        goalId: 'a',
+        saved: 900_000,
+        milestoneId: 'm',
+        milestoneTitle: 'Половина',
+        milestoneTarget: 500_000,
+      }),
     ]);
     expect(nearest).toBeNull();
   });
@@ -936,7 +951,11 @@ describe('the digest slot arrives in the subscriber timezone', () => {
     expect(sent.due).toBe(false);
     expect(sent.reason).toBe('already_sent');
 
-    const off = digestDueDecision({ schedule: { ...schedule, enabled: false }, timezone: MOSCOW, now });
+    const off = digestDueDecision({
+      schedule: { ...schedule, enabled: false },
+      timezone: MOSCOW,
+      now,
+    });
     expect(off.reason).toBe('disabled');
   });
 });
@@ -1167,7 +1186,11 @@ describe('route access declarations', () => {
   it('declares access on every route and makes none of them public', () => {
     expect(routes).toHaveLength(3);
     for (const route of routes) {
-      const config = route.config as { public?: boolean; authenticated?: boolean; permission?: string };
+      const config = route.config as {
+        public?: boolean;
+        authenticated?: boolean;
+        permission?: string;
+      };
       expect(config.public).not.toBe(true);
       // The boot assertion in `core/plugins/auth` demands exactly this.
       expect(config.authenticated === true || typeof config.permission === 'string').toBe(true);
