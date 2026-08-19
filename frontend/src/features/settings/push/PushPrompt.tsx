@@ -94,7 +94,7 @@ export function PushDeniedCard(props: { onRecheck: () => void }) {
           </ol>
         </div>
         <p className="text-muted-foreground">{T.deniedStepsAndroid}</p>
-        <Button variant="outline" size="sm" onClick={props.onRecheck}>
+        <Button variant="outline" className="h-11" onClick={props.onRecheck}>
           {T.deniedRetry}
         </Button>
       </AlertDescription>
@@ -145,7 +145,7 @@ export function PushReEnableCard(props: { onEnable: () => void; busy: boolean })
       <AlertTitle>{T.reEnableTitle}</AlertTitle>
       <AlertDescription className="space-y-3">
         <p>{T.reEnableText}</p>
-        <Button size="sm" onClick={props.onEnable} disabled={props.busy}>
+        <Button className="h-11" onClick={props.onEnable} disabled={props.busy}>
           {props.busy ? T.enabling : T.reEnableAction}
         </Button>
       </AlertDescription>
@@ -221,6 +221,7 @@ export function PushSection() {
             {push.isEnabled ? (
               <Button
                 variant="outline"
+                className="h-11"
                 disabled={push.busy}
                 onClick={() => {
                   void push.disable().then((ok) => {
@@ -232,6 +233,7 @@ export function PushSection() {
               </Button>
             ) : (
               <Button
+                className="h-11"
                 disabled={push.busy}
                 onClick={() => {
                   // The soft pre-prompt first — always. The OS prompt is

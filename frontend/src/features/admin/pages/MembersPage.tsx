@@ -153,7 +153,7 @@ export default function MembersPage() {
       */}
       <div className="grid items-start gap-8 xl:grid-cols-2">
         {/* ---- the queue --------------------------------------------------- */}
-        <section aria-labelledby="pending-heading">
+        <section aria-labelledby="pending-heading" className="min-w-0">
           <div className="mb-2 flex items-center gap-2">
             <h2 id="pending-heading" className="text-base font-semibold text-foreground">
               {ADMIN_RU.queueTitle}
@@ -209,7 +209,7 @@ export default function MembersPage() {
           `pending` forever — so the section is gated on the same check rather
           than rendering a skeleton that never resolves. */}
         {canReadRoster ? (
-          <section aria-labelledby="members-heading">
+          <section aria-labelledby="members-heading" className="min-w-0">
             <h2 id="members-heading" className="mb-2 text-base font-semibold text-foreground">
               {ADMIN_RU.membersTitle}
             </h2>

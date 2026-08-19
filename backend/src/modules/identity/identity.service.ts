@@ -152,8 +152,7 @@ export function assertNotLastLoginMethod(
  * it — so the very first row, or a signup matching `BOOTSTRAP_OWNER_EMAIL`,
  * becomes an auto-approved `owner`.
  *
- * **It is one-shot.** The email path additionally requires that no active owner
- * exists yet. Without that guard the configured address stays a permanent
+ * **It is one-shot, and it is address-bound when an address is configured.** Without that guard the configured address stays a permanent
  * unauthenticated route to an owner account: registration verifies no email
  * ownership, so knowing the configured string is enough, and the rule runs
  * before the "registration is closed" gate. The `findUserByEmail` collision
@@ -167,11 +166,28 @@ export function isBootstrapSignup(
   bootstrapEmail: string,
   activeOwnerCount: number,
 ): boolean {
-  if (existingUserCount === 0) return true;
+  // An owner exists, so bootstrap is spent — permanently.
   if (activeOwnerCount > 0) return false;
+
   const configured = bootstrapEmail.trim().toLowerCase();
-  if (!configured || !email) return false;
-  return email.trim().toLowerCase() === configured;
+
+  if (configured) {
+    // An address is nominated, so ONLY that address may bootstrap — including
+    // into a completely empty database.
+    //
+    // "First user wins" is fatal on an internet-facing deployment: between the
+    // deploy finishing and the real owner signing up, anyone who finds the URL
+    // becomes owner of somebody else's family. That window is small and it is
+    // entirely sufficient. (Found the hard way — a smoke-test registration
+    // against the fresh production instance came back `role: owner`.)
+    if (!email) return false;
+    return email.trim().toLowerCase() === configured;
+  }
+
+  // No address nominated. That is the local-dev case, where the database is
+  // empty and there is nobody to approve the first account, so first-user-wins
+  // is the only way in. Production always sets BOOTSTRAP_OWNER_EMAIL.
+  return existingUserCount === 0;
 }
 
 /* ========================================================================== */

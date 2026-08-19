@@ -433,8 +433,20 @@ describe('last login method guard', () => {
 });
 
 describe('bootstrap rule', () => {
-  it('auto-approves the very first user regardless of email', () => {
+  it('auto-approves the very first user only when no address is nominated', () => {
+    // Local dev: nobody configured BOOTSTRAP_OWNER_EMAIL and there is nobody to
+    // approve the first account, so first-user-wins is the only way in.
     expect(isBootstrapSignup('anyone@example.com', 0, '', 0)).toBe(true);
+  });
+
+  it('refuses a stranger on an empty database when an address IS nominated', () => {
+    // The one that matters on a public deployment. Between the deploy landing
+    // and the real owner signing up, anyone who finds the URL would otherwise
+    // become owner of somebody else's family — proven live against a fresh
+    // production instance, which handed out `role: owner` to a smoke test.
+    expect(isBootstrapSignup('stranger@example.com', 0, 'owner@example.com', 0)).toBe(false);
+    // ...and the nominated address still works on that same empty database.
+    expect(isBootstrapSignup('owner@example.com', 0, 'owner@example.com', 0)).toBe(true);
   });
 
   it('auto-approves the configured bootstrap owner while the family has no owner', () => {

@@ -1,0 +1,282 @@
+{
+  "audits": [
+    {
+      "label": "today",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "offenders": [],
+      "small": [],
+      "unlabelled": [],
+      "switchHit": "none",
+      "docHeight": 1315
+    },
+    {
+      "label": "/tasks",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "offenders": [],
+      "small": [],
+      "unlabelled": [],
+      "switchHit": "none",
+      "docHeight": 1077
+    },
+    {
+      "label": "/calendar",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "offenders": [],
+      "small": [],
+      "unlabelled": [],
+      "switchHit": "none",
+      "docHeight": 912
+    },
+    {
+      "label": "/goals",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "offenders": [],
+      "small": [
+        "a \"Отпуск на море\" 119x21",
+        "a \"Велосипед\" 81x21"
+      ],
+      "unlabelled": [],
+      "switchHit": "none",
+      "docHeight": 1019
+    },
+    {
+      "label": "/shopping",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "offenders": [],
+      "small": [],
+      "unlabelled": [],
+      "switchHit": "none",
+      "docHeight": 844
+    },
+    {
+      "label": "/wall",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "offenders": [],
+      "small": [],
+      "unlabelled": [],
+      "switchHit": "none",
+      "docHeight": 844
+    },
+    {
+      "label": "/family",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "offenders": [],
+      "small": [],
+      "unlabelled": [],
+      "switchHit": "none",
+      "docHeight": 844
+    },
+    {
+      "label": "/settings",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "offenders": [],
+      "small": [],
+      "unlabelled": [],
+      "switchHit": "none",
+      "docHeight": 844
+    },
+    {
+      "label": "/settings/notifications",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "offenders": [],
+      "small": [
+        "button \"Назначена задача: Присылат\" 32x18",
+        "button \"Назначена задача: Push — P\" 32x18",
+        "button \"Назначена задача: Telegram\" 32x18",
+        "button \"Назначена задача: В прилож\" 32x18",
+        "button \"Скоро срок: Присылать\" 32x18",
+        "button \"Скоро срок: Push — Push вы\" 32x18",
+        "button \"Скоро срок: Telegram — Tel\" 32x18",
+        "button \"Скоро срок: В приложении\" 32x18",
+        "button \"Задача просрочена: Присыла\" 32x18",
+        "button \"Задача просрочена: Push — \" 32x18",
+        "button \"Задача просрочена: Telegra\" 32x18",
+        "button \"Задача просрочена: В прило\" 32x18",
+        "button \"Задача выполнена: Присылат\" 32x18",
+        "button \"Задача выполнена: Push — P\" 32x18"
+      ],
+      "unlabelled": [],
+      "switchHit": "box 32x18 hit ~43x43",
+      "docHeight": 4838
+    },
+    {
+      "label": "/settings/profile",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "offenders": [],
+      "small": [],
+      "unlabelled": [],
+      "switchHit": "none",
+      "docHeight": 1021
+    },
+    {
+      "label": "/admin/members",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "overflow": 0,
+      "offenders": [],
+      "small": [],
+      "unlabelled": [],
+      "switchHit": "none",
+      "docHeight": 875
+    },
+    {
+      "label": "320 /",
+      "scrollWidth": 320,
+      "clientWidth": 320,
+      "overflow": 0,
+      "offenders": [],
+      "small": [],
+      "unlabelled": [],
+      "switchHit": "none",
+      "docHeight": 1335
+    },
+    {
+      "label": "320 /tasks",
+      "scrollWidth": 320,
+      "clientWidth": 320,
+      "overflow": 0,
+      "offenders": [],
+      "small": [],
+      "unlabelled": [],
+      "switchHit": "none",
+      "docHeight": 1165
+    },
+    {
+      "label": "320 /calendar",
+      "scrollWidth": 320,
+      "clientWidth": 320,
+      "overflow": 0,
+      "offenders": [],
+      "small": [],
+      "unlabelled": [],
+      "switchHit": "none",
+      "docHeight": 932
+    },
+    {
+      "label": "320 /goals",
+      "scrollWidth": 320,
+      "clientWidth": 320,
+      "overflow": 0,
+      "offenders": [],
+      "small": [
+        "a \"Отпуск на море\" 62x43",
+        "a \"Велосипед\" 81x21"
+      ],
+      "unlabelled": [],
+      "switchHit": "none",
+      "docHeight": 1069
+    },
+    {
+      "label": "320 /shopping",
+      "scrollWidth": 320,
+      "clientWidth": 320,
+      "overflow": 0,
+      "offenders": [],
+      "small": [],
+      "unlabelled": [],
+      "switchHit": "none",
+      "docHeight": 800
+    },
+    {
+      "label": "320 /wall",
+      "scrollWidth": 320,
+      "clientWidth": 320,
+      "overflow": 0,
+      "offenders": [],
+      "small": [],
+      "unlabelled": [],
+      "switchHit": "none",
+      "docHeight": 800
+    },
+    {
+      "label": "320 /family",
+      "scrollWidth": 320,
+      "clientWidth": 320,
+      "overflow": 0,
+      "offenders": [],
+      "small": [],
+      "unlabelled": [],
+      "switchHit": "none",
+      "docHeight": 843
+    },
+    {
+      "label": "320 /settings",
+      "scrollWidth": 320,
+      "clientWidth": 320,
+      "overflow": 0,
+      "offenders": [],
+      "small": [],
+      "unlabelled": [],
+      "switchHit": "none",
+      "docHeight": 800
+    },
+    {
+      "label": "320 /settings/notifications",
+      "scrollWidth": 320,
+      "clientWidth": 320,
+      "overflow": 0,
+      "offenders": [],
+      "small": [
+        "button \"Назначена задача: Присылат\" 32x18",
+        "button \"Назначена задача: Push — P\" 32x18",
+        "button \"Назначена задача: Telegram\" 32x18",
+        "button \"Назначена задача: В прилож\" 32x18",
+        "button \"Скоро срок: Присылать\" 32x18",
+        "button \"Скоро срок: Push — Push вы\" 32x18",
+        "button \"Скоро срок: Telegram — Tel\" 32x18",
+        "button \"Скоро срок: В приложении\" 32x18",
+        "button \"Задача просрочена: Присыла\" 32x18",
+        "button \"Задача просрочена: Push — \" 32x18",
+        "button \"Задача просрочена: Telegra\" 32x18",
+        "button \"Задача просрочена: В прило\" 32x18",
+        "button \"Задача выполнена: Присылат\" 32x18",
+        "button \"Задача выполнена: Push — P\" 32x18"
+      ],
+      "unlabelled": [],
+      "switchHit": "box 32x18 hit ~43x43",
+      "docHeight": 5294
+    },
+    {
+      "label": "320 /settings/profile",
+      "scrollWidth": 320,
+      "clientWidth": 320,
+      "overflow": 0,
+      "offenders": [],
+      "small": [],
+      "unlabelled": [],
+      "switchHit": "none",
+      "docHeight": 1077
+    },
+    {
+      "label": "320 /admin/members",
+      "scrollWidth": 320,
+      "clientWidth": 320,
+      "overflow": 0,
+      "offenders": [],
+      "small": [],
+      "unlabelled": [],
+      "switchHit": "none",
+      "docHeight": 973
+    }
+  ]
+}

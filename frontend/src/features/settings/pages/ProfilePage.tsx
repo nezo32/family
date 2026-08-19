@@ -129,6 +129,7 @@ export default function ProfilePage() {
               <Label htmlFor="displayName">{T.displayNameLabel}</Label>
               <Input
                 id="displayName"
+                className="h-11"
                 value={currentName}
                 maxLength={80}
                 placeholder={T.displayNamePlaceholder}
@@ -145,6 +146,7 @@ export default function ProfilePage() {
                 <Input
                   id="avatarUrl"
                   type="url"
+                  className="h-11"
                   inputMode="url"
                   value={currentAvatar}
                   placeholder={T.avatarPlaceholder}
@@ -155,6 +157,7 @@ export default function ProfilePage() {
                 <Button
                   type="button"
                   variant="outline"
+                  className="h-11"
                   onClick={() => {
                     setAvatarUrl('');
                   }}
@@ -171,6 +174,7 @@ export default function ProfilePage() {
                 <Input
                   id="birthDate"
                   type="date"
+                  className="h-11"
                   value={currentBirthDate}
                   onChange={(event) => {
                     setBirthDate(event.target.value);
@@ -185,7 +189,7 @@ export default function ProfilePage() {
                   <Input
                     id="color"
                     type="color"
-                    className="h-10 w-16 p-1"
+                    className="h-11 w-16 p-1"
                     value={currentColor}
                     onChange={(event) => {
                       setColor(event.target.value);
@@ -202,6 +206,7 @@ export default function ProfilePage() {
               <div className="flex gap-2">
                 <Input
                   id="timezone"
+                  className="h-11"
                   value={currentTimezone}
                   placeholder="Europe/Moscow"
                   onChange={(event) => {
@@ -211,6 +216,7 @@ export default function ProfilePage() {
                 <Button
                   type="button"
                   variant="outline"
+                  className="h-11"
                   disabled={currentTimezone === zone}
                   onClick={() => {
                     setTimezone(zone);

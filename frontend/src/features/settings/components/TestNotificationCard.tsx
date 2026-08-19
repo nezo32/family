@@ -47,7 +47,7 @@ export function TestNotificationCard() {
         <CardDescription>{T.testDescription}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        <Button onClick={send} disabled={test.isPending}>
+        <Button className="h-11" onClick={send} disabled={test.isPending}>
           <Send aria-hidden />
           {test.isPending ? T.testSending : T.testSend}
         </Button>
