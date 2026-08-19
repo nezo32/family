@@ -52,10 +52,13 @@ $action = New-ScheduledTaskAction `
 
 # Several times a day rather than once: this PC is off for long stretches, and
 # more attempts simply means a shorter wait for the first one that connects.
+# 14:00 is the intended time. The extra triggers are catch-up, not extra
+# backups -- the script itself skips a run when the newest backup it holds is
+# under 20h old, so at most one is taken per day. Without them, a PC that
+# happens to be off at 14:00 would simply never back up.
 $triggers = @(
-    (New-ScheduledTaskTrigger -Daily -At 09:00),
     (New-ScheduledTaskTrigger -Daily -At 14:00),
-    (New-ScheduledTaskTrigger -Daily -At 21:00),
+    (New-ScheduledTaskTrigger -Daily -At 19:00),
     (New-ScheduledTaskTrigger -AtLogOn)
 )
 

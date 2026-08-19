@@ -110,9 +110,9 @@ goal owned by someone else does not exist as far as the API is concerned.
    are exact to 2^53 — about 90 trillion roubles — so `mode: 'number'` is safe.
 2. **The ledger is append-only.** `goal_transactions` is never `UPDATE`d,
    `DELETE`d or soft-deleted. A mistake is offset by a new row with
-   `kind = 'correction'` and a mandatory note. This is the same discipline D5
-   mandates for `points_ledger`, for the same reason: an editable history is a
-   history nobody trusts.
+   `kind = 'correction'` and a mandatory note. An editable history is a history
+   nobody trusts. (This used to cite `points_ledger` as the sibling case; that
+   ledger is gone — D5 removed the score system outright.)
 3. **Balances are derived.**
 
    ```sql

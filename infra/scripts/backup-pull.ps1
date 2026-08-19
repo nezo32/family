@@ -12,8 +12,14 @@
     Pulling means the PC needs no open ports, and a missed night simply catches
     up on the next run.
 
-    Verifies each archive before deleting anything, keeps a local retention
-    window longer than the server's, and is safe to run on a schedule.
+    Runs about once a day: the schedule fires several times so a machine that
+    was asleep still catches up, and the script itself skips the run when the
+    newest backup it holds is less than -MinIntervalHours old.
+
+    Overwrites rather than accumulates. The file is named for the weekday, so
+    the set is exactly -Generations files that each get replaced once a week.
+    Verification happens BEFORE the overwrite, so a truncated download can never
+    replace a good backup.
 
 .EXAMPLE
     .\backup-pull.ps1
@@ -26,7 +32,13 @@ param(
     [string] $RemoteDir  = '/opt/family/backups',
     [string] $Destination = "$env:USERPROFILE\Backups\family",
     [string] $IdentityFile = "$env:USERPROFILE\.ssh\family_backup",
-    [int]    $KeepDays = 180,
+    # How many rotating slots to keep. 7 = one per weekday, each overwritten
+    # weekly. 1 = a single `latest` file, overwritten every run.
+    [int]    $Generations = 7,
+    # Skip the run when the newest local backup is younger than this. 20h rather
+    # than 24 so a slightly-late run does not push the next one a day out.
+    [int]    $MinIntervalHours = 20,
+    [switch] $Force,
     [int]    $ConnectTimeoutSeconds = 20
 )
 
@@ -40,6 +52,21 @@ function Write-Log {
     $line = '{0} [{1}] {2}' -f (Get-Date -Format 's'), $Level, $Message
     Write-Host $line
     Add-Content -Path $logFile -Value $line -Encoding utf8
+}
+
+# --- has a backup already been taken recently? ---------------------------
+# The schedule fires more than once so a machine that was asleep at 14:00 still
+# catches up, but the backup itself should happen about once a day. Deciding on
+# the age of what we already hold -- rather than on the clock -- means a missed
+# day is retried promptly and a normal day is not backed up three times.
+$existing = @(Get-ChildItem -Path $Destination -Filter '*.sql.gz' -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending)
+if (-not $Force -and $existing.Count -gt 0) {
+    $ageHours = ((Get-Date) - $existing[0].LastWriteTime).TotalHours
+    if ($ageHours -lt $MinIntervalHours) {
+        Write-Log ("Last backup is {0:N1}h old (threshold {1}h) -- nothing to do." -f $ageHours, $MinIntervalHours)
+        exit 0
+    }
 }
 
 Write-Log "Pull starting -> $Destination"
@@ -70,70 +97,62 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($listing)) {
 $remoteFiles = @($listing -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 Write-Log ("Server holds {0} dump(s)." -f $remoteFiles.Count)
 
-# --- copy only what we do not already have --------------------------------
+# --- copy the newest dump, under a rotating weekday name -------------------
+# Overwrite rather than accumulate, as asked. The name is the weekday, so the
+# set is exactly seven files that each get replaced once a week: constant disk,
+# old backups genuinely overwritten, and still a week of history.
+#
+# Seven rather than one on purpose. A single overwritten file means the moment a
+# dump is truncated or the database is already corrupt, the good copy is gone --
+# the backup destroys the thing it exists to protect. Set -Generations 1 if you
+# really want exactly one.
+$newestRemote = $remoteFiles | Select-Object -Last 1
 $copied = 0
-foreach ($remotePath in $remoteFiles) {
-    $name = Split-Path $remotePath -Leaf
-    $localPath = Join-Path $Destination $name
 
-    if (Test-Path $localPath) { continue }
+if ($newestRemote) {
+    $slot = if ($Generations -le 1) { 'latest' }
+            else { (Get-Date).ToString('ddd', [Globalization.CultureInfo]::InvariantCulture).ToLower() }
+    $localPath = Join-Path $Destination ("family-db-{0}.sql.gz" -f $slot)
+    $tempPath  = "$localPath.partial"
 
-    # Copy to a temp name first, so an interrupted transfer can never be
-    # mistaken for a complete backup by a later run.
-    $tempPath = "$localPath.partial"
-    Write-Log "Fetching $name"
-    & scp @sshArgs "${remote}:$remotePath" $tempPath 2>$null
+    Write-Log ("Fetching {0} -> {1}" -f (Split-Path $newestRemote -Leaf), (Split-Path $localPath -Leaf))
+    & scp @sshArgs "${remote}:$newestRemote" $tempPath 2>$null
     if ($LASTEXITCODE -ne 0) {
-        Write-Log "Transfer failed for $name; will retry next run." 'WARN'
+        Write-Log "Transfer failed; keeping the previous copy and retrying next run." 'WARN'
         Remove-Item $tempPath -ErrorAction SilentlyContinue
-        continue
     }
-
-    # Verify the gzip stream before this file is allowed to count as a backup.
-    # An archive nobody has ever read is not a backup, it is a hope.
-    $ok = $false
-    try {
-        $stream = [System.IO.File]::OpenRead($tempPath)
+    else {
+        # Verify BEFORE overwriting. Replacing a good backup with a corrupt one
+        # is the failure this whole script exists to avoid.
+        $ok = $false
         try {
-            $gzip = New-Object System.IO.Compression.GzipStream(
-                $stream, [System.IO.Compression.CompressionMode]::Decompress)
+            $stream = [System.IO.File]::OpenRead($tempPath)
             try {
-                $buffer = New-Object byte[] 65536
-                $total = 0
-                while (($read = $gzip.Read($buffer, 0, $buffer.Length)) -gt 0) { $total += $read }
-                $ok = $total -gt 0
-                if ($ok) { Write-Log ("  verified, {0:N0} bytes uncompressed" -f $total) }
-            } finally { $gzip.Dispose() }
-        } finally { $stream.Dispose() }
-    } catch {
-        Write-Log "  gzip verification FAILED for ${name}: $($_.Exception.Message)" 'ERROR'
-    }
+                $gzip = New-Object System.IO.Compression.GzipStream(
+                    $stream, [System.IO.Compression.CompressionMode]::Decompress)
+                try {
+                    $buffer = New-Object byte[] 65536
+                    $total = 0
+                    while (($read = $gzip.Read($buffer, 0, $buffer.Length)) -gt 0) { $total += $read }
+                    $ok = $total -gt 0
+                    if ($ok) { Write-Log ("  verified, {0:N0} bytes uncompressed" -f $total) }
+                } finally { $gzip.Dispose() }
+            } finally { $stream.Dispose() }
+        } catch {
+            Write-Log "  gzip verification FAILED: $($_.Exception.Message)" 'ERROR'
+        }
 
-    if ($ok) {
-        Move-Item $tempPath $localPath -Force
-        $copied++
-    } else {
-        Remove-Item $tempPath -ErrorAction SilentlyContinue
+        if ($ok) {
+            Move-Item $tempPath $localPath -Force   # the overwrite
+            $copied = 1
+        } else {
+            Remove-Item $tempPath -ErrorAction SilentlyContinue
+            Write-Log "Refusing to overwrite the previous backup with an unverified file." 'ERROR'
+        }
     }
 }
 
-Write-Log "Copied $copied new dump(s)."
-
-# --- local retention ------------------------------------------------------
-# Deliberately longer than the server's 7-day window: the whole reason this
-# copy exists is to outlive whatever happens to the VDI.
-$cutoff = (Get-Date).AddDays(-$KeepDays)
-$stale = Get-ChildItem -Path $Destination -Filter '*.sql.gz' |
-         Where-Object { $_.LastWriteTime -lt $cutoff }
-
-# Never prune down to nothing, however old everything is.
-$remaining = (Get-ChildItem -Path $Destination -Filter '*.sql.gz').Count
-foreach ($file in $stale) {
-    if ($remaining -le 3) { break }
-    Write-Log ("Pruning {0} (older than {1} days)" -f $file.Name, $KeepDays)
-    Remove-Item $file.FullName -Force
-    $remaining--
-}
+Write-Log "Copied $copied dump(s)."
 
 # --- report ---------------------------------------------------------------
 $all = Get-ChildItem -Path $Destination -Filter '*.sql.gz' | Sort-Object LastWriteTime -Descending

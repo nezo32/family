@@ -237,6 +237,16 @@ export async function login(
  * the tests exercise the real approval path rather than writing rows behind it.
  */
 export async function createOwner(app: FastifyInstance): Promise<TestUser> {
+  // Guarantee the precondition rather than assume it.
+  //
+  // Bootstrap only fires into an empty family, and every suite shares one test
+  // database. A run that crashes part-way leaves rows behind, and every
+  // subsequent suite then fails at this line with a message about sessions --
+  // pointing at authentication, when the real cause is dirty state from a
+  // previous file. Truncating here makes the fixture deterministic no matter
+  // what ran before it.
+  await resetDatabase();
+
   const { response, email, password, displayName } = await registerUser(app, {
     displayName: 'Владелец',
   });
@@ -246,7 +256,10 @@ export async function createOwner(app: FastifyInstance): Promise<TestUser> {
     session: { accessToken: string; user: { id: string; role: Role } } | null;
   }>();
   if (!body.session) {
-    throw new Error('the first registration must receive a session — is the database empty?');
+    throw new Error(
+      'the bootstrap registration received no session. The family should have been ' +
+        'empty after resetDatabase() — check BOOTSTRAP_OWNER_EMAIL is unset in tests.',
+    );
   }
   const cookie = await refreshCookieOf(response);
   if (!cookie) throw new Error('bootstrap registration set no refresh cookie');

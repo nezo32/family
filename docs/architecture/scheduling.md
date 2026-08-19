@@ -11,7 +11,7 @@ Owned files:
 | `backend/src/modules/scheduling/recurrence.schema.ts` | `recurrenceColumns()`, `visibility`, `occurrence_status` |
 | `backend/src/modules/tasks/tasks.schema.ts` | `task_series`, `task_occurrences`, `assigned_via` |
 | `backend/src/modules/events/events.schema.ts` | `event_series`, `event_occurrences`, `event_attendees` |
-| `backend/src/modules/chores/chores.schema.ts` | `rotations`, `rotation_members`, `user_blackouts`, `chore_swaps`, `points_ledger`, `user_streaks`, `kudos` |
+| `backend/src/modules/chores/chores.schema.ts` | `rotations`, `rotation_members`, `user_blackouts`, `chore_swaps`, `kudos` |
 | `packages/shared/src/contracts/{tasks,events,chores}.ts` | zod contracts |
 
 ---
@@ -25,7 +25,7 @@ A recurring thing is two rows, not one:
   columns `series_ends_at` and `materialized_through`.
 - **occurrence** — one materialized instance inside the rolling **90-day**
   horizon, carrying everything that is per-instance: status, assignee,
-  completion, overrides, comments, points, attendees.
+  completion, overrides, comments, attendees.
 
 Per-occurrence state has to live somewhere, and a pure-rule design has nowhere
 to put "Миша did the bins on the 14th". Pure materialization, on the other hand,
@@ -121,8 +121,9 @@ default, because guessing here is how calendars lose data.
 ### 3.1 Skip
 
 Not an edit at all: `status := 'skipped'`, `skipped_by_id`, `skip_reason`. The
-series is untouched, the next occurrence appears as normal, and no points are
-booked. `suppressFuture: true` additionally appends the key to `exdates_local`
+series is untouched and the next occurrence appears as normal. A skipped
+occurrence counts for nobody in the fairness window — it is neither done nor
+still owed. `suppressFuture: true` additionally appends the key to `exdates_local`
 so the slot never returns if the row is ever re-materialized.
 
 Skip is the escape valve that keeps people from deleting a series because they
@@ -131,7 +132,7 @@ missed it once.
 ### 3.2 Edit this only
 
 Write the override columns on the occurrence (`title_override`,
-`points_override`, a new `starts_local`, ...) and set `is_exception = true`.
+`notes_override`, a new `starts_local`, ...) and set `is_exception = true`.
 The rule is not modified, `occurrence_key` is not modified.
 
 `is_exception` is the materializer's "hands off" flag and the UI's "изменено"
@@ -159,7 +160,7 @@ since March, under three different schedules".
 
 Update the series in place. If the *schedule* changed, delete every
 `scheduled`, non-exception future occurrence and re-materialize; if only
-metadata changed (title, points, category), nothing is deleted — the resolution
+metadata changed (title, notes, category), nothing is deleted — the resolution
 rule means every non-overridden occurrence picks the new value up for free.
 
 Past occurrences are never touched by any scope. "All" means all future.
@@ -216,14 +217,20 @@ they come back, rather than quietly getting a free week.
 For each eligible member, over the last `balance_window_days` (28):
 
 ```
-earned    = SUM(points_ledger.delta) for reason in ('chore_completed','on_time_bonus','covered_for_other')
-committed = SUM(effective points) of still-'scheduled' occurrences already assigned to them
-debt      = (earned + committed) / weight
+completed = COUNT(task_occurrences) with status='done', completed_by_id = them, inside the window
+committed = COUNT(task_occurrences) with status='scheduled' already assigned to them
+debt      = (completed + committed) / weight
 ```
 
+Both terms are **counts of chores**. There is no points ledger and no score of
+any kind — see D5 for why the scoring was removed and why the scheduling signal
+was kept. Every occurrence counts as exactly one, so nobody has to agree on
+what the bins are worth relative to the dishes.
+
 Lowest `debt` wins. `committed` is what stops the materializer handing one
-person the entire next month in a single pass: each assignment immediately
-raises that member's debt for the following iteration inside the same run.
+person the entire next month in a single pass: each assignment immediately adds
+one to that member's committed count for the following iteration inside the
+same run.
 
 Ties break **deterministically**, in this order:
 
@@ -252,33 +259,36 @@ against that, and "but it said it was mine yesterday" is the end of the feature.
 A rotation change therefore only affects occurrences materialized *after* the
 change, unless an adult explicitly asks for `reassignFuture: true`.
 
-### Points follow the doer
+### The chore counts for the doer
 
-`completed_by_id`, not `assignee_id`, receives `chore_completed` (D5). When they
-differ, the doer additionally gets `covered_for_other`. That is what makes the
-loop self-correcting: covering for your brother raises your debt, so the
-rotation gives you less next week — the system pays you back in time off rather
-than in a leaderboard position.
+`completed_by_id`, not `assignee_id`, is what the count groups by (D5). That is
+what makes the loop self-correcting: covering for your brother raises your debt,
+so the rotation gives you less next week — the system pays you back in time off
+rather than in a leaderboard position.
 
-`points_ledger` is append-only. Balances are `SUM(delta)`; there is no cached
-balance column and adding one would be a regression. Corrections are
-compensating entries.
+**The count is never shown to anybody as a personal total.** It exists to order
+a queue. The only surface built on it is `GET /chores/fairness`, which the UI
+renders as one week's split of the housework: bars against each member's own
+fair share, alphabetical, no per-person numbers, no ranking.
 
-The partial unique index `points_ledger_award_once_uq` on
-`(occurrence_id, user_id, reason)` for `chore_completed` / `on_time_bonus` is
-the double-award guard: completion is the one action a user can fire twice
-(double tap, retry after a timeout, an offline queue replaying), so the database
-refuses the second award rather than trusting the service to be careful.
-Discretionary reasons are outside the predicate on purpose — an adult may award
-manual points twice.
+Idempotency is structural rather than enforced. Completion is the one action a
+user can fire twice (double tap, retry after a timeout, an offline queue
+replaying), and the conditional `UPDATE ... WHERE status = 'scheduled'` means
+the second attempt writes nothing. Since fairness counts rows rather than
+summing a ledger, there is no second place for a duplicate to land — reopening
+an occurrence likewise removes it from every count in the same statement, with
+no compensating entry to write.
 
 ### Swaps
 
 `chore_swaps` has a partial unique index allowing **one `pending` row per
-occurrence**, so two taps cannot create two live offers. Accepting reassigns the
-occurrence (`assigned_via = 'swap'`) and, on completion, books
-`covered_for_other` to the new assignee plus the `swap_bonus` pair if
-`bonus_points > 0`. A pending swap past `expires_at` is swept to `expired`.
+occurrence**, so two taps cannot create two live offers. Accepting rewrites
+`assignee_id` (`assigned_via = 'swap'`) and nothing else; when the chore is
+done, the count follows `completed_by_id` as always. A pending swap past
+`expires_at` is swept to `expired`.
+
+A swap carries **no sweetener column** and must not grow one: a bribe between
+siblings would be denominated in exactly the score D5 removed.
 
 ---
 
@@ -456,10 +466,7 @@ All routes are under `/api`. Every one declares a permission guard (D4);
 | `POST` | `/chores/swaps` | `task:update:own` | one pending per occurrence (409) |
 | `POST` | `/chores/swaps/:id/respond` | `task:update:own` | accept ⇒ reassign |
 | `POST` | `/chores/swaps/:id/cancel` | `task:update:own` | asker only |
-| `GET` | `/chores/points` | `task:read:own`/`:any` | append-only ledger, paginated |
-| `POST` | `/chores/points` | `task:assign:any` | manual award / penalty / redeem |
-| `GET` | `/chores/points/balance` | `task:read:own` | `SUM(delta)` + streaks |
-| `GET` | `/chores/fairness` | `task:read:any` | the neutral load bar, no ranking |
+| `GET` | `/chores/fairness` | `task:read:any` | the week's split of the housework, no ranking |
 | `GET` | `/chores/kudos` | `kudos:give` | |
 | `POST` | `/chores/kudos` | `kudos:give` | 409 on the unique `(from, occurrence, emoji)` |
 
@@ -469,9 +476,9 @@ All routes are under `/api`. Every one declares a permission guard (D4);
 
 - `src/core/recurrence/engine.ts` — the adapter above, plus its DST test suite.
 - `materializer.service.ts`, `rotation.service.ts` (the debt calculation and the
-  tie-break chain), the four mutation paths, and the swap/points services.
+  tie-break chain), the four mutation paths, and the swaps service.
 - The BullMQ jobs: `scheduling:materialize`, `scheduling:auto-cancel`,
-  `scheduling:birthday-sync`, `chores:expire-swaps`, `chores:streaks`.
+  `scheduling:birthday-sync`, `chores:expire-swaps`.
 - Repository-level resolution of `COALESCE(override, series_value)` so nothing
   above the repository ever sees a raw override column.
 - `task_series.rotation_id` has **no** database foreign key (it would make the

@@ -137,7 +137,7 @@ from rebuilding the app.
 | `src/modules/identity/auth-lifecycle.integration.test.ts` | register → approve → login → refresh → logout, concurrent approval, suspension, refresh rotation under concurrency, reuse detection |
 | `src/modules/identity/permissions.integration.test.ts` | the role matrix through the real router, 404-vs-403, escalation guards |
 | `src/modules/goals/money.integration.test.ts` | balance ≡ ledger sum, idempotent `clientId`, row-lock serialisation, bigint precision |
-| `src/modules/tasks/recurrence.integration.test.ts` | materialization, idempotency, points booking, `this_and_future` split, rotation fairness |
+| `src/modules/tasks/recurrence.integration.test.ts` | materialization, idempotency, completion counted once, `this_and_future` split, rotation fairness |
 | `src/modules/events/ics-feed.integration.test.ts` | ICS document validity, ETag/304, feed-token rotation and revocation |
 | `src/modules/notifications/fanout.integration.test.ts` | fan-out per preference, quiet-hours deferral, ack idempotency |
 | `src/core/queue/queues.integration.test.ts` | the BullMQ `jobId` contract |

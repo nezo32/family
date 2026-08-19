@@ -20,8 +20,8 @@ family gets a second container.
 - Occurrence tables (`task_occurrences`, `event_occurrences`) store **materialized
   instances** for a rolling **90-day** horizon, extended by a nightly BullMQ job
   and eagerly on every series write.
-- Per-occurrence state (done / skipped / assignee / points / comments) has to
-  live somewhere; that place is the occurrence row.
+- Per-occurrence state (done / skipped / assignee / comments) has to live
+  somewhere; that place is the occurrence row.
 
 ### Time model — the most important rule in this document
 
@@ -150,20 +150,58 @@ Roles: `owner > admin > adult > teen > child > guest`.
   and boot asserts that every registered route has one or the other.
 - Children have **zero** `finance:*` / `goal:*` permissions. Teens get read-only.
 
-## D5 — Chore fairness
+## D5 — Chore fairness, without a score
+
+**There is no points system, and there must not be one again.**
+
+The original design scored people: a `points_ledger`, per-chore point values,
+on-time bonuses, cover bonuses, swap sweeteners, streaks, and a balance you
+could read off your own profile. It was removed in full. The reasoning, because
+this is the part that matters and the part a future change will be tempted to
+undo:
+
+> A number attached to a person that goes up when they do chores turns
+> cooperation into competition. Between siblings it does it fast. A child who
+> sees «13 очков» next to their name and «31 очко» next to their brother's has
+> learned they are losing at being part of their own family, and the app taught
+> them that. A streak adds a second failure mode: it punishes one missed
+> Tuesday with the loss of something they built over a month, which is a
+> gambling mechanic pointed at a nine-year-old.
+
+The scheduling problem the score was solving is real, though — without some
+signal, "who gets the next chore" collapses to whoever sorts first, and the
+person who does the most work keeps being asked to do more. So the *mechanism*
+survived and its *currency* changed.
 
 `weighted_balance` by default: assign to the eligible member with the lowest
-`(earned + committed) / weight` debt over a 28-day window, tie-broken
+`(completed + committed) / weight` debt over a 28-day window, tie-broken
 deterministically (longest since last assignment -> rotation position -> id).
 Never random — re-running the materializer must reproduce the same schedule.
 
+- **`completed` is a count of chores**, read straight off `task_occurrences`
+  (`status = 'done'`, grouped by `completed_by_id`), and `committed` is a count
+  of the still-scheduled ones. Every chore counts as exactly one — no per-chore
+  weighting, so the family never has to argue about whether the bins beat the
+  dishes.
+- **It is a scheduling input, never a display.** Nothing in the app shows a
+  person a running total of anything they have done. The only surface is a
+  family-level view of how one week's work split, on the chores screen, with no
+  per-person numbers and no ordering by effort.
+- **Idempotency comes free.** An occurrence can be `done` once, so a double tap
+  or an offline replay cannot inflate anybody's share. The ledger needed a
+  partial unique index to promise that; counting rows just is the promise.
+- A chore counts for **whoever actually did it**, not whoever was assigned. That
+  is what makes the loop self-correcting: covering for your brother means the
+  rotation asks less of you next week — payment in time off rather than in a
+  score.
 - Assignment is written **once at materialization and frozen**. Never recomputed
   on read; reshuffling next week's chores destroys trust instantly.
-- Points accrue to **whoever actually did it**, not whoever was assigned. That is
-  what makes the fairness loop self-correcting.
-- `points_ledger` is **append-only**; balances are `SUM(delta)`. Never a cached
-  balance column.
-- Surface load as a neutral "this week's load" bar, never a sibling leaderboard.
+- **Kudos stayed.** A thank-you addressed to one person for one thing is not a
+  score: nothing accumulates, nothing is totalled per person, and the unique
+  index makes a repeated emoji a no-op rather than a tally. If kudos ever grow
+  a per-person count, they have become the thing this decision removed.
+- Swaps carry **no sweetener**. «Дам тебе 5 баллов» is a bribe denominated in
+  the currency we deleted; asking is the whole mechanism.
 
 ## D6 — Money
 
