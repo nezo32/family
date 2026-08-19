@@ -80,7 +80,11 @@ self.addEventListener('activate', (event) => {
  */
 self.addEventListener('message', (event) => {
   const data: unknown = event.data;
-  if (typeof data === 'object' && data !== null && (data as { type?: string }).type === 'SKIP_WAITING') {
+  if (
+    typeof data === 'object' &&
+    data !== null &&
+    (data as { type?: string }).type === 'SKIP_WAITING'
+  ) {
     void self.skipWaiting();
   }
 });
@@ -105,9 +109,7 @@ self.addEventListener('fetch', (event) => {
         } catch {
           const cache = await caches.open(PRECACHE);
           const cached = await cache.match(NAVIGATION_FALLBACK);
-          return (
-            cached ?? new Response('Нет соединения', { status: 503, statusText: 'Offline' })
-          );
+          return cached ?? new Response('Нет соединения', { status: 503, statusText: 'Offline' });
         }
       })(),
     );

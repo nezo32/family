@@ -29,7 +29,10 @@ const envSchema = z
     BACKEND_PORT: z.coerce.number().int().positive().default(3000),
     /** Public origin the PWA is served from. Drives CORS, cookies and OAuth redirect URIs. */
     APP_PUBLIC_URL: z.string().url().default('http://localhost:5173'),
-    LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+    // `silent` is a real pino level and the honest choice for tests.
+    LOG_LEVEL: z
+      .enum(['silent', 'fatal', 'error', 'warn', 'info', 'debug', 'trace'])
+      .default('info'),
     /** Comma-separated extra origins allowed by CORS (dev tooling, LAN testing). */
     CORS_EXTRA_ORIGINS: z.string().default(''),
 

@@ -1,10 +1,5 @@
 import { apiUrl } from './config';
-import {
-  ApiError,
-  NetworkError,
-  isAccountStatusCode,
-  toApiError,
-} from './errors';
+import { ApiError, NetworkError, isAccountStatusCode, toApiError } from './errors';
 import { handleAccountStatus, refreshAccessToken } from './refresh';
 import { getAccessToken } from './token-store';
 

@@ -6,5 +6,12 @@ import { Placeholder } from '@/app/pages/Placeholder';
  * Replace the body; keep the file path and the default export.
  */
 export default function MembersPage() {
-  return <Placeholder title="Участники" description="Заявки на вступление, роли и доступ." owner="features/admin" icon={ShieldCheck} />;
+  return (
+    <Placeholder
+      title="Участники"
+      description="Заявки на вступление, роли и доступ."
+      owner="features/admin"
+      icon={ShieldCheck}
+    />
+  );
 }

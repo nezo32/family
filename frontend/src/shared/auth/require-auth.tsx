@@ -35,7 +35,8 @@ export function RequireAuth(props: { children?: ReactNode }): ReactNode {
       if (error.status === 401) {
         return <Navigate to={loginUrl(location.pathname + location.search)} replace />;
       }
-      if (error.code === 'ACCOUNT_PENDING_APPROVAL') return <Navigate to={ROUTES.authPending} replace />;
+      if (error.code === 'ACCOUNT_PENDING_APPROVAL')
+        return <Navigate to={ROUTES.authPending} replace />;
       if (error.code === 'ACCOUNT_REJECTED') return <Navigate to={ROUTES.authRejected} replace />;
       if (error.code === 'ACCOUNT_SUSPENDED') return <Navigate to={ROUTES.authSuspended} replace />;
     }

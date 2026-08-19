@@ -74,7 +74,12 @@ export const SETTINGS_NAV: readonly NavItem[] = [
     icon: MessageSquareHeart,
     perm: 'notification:manage:own',
   },
-  { to: ROUTES.settingsAccounts, label: NAV_LABELS.accounts, icon: ShieldCheck, perm: 'identity:manage:own' },
+  {
+    to: ROUTES.settingsAccounts,
+    label: NAV_LABELS.accounts,
+    icon: ShieldCheck,
+    perm: 'identity:manage:own',
+  },
 ] as const;
 
 /** Is `pathname` inside `item`? */

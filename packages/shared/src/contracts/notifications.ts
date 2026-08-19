@@ -51,6 +51,22 @@ export const NOTIFICATION_PRIORITIES = ['low', 'normal', 'high', 'critical'] as 
 export const notificationPrioritySchema = z.enum(NOTIFICATION_PRIORITIES);
 export type NotificationPriority = z.infer<typeof notificationPrioritySchema>;
 
+/**
+ * Delivery lifecycle (D11).
+ *
+ * `sent` means only "the push service accepted it" — a `201` is not proof of
+ * anything. The three states after it are the ones that carry real information:
+ *
+ * ```
+ * pending ─> scheduled ─> sent ─> delivered ─> interacted ─> acknowledged
+ *                          │        (SW push)   (SW click)    (user confirms)
+ *                          ├─> failed
+ *                          └─> suppressed
+ * ```
+ *
+ * `read` is the in-app inbox equivalent of `interacted` and is kept for the bell
+ * badge. **Status only ever moves forward** — see `DELIVERY_STATUS_RANK`.
+ */
 export const DELIVERY_STATUSES = [
   'pending',
   'scheduled',
@@ -58,9 +74,83 @@ export const DELIVERY_STATUSES = [
   'failed',
   'suppressed',
   'read',
+  'delivered',
+  'interacted',
+  'acknowledged',
 ] as const;
 export const deliveryStatusSchema = z.enum(DELIVERY_STATUSES);
 export type DeliveryStatus = z.infer<typeof deliveryStatusSchema>;
+
+/**
+ * Forward-progress ordering for `deliveryStatus`.
+ *
+ * A delivery's status may only ever increase. A late `delivered` ack arriving
+ * after the user already tapped must not drag `interacted` back down, and a
+ * replayed offline ack must be a no-op. Every writer compares ranks first.
+ *
+ * `failed` and `suppressed` are terminal side-states that sit just above `sent`:
+ * a delivery that failed can still be superseded by a genuine `delivered` ack
+ * (the push service 500'd on our retry but the first copy landed), which is why
+ * they are not the maximum.
+ */
+export const DELIVERY_STATUS_RANK: Record<DeliveryStatus, number> = {
+  pending: 0,
+  scheduled: 1,
+  suppressed: 2,
+  failed: 3,
+  sent: 4,
+  delivered: 5,
+  read: 6,
+  interacted: 7,
+  acknowledged: 8,
+};
+
+/** True when moving `from -> to` is forward progress and therefore allowed. */
+export function isForwardDeliveryStatus(from: DeliveryStatus, to: DeliveryStatus): boolean {
+  return DELIVERY_STATUS_RANK[to] > DELIVERY_STATUS_RANK[from];
+}
+
+/**
+ * Escalation chain state, recorded on the **intent** so that at most one chain
+ * ever runs per event no matter how often the sweep is retried (D11 guardrail).
+ *
+ * ```
+ * none ─> redelivered ─> channel_fallback ─> person_escalated ─> exhausted
+ * ```
+ */
+export const ESCALATION_STATES = [
+  'none',
+  'redelivered',
+  'channel_fallback',
+  'person_escalated',
+  'exhausted',
+] as const;
+export const escalationStateSchema = z.enum(ESCALATION_STATES);
+export type EscalationState = z.infer<typeof escalationStateSchema>;
+
+export const ESCALATION_STATE_RANK: Record<EscalationState, number> = {
+  none: 0,
+  redelivered: 1,
+  channel_fallback: 2,
+  person_escalated: 3,
+  exhausted: 4,
+};
+
+/** The next rung of the ladder, or `null` when the chain is finished. */
+export function nextEscalationState(state: EscalationState): EscalationState | null {
+  switch (state) {
+    case 'none':
+      return 'redelivered';
+    case 'redelivered':
+      return 'channel_fallback';
+    case 'channel_fallback':
+      return 'person_escalated';
+    case 'person_escalated':
+      return 'exhausted';
+    case 'exhausted':
+      return null;
+  }
+}
 
 /** Quiet hours defer by default; `silence` drops the *ping*, never the record. */
 export const QUIET_MODES = ['defer', 'silence'] as const;
@@ -363,7 +453,55 @@ export const NOTIFICATION_LIMITS = {
   pushPayloadBudgetBytes: 3072,
   /** Delivery attempts before a row goes to `failed`. */
   maxDeliveryAttempts: 5,
+  /**
+   * Consecutive push sends with **no `deliveredAt` ack** before a subscription
+   * is marked unhealthy and the user is shown
+   * «Уведомления отключились — включить снова?» (D11).
+   *
+   * Three, because iOS itself revokes a subscription after roughly three pushes
+   * that show nothing — by the time we have three unacknowledged sends the
+   * subscription is almost certainly already dead, and the only recovery is a
+   * fresh user gesture.
+   */
+  maxSendsWithoutAck: 3,
+  /**
+   * How long an ack may claim to have happened *before* the delivery was sent,
+   * in minutes. Offline acks replayed from IndexedDB carry a client clock we do
+   * not trust; anything outside the clamp is snapped to server time.
+   */
+  ackClockSkewToleranceMinutes: 5,
 } as const;
+
+/**
+ * How long we wait for a `deliveredAt` (or, for `critical`, an
+ * `acknowledgedAt`) before escalating — D11.
+ *
+ * `null` means **never escalate**. Escalating a `normal` or `low` notification
+ * would be the cure that is worse than the disease: notification fatigue is the
+ * failure mode that kills these apps, and the weekly digest already catches
+ * anything routine that was missed.
+ */
+export const ESCALATION_DEADLINE_MINUTES: Record<NotificationPriority, number | null> = {
+  critical: 10,
+  high: 30,
+  normal: null,
+  low: null,
+};
+
+/**
+ * Which signal closes the loop for a given priority.
+ *
+ * `critical` is not satisfied by the phone merely receiving the message — a
+ * human has to press «Подтвердить». Everything else is satisfied by arrival.
+ */
+export function requiredAckSignal(priority: NotificationPriority): 'delivered' | 'acknowledged' {
+  return priority === 'critical' ? 'acknowledged' : 'delivered';
+}
+
+/** Priorities for which the UI shows an explicit «Подтвердить» button. */
+export function requiresExplicitAcknowledgement(priority: NotificationPriority): boolean {
+  return priority === 'high' || priority === 'critical';
+}
 
 /* -------------------------------------------------------------------------- */
 /* Push subscriptions                                                          */
@@ -416,6 +554,17 @@ export const pushSubscriptionSummarySchema = z.object({
   failureCount: z.number().int(),
   expiredAt: isoDateTimeSchema.nullable(),
   createdAt: isoDateTimeSchema,
+
+  /* --- D11 receipt health ------------------------------------------------- */
+
+  /** Last time the service worker acked an actual arrival on this device. */
+  lastDeliveredAt: isoDateTimeSchema.nullable(),
+  /** Sends since the last ack. `>= NOTIFICATION_LIMITS.maxSendsWithoutAck` = dead. */
+  consecutiveNoAck: z.number().int(),
+  /** Stamped when the threshold was crossed. Drives the re-enable banner. */
+  unhealthyAt: isoDateTimeSchema.nullable(),
+  /** Convenience for the UI: not expired and not over the no-ack threshold. */
+  isHealthy: z.boolean(),
 });
 export type PushSubscriptionSummary = z.infer<typeof pushSubscriptionSummarySchema>;
 
@@ -489,6 +638,12 @@ export const preferencesResponseSchema = z.object({
   channels: z.object({
     /** At least one live push subscription exists. */
     pushReady: z.boolean(),
+    /**
+     * At least one live subscription is also *acknowledging* deliveries (D11).
+     * `pushReady && !pushHealthy` is exactly the state that renders
+     * «Уведомления отключились — включить снова?».
+     */
+    pushHealthy: z.boolean(),
     /** Telegram is linked and the bot may DM this user. */
     telegramReady: z.boolean(),
   }),
@@ -522,10 +677,73 @@ export const inAppNotificationSchema = z.object({
     .nullable(),
   createdAt: isoDateTimeSchema,
   readAt: isoDateTimeSchema.nullable(),
+
+  /** Lifecycle of this in-app row itself. Only ever moves forward. */
+  status: deliveryStatusSchema,
+  /**
+   * True when this intent's `high`/`critical` priority means the UI must offer
+   * an explicit «Подтвердить» button — and when pressing it is what stops the
+   * escalation chain (D11).
+   */
+  needsAcknowledgement: z.boolean(),
+  acknowledgedAt: isoDateTimeSchema.nullable(),
 });
 export type InAppNotification = z.infer<typeof inAppNotificationSchema>;
 
 export const unreadCountSchema = z.object({ unread: z.number().int().min(0) });
+
+/* -------------------------------------------------------------------------- */
+/* Delivery receipts (D11)                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Body of the three ack endpoints:
+ *
+ * - `POST /api/notifications/deliveries/:id/delivered`   — service worker `push`
+ * - `POST /api/notifications/deliveries/:id/interacted`  — `notificationclick`
+ * - `POST /api/notifications/deliveries/:id/acknowledge` — «Подтвердить»
+ *
+ * `occurredAt` exists because an ack may be replayed from an IndexedDB queue
+ * long after the fact: the service worker records when the event *actually*
+ * happened and flushes later. The server clamps it into
+ * `[sentAt - skew, now]`, so a wrong client clock can never invent a receipt
+ * before the message was sent or in the future.
+ */
+export const deliveryAckRequestSchema = z.object({
+  occurredAt: isoDateTimeSchema.optional(),
+});
+export type DeliveryAckRequest = z.infer<typeof deliveryAckRequestSchema>;
+
+export const deliveryAckResponseSchema = z.object({
+  id: idSchema,
+  status: deliveryStatusSchema,
+  deliveredAt: isoDateTimeSchema.nullable(),
+  interactedAt: isoDateTimeSchema.nullable(),
+  acknowledgedAt: isoDateTimeSchema.nullable(),
+});
+export type DeliveryAckResponse = z.infer<typeof deliveryAckResponseSchema>;
+
+/**
+ * `GET /api/notifications/intents/:intentId/receipts` — what the *sender* sees
+ * next to an item: «Доставлено Ане», «Не доставлено».
+ */
+export const deliveryReceiptSchema = z.object({
+  id: idSchema,
+  userId: idSchema,
+  channel: notificationChannelSchema,
+  status: deliveryStatusSchema,
+  sentAt: isoDateTimeSchema.nullable(),
+  deliveredAt: isoDateTimeSchema.nullable(),
+  interactedAt: isoDateTimeSchema.nullable(),
+  acknowledgedAt: isoDateTimeSchema.nullable(),
+});
+export type DeliveryReceipt = z.infer<typeof deliveryReceiptSchema>;
+
+export const deliveryReceiptsResponseSchema = z.object({
+  intentId: idSchema,
+  escalationState: escalationStateSchema,
+  receipts: z.array(deliveryReceiptSchema),
+});
 
 /**
  * `POST /api/notifications/read`. Either an explicit id list or `all: true`

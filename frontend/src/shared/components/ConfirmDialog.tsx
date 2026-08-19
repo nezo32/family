@@ -67,14 +67,13 @@ export function ConfirmDialog(props: {
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={pending}>{props.cancelLabel ?? COMMON.cancel}</AlertDialogCancel>
+          <AlertDialogCancel disabled={pending}>
+            {props.cancelLabel ?? COMMON.cancel}
+          </AlertDialogCancel>
           <AlertDialogAction
             onClick={handleConfirm}
             disabled={pending}
-            className={cn(
-              destructive &&
-                buttonVariants({ variant: 'destructive' }),
-            )}
+            className={cn(destructive && buttonVariants({ variant: 'destructive' }))}
           >
             {pending ? <InlineSpinner className="mr-2" /> : null}
             {props.confirmLabel ?? (destructive ? COMMON.delete : COMMON.confirm)}
@@ -110,12 +109,7 @@ export function useConfirm() {
   const options = optionsRef.current;
 
   const dialog = options ? (
-    <ConfirmDialog
-      open={open}
-      onOpenChange={setOpen}
-      {...options}
-      onConfirm={options.onConfirm}
-    />
+    <ConfirmDialog open={open} onOpenChange={setOpen} {...options} onConfirm={options.onConfirm} />
   ) : null;
 
   return { ask, dialog, isOpen: open };

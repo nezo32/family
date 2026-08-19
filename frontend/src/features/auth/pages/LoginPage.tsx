@@ -18,9 +18,7 @@ export default function LoginPage() {
           <Home className="size-6" aria-hidden />
         </div>
         <CardTitle className="text-xl">Семья</CardTitle>
-        <CardDescription>
-          Войдите, чтобы увидеть общие дела, календарь и покупки.
-        </CardDescription>
+        <CardDescription>Войдите, чтобы увидеть общие дела, календарь и покупки.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
         <Button className="w-full" disabled>

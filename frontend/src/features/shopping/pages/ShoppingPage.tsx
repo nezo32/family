@@ -6,5 +6,12 @@ import { Placeholder } from '@/app/pages/Placeholder';
  * Replace the body; keep the file path and the default export.
  */
 export default function ShoppingPage() {
-  return <Placeholder title="Покупки" description="Общие списки покупок." owner="features/shopping" icon={ShoppingCart} />;
+  return (
+    <Placeholder
+      title="Покупки"
+      description="Общие списки покупок."
+      owner="features/shopping"
+      icon={ShoppingCart}
+    />
+  );
 }

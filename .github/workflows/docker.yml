@@ -1,0 +1,113 @@
+name: Docker images
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      push:
+        description: 'Push to GHCR (uncheck to only build)'
+        type: boolean
+        default: true
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    name: ${{ matrix.app }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: backend
+            dockerfile: backend/Dockerfile
+          - app: frontend
+            dockerfile: frontend/Dockerfile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Lowercase the owner: GHCR rejects an image reference with uppercase
+      # characters, and plenty of GitHub org names have them.
+      - name: Compute image name
+        id: img
+        run: |
+          owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          echo "name=${{ env.REGISTRY }}/${owner}/family-${{ matrix.app }}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        # Skipped for a build-only manual run, so the job still works from a
+        # fork or with a token that has no packages: write.
+        if: github.event_name != 'workflow_dispatch' || inputs.push
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.img.outputs.name }}
+          tags: |
+            type=sha,format=long,prefix=sha-
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          labels: |
+            org.opencontainers.image.title=family-${{ matrix.app }}
+            org.opencontainers.image.description=Family App ${{ matrix.app }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          # The repository root — both Dockerfiles need pnpm-lock.yaml and every
+          # workspace manifest, which do not live inside the app directories.
+          context: .
+          file: ${{ matrix.dockerfile }}
+          # amd64 only. The deployment target is a single x86 VDI; adding arm64
+          # means QEMU emulation and a ~6x longer build for an image nothing runs.
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # GitHub's own cache backend: no external registry, no extra secret.
+          # scope is per-app so the backend and frontend never evict each other.
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,scope=${{ matrix.app }},mode=max
+          # Vite inlines these at build time; they cannot be injected at runtime.
+          # VAPID public key and bot username are public by definition, so they
+          # are repository *variables*, not secrets.
+          build-args: |
+            VITE_API_URL=${{ vars.VITE_API_URL || '/api' }}
+            VITE_VAPID_PUBLIC_KEY=${{ vars.VITE_VAPID_PUBLIC_KEY }}
+            VITE_TELEGRAM_BOT_USERNAME=${{ vars.VITE_TELEGRAM_BOT_USERNAME }}
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### family-${{ matrix.app }}"
+            echo
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

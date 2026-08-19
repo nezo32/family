@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Семья">
+  <rect width="512" height="512" rx="112" fill="#c2643a"/>
+  <path d="M256 118 100 250h44v122a16 16 0 0 0 16 16h192a16 16 0 0 0 16-16V250h44z" fill="#fdf8f2"/>
+  <path d="M256 340c-34-24-52-40-52-62a30 30 0 0 1 52-20 30 30 0 0 1 52 20c0 22-18 38-52 62z" fill="#c2643a"/>
+</svg>

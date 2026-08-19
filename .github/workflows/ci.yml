@@ -1,0 +1,273 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same branch makes the first run worthless.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # @family/shared must exist as compiled JS before anything else resolves it.
+  SHARED_DIST: packages/shared/dist
+
+jobs:
+  # ───────────────────────────────────────────────────────────
+  # Everything downstream needs packages/shared/dist. Build it once here and
+  # ship it as an artifact instead of recompiling it in five parallel jobs.
+  # ───────────────────────────────────────────────────────────
+  setup:
+    name: install + build @family/shared
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # No version pin here on purpose: action-setup reads `packageManager`
+      # from the root package.json, so pnpm can never drift from the lockfile.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build @family/shared
+        run: pnpm --filter @family/shared run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shared-dist
+          path: ${{ env.SHARED_DIST }}
+          retention-days: 1
+          if-no-files-found: error
+
+  # ───────────────────────────────────────────────────────────
+  lint:
+    name: lint + format
+    runs-on: ubuntu-24.04
+    needs: setup
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: shared-dist
+          path: ${{ env.SHARED_DIST }}
+      - run: pnpm -r run lint
+      - run: pnpm run format:check
+
+  # ───────────────────────────────────────────────────────────
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-24.04
+    needs: setup
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: shared-dist
+          path: ${{ env.SHARED_DIST }}
+      - run: pnpm -r run typecheck
+
+  # ───────────────────────────────────────────────────────────
+  # Backend unit + integration tests against real Postgres and real Redis.
+  # Mocking the database would only test the mock.
+  # ───────────────────────────────────────────────────────────
+  test-backend:
+    name: backend tests
+    runs-on: ubuntu-24.04
+    needs: setup
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:17.7-alpine
+        env:
+          POSTGRES_USER: family
+          POSTGRES_PASSWORD: family
+          POSTGRES_DB: family_test
+          POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C'
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U family -d family_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      NODE_ENV: test
+      TZ: Europe/Moscow
+      DATABASE_URL: postgres://family:family@127.0.0.1:5432/family_test
+      # No password: GitHub `services` can only pass env and docker-create
+      # options, not a container command, so `--requirepass` is not reachable.
+      # The service is on a per-job ephemeral network with no ingress.
+      REDIS_URL: redis://127.0.0.1:6379
+      APP_PUBLIC_URL: http://localhost:5173
+      JWT_ACCESS_SECRET: ci-access-secret-not-used-anywhere-else-0123456789abcdef
+      JWT_REFRESH_SECRET: ci-refresh-secret-not-used-anywhere-else-0123456789abcde
+      COOKIE_SECRET: ci-cookie-secret-not-used-anywhere-else-0123456789abcdef
+      ENCRYPTION_KEY: Y2ktZW5jcnlwdGlvbi1rZXktMzItYnl0ZXMtbG9uZyE=
+      VAPID_SUBJECT: mailto:ci@example.com
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: shared-dist
+          path: ${{ env.SHARED_DIST }}
+
+      # A `services:` container gets no /docker-entrypoint-initdb.d mount, so
+      # the extensions the migrations rely on (citext, pgcrypto, ...) have to be
+      # created explicitly. Using the same pinned image as production keeps the
+      # client and server versions identical.
+      - name: Create extensions + session defaults
+        run: |
+          docker run --rm --network host \
+            -e PGPASSWORD=family \
+            -v "$PWD/infra/postgres/init:/init:ro" \
+            postgres:17.7-alpine \
+            psql -h 127.0.0.1 -U family -d family_test -v ON_ERROR_STOP=1 -f /init/01-extensions.sql
+
+      - name: Run migrations
+        run: pnpm --filter @family/backend run db:migrate
+
+      - name: Test (with coverage)
+        run: pnpm --filter @family/backend run test:cov
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-backend
+          path: backend/coverage
+          retention-days: 7
+          if-no-files-found: warn
+
+  # ───────────────────────────────────────────────────────────
+  test-frontend:
+    name: frontend tests
+    runs-on: ubuntu-24.04
+    needs: setup
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: shared-dist
+          path: ${{ env.SHARED_DIST }}
+
+      - name: Test (with coverage)
+        run: pnpm --filter @family/frontend run test:cov
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-frontend
+          path: frontend/coverage
+          retention-days: 7
+          if-no-files-found: warn
+
+  # ───────────────────────────────────────────────────────────
+  # A production `vite build` catches what `tsc --noEmit` cannot: a broken
+  # dynamic import, a missing asset, a PWA manifest that will not generate.
+  # ───────────────────────────────────────────────────────────
+  build-frontend:
+    name: frontend build
+    runs-on: ubuntu-24.04
+    needs: setup
+    timeout-minutes: 15
+    env:
+      # Placeholder values — the image published by docker.yml is built with the
+      # real ones. This job only proves the bundle compiles.
+      VITE_API_URL: /api
+      VITE_VAPID_PUBLIC_KEY: ''
+      VITE_TELEGRAM_BOT_USERNAME: ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: shared-dist
+          path: ${{ env.SHARED_DIST }}
+
+      - run: pnpm --filter @family/frontend run build
+
+      - name: Assert the service worker was emitted
+        # vite-plugin-pwa in injectManifest mode fails silently if src/sw.ts is
+        # missing from the build — the PWA then ships with no push handler and
+        # nobody notices until a notification does not arrive.
+        run: |
+          ls -la frontend/dist
+          test -f frontend/dist/index.html
+          if ! ls frontend/dist/sw.js frontend/dist/service-worker.js >/dev/null 2>&1; then
+            echo "::error::No service worker in frontend/dist — vite-plugin-pwa injectManifest did not run"
+            exit 1
+          fi
+
+  # ───────────────────────────────────────────────────────────
+  # Single required status check to protect the branch with.
+  # ───────────────────────────────────────────────────────────
+  ci:
+    name: CI
+    runs-on: ubuntu-24.04
+    needs: [lint, typecheck, test-backend, test-frontend, build-frontend]
+    if: always()
+    steps:
+      - name: Fail if any job failed or was cancelled
+        run: |
+          echo '${{ toJSON(needs) }}'
+          if echo '${{ toJSON(needs) }}' | grep -qE '"result": *"(failure|cancelled)"'; then
+            echo "::error::At least one CI job did not succeed"
+            exit 1
+          fi

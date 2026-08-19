@@ -35,7 +35,9 @@ export function EmptyState(props: {
         <Icon className="size-7" aria-hidden />
       </div>
       <div className="space-y-1.5">
-        <h3 className="text-base font-semibold text-foreground">{props.title ?? COMMON.nothingHere}</h3>
+        <h3 className="text-base font-semibold text-foreground">
+          {props.title ?? COMMON.nothingHere}
+        </h3>
         {props.description ? (
           <p className="mx-auto max-w-xs text-sm text-balance text-muted-foreground">
             {props.description}

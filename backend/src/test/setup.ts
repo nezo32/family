@@ -26,7 +26,11 @@ process.env.ENCRYPTION_KEY ??= TEST_SECRET;
 
 process.env.ENABLE_WORKERS ??= 'false';
 process.env.ENABLE_SWAGGER ??= 'false';
-process.env.LOG_LEVEL ??= 'silent';
+// `silent` is a valid pino level but NOT a member of the LOG_LEVEL enum in
+// `core/config.ts`, so it made `loadConfig()` throw and any test importing
+// `core/logger.js` fail at import time. Silencing in tests is handled by
+// `buildLoggerOptions()` itself (`config.isTest` forces level `silent`).
+process.env.LOG_LEVEL ??= 'fatal';
 
 beforeAll(async () => {
   await installTemporal();

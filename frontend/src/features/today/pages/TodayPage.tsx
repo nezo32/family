@@ -6,5 +6,12 @@ import { Placeholder } from '@/app/pages/Placeholder';
  * Replace the body; keep the file path and the default export.
  */
 export default function TodayPage() {
-  return <Placeholder title="Сегодня" description="Дела, события и напоминания на сегодня." owner="features/today" icon={Sun} />;
+  return (
+    <Placeholder
+      title="Сегодня"
+      description="Дела, события и напоминания на сегодня."
+      owner="features/today"
+      icon={Sun}
+    />
+  );
 }

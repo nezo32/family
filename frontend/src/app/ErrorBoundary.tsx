@@ -120,7 +120,9 @@ export function NotFound(): ReactNode {
 function NotFoundBody(props: { onHome: () => void }) {
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center gap-5 px-6 text-center">
-      <p className="text-6xl font-semibold tracking-tight text-muted-foreground/40 select-none">404</p>
+      <p className="text-6xl font-semibold tracking-tight text-muted-foreground/40 select-none">
+        404
+      </p>
       <div className="space-y-2">
         <h1 className="text-xl font-semibold">{COMMON.notFound}</h1>
         <p className="mx-auto max-w-sm text-sm text-balance text-muted-foreground">

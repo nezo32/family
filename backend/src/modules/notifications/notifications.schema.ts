@@ -107,11 +107,19 @@ export const notificationChannel = pgEnum('notification_channel', ['push', 'tele
  * Delivery lifecycle:
  *
  * ```
- * pending ──┬─> scheduled ──> sent ──> read      (in-app / any channel the user opens)
- *           ├─> sent
- *           ├─> failed        (after the retry budget is exhausted)
+ * pending ──┬─> scheduled ──> sent ──> delivered ──> interacted ──> acknowledged
+ *           ├─> sent          │         (SW push)     (SW click)     («Подтвердить»)
+ *           ├─> failed        └─> read  (the in-app inbox equivalent of interacted)
  *           └─> suppressed    (channel unavailable or turned off after fan-out)
  * ```
+ *
+ * D11: `sent` means only that the push service accepted the message. The three
+ * states after it are the ones that carry information, and **status only ever
+ * moves forward** — see `DELIVERY_STATUS_RANK` in `@family/shared`, which every
+ * writer consults before an update.
+ *
+ * New values are appended, never reordered: a `pgEnum` reorder is a destructive
+ * migration.
  */
 export const deliveryStatus = pgEnum('delivery_status', [
   'pending',
@@ -120,6 +128,29 @@ export const deliveryStatus = pgEnum('delivery_status', [
   'failed',
   'suppressed',
   'read',
+  'delivered',
+  'interacted',
+  'acknowledged',
+]);
+
+/**
+ * How far the escalation ladder has run for one intent (D11).
+ *
+ * ```
+ * none -> redelivered -> channel_fallback -> person_escalated -> exhausted
+ * ```
+ *
+ * Recorded on the **intent**, not the delivery, and advanced with a conditional
+ * `UPDATE ... WHERE escalation_state = <expected>`. That single predicate is
+ * what makes a retried sweep — two workers, a redeploy mid-sweep, a replayed job
+ * — incapable of escalating the same event twice.
+ */
+export const escalationState = pgEnum('escalation_state', [
+  'none',
+  'redelivered',
+  'channel_fallback',
+  'person_escalated',
+  'exhausted',
 ]);
 
 /* -------------------------------------------------------------------------- */
@@ -172,6 +203,31 @@ export const pushSubscriptions = pgTable(
     lastFailureAt: timestamp({ withTimezone: true }),
     /** Consecutive failures. Reset to 0 on success; prune past the threshold. */
     failureCount: integer().notNull().default(0),
+
+    /**
+     * D11 — receipt health. `lastSuccessAt` records that the *push service*
+     * accepted a message; this records that the message actually **arrived**,
+     * acked by the service worker's `push` handler.
+     */
+    lastDeliveredAt: timestamp({ withTimezone: true }),
+
+    /**
+     * Sends since the last arrival ack. Reset to 0 on every ack.
+     *
+     * This counter is the only way to notice a dead iOS subscription: Safari
+     * never fires `pushsubscriptionchange`, the endpoint keeps returning 201,
+     * and nothing is delivered. Past `NOTIFICATION_LIMITS.maxSendsWithoutAck`
+     * the row is marked unhealthy and the user sees
+     * «Уведомления отключились — включить снова?».
+     */
+    consecutiveNoAck: integer().notNull().default(0),
+
+    /**
+     * Stamped when `consecutiveNoAck` crossed the threshold. Distinct from
+     * `expiredAt`: unhealthy means "probably dead, tell the user, keep trying";
+     * expired means "the push service told us it is gone, never dispatch again".
+     */
+    unhealthyAt: timestamp({ withTimezone: true }),
 
     /**
      * Set when the push service reported the subscription gone, or when the
@@ -327,6 +383,17 @@ export const notificationIntents = pgTable(
     payload: jsonb().$type<Record<string, unknown>>().notNull().default(emptyJsonObject),
 
     /**
+     * Who should be told, as declared by the producer:
+     * `{ users: [...] }`, `{ roles: ['adult'] }` or `{ everyone: true }`.
+     *
+     * Stored rather than resolved at emit time because fan-out is a **separate,
+     * retryable step** (§2 of the design note): recipients depend on the RBAC
+     * matrix and per-user preferences, both of which may change between the
+     * domain write and the dispatch job. An empty object means "everyone".
+     */
+    audience: jsonb().$type<Record<string, unknown>>().notNull().default(emptyJsonObject),
+
+    /**
      * Idempotency guard. A stable, caller-computed string such as
      * `task_due_soon:<occurrenceId>:2026-08-19` or
      * `event_reminder:<occurrenceId>:30m`. A retried BullMQ job, a double-click
@@ -336,6 +403,15 @@ export const notificationIntents = pgTable(
     dedupeKey: text(),
 
     priority: notificationPriority().notNull().default('normal'),
+
+    /**
+     * D11 — how far the escalation ladder has run for this event. Advanced only
+     * by a conditional update, so at most one chain ever runs per intent no
+     * matter how many times the sweep is retried.
+     */
+    escalationState: escalationState().notNull().default('none'),
+    /** When the chain last advanced. NULL while `escalation_state = 'none'`. */
+    escalatedAt: timestamp({ withTimezone: true }),
 
     ...createdAt(),
   },
@@ -390,8 +466,36 @@ export const notificationDeliveries = pgTable(
      */
     scheduledFor: timestamp({ withTimezone: true }),
 
+    /** We handed it to the push service / Telegram and it accepted. Not proof. */
     sentAt: timestamp({ withTimezone: true }),
     readAt: timestamp({ withTimezone: true }),
+
+    /* --- D11: four distinct timestamps, never collapsed into one another --- */
+
+    /**
+     * It **arrived on the device**. Written by the service worker's `push`
+     * handler after `showNotification()` resolves, or directly by the Telegram
+     * adapter when `sendMessage` returns a `message_id` (a genuinely better
+     * signal than Web Push gives us).
+     */
+    deliveredAt: timestamp({ withTimezone: true }),
+
+    /** The user **tapped** it — `notificationclick`, or opened the linked entity. */
+    interactedAt: timestamp({ withTimezone: true }),
+
+    /**
+     * The user explicitly **confirmed the underlying action** («Подтвердить»).
+     * Only `high`/`critical` intents ask for this, and for `critical` it is the
+     * only signal that stops the escalation ladder.
+     */
+    acknowledgedAt: timestamp({ withTimezone: true }),
+
+    /**
+     * How many times the escalation sweep has re-sent this exact row on its
+     * original channel. Capped at 1 (step "re-deliver once, in case the device
+     * was simply off").
+     */
+    redeliveryCount: integer().notNull().default(0),
 
     /** Retry counter driving the exponential backoff. */
     attempt: integer().notNull().default(0),
@@ -414,6 +518,17 @@ export const notificationDeliveries = pgTable(
       .on(t.scheduledFor)
       .where(sql`${t.status} = 'scheduled'`),
     index('notification_deliveries_intent_idx').on(t.intentId),
+    /**
+     * The D11 enforcement sweep: everything we handed off but never saw arrive.
+     * Partial on `status = 'sent'` because that is the only status the sweep
+     * cares about, and it keeps the index tiny — a healthy family produces very
+     * few rows that stay `sent`.
+     */
+    index('notification_deliveries_unconfirmed_idx')
+      .on(t.sentAt)
+      .where(sql`${t.status} = 'sent'`),
+    /** Per-device receipt history, for the subscription health counter. */
+    index('notification_deliveries_subscription_idx').on(t.subscriptionId, t.createdAt.desc()),
   ],
 );
 

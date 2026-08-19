@@ -63,7 +63,10 @@ export interface UseCanResult {
 }
 
 /** Does `resource` belong to `userId`? Absent ownership fields mean "not mine". */
-export function isOwnedBy(resource: ScopedResource | null | undefined, userId: string | null): boolean {
+export function isOwnedBy(
+  resource: ScopedResource | null | undefined,
+  userId: string | null,
+): boolean {
   if (!resource || !userId) return false;
   return (
     resource.ownerId === userId ||

@@ -1,9 +1,5 @@
 export { Can, CanAny } from './Can';
-export {
-  RedirectIfAuthenticated,
-  RequireAuth,
-  RequirePermission,
-} from './require-auth';
+export { RedirectIfAuthenticated, RequireAuth, RequirePermission } from './require-auth';
 export {
   evaluate,
   isOwnedBy,

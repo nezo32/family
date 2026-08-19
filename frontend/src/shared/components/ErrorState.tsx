@@ -54,7 +54,9 @@ export function ErrorState(props: {
         </Button>
       ) : null}
       {requestId ? (
-        <p className="text-[11px] text-muted-foreground/70 select-all">Код обращения: {requestId}</p>
+        <p className="text-[11px] text-muted-foreground/70 select-all">
+          Код обращения: {requestId}
+        </p>
       ) : null}
     </div>
   );

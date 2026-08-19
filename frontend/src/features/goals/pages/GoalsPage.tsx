@@ -6,5 +6,12 @@ import { Placeholder } from '@/app/pages/Placeholder';
  * Replace the body; keep the file path and the default export.
  */
 export default function GoalsPage() {
-  return <Placeholder title="Копилки" description="Общие цели и накопления семьи." owner="features/goals" icon={PiggyBank} />;
+  return (
+    <Placeholder
+      title="Копилки"
+      description="Общие цели и накопления семьи."
+      owner="features/goals"
+      icon={PiggyBank}
+    />
+  );
 }

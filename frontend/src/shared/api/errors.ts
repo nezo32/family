@@ -33,7 +33,7 @@ export class ApiError extends Error {
 
 /** Thrown when the request never reached the server (offline, DNS, abort). */
 export class NetworkError extends Error {
-  readonly cause: unknown;
+  override readonly cause: unknown;
   constructor(cause: unknown) {
     super('Network request failed');
     this.name = 'NetworkError';
@@ -77,7 +77,7 @@ export function toApiError(status: number, body: unknown, requestId?: string): A
       status,
       message: inner.message,
       ...(inner.details ? { details: inner.details } : {}),
-      ...(inner.requestId ?? requestId ? { requestId: inner.requestId ?? requestId } : {}),
+      ...((inner.requestId ?? requestId) ? { requestId: inner.requestId ?? requestId } : {}),
     });
   }
   return new ApiError({

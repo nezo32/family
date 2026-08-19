@@ -23,6 +23,11 @@ import { AppError } from '../errors.js';
  *   config: { anyPermission: ['a', 'b'] }       // must hold at least one
  *   config: { scoped: 'task:read' }             // must hold :own or :any
  *
+ * Add `notFoundOnDeny: true` when lacking the permission means the caller
+ * cannot see that the section exists at all — a child has no `goal:*`
+ * permission whatsoever, so `/goals` must answer 404, not 403. A 403 would
+ * confirm the family has a moneybox (D4).
+ *
  * With `scoped`, the resolved scope is stashed on `req.scope` so the handler can
  * narrow its query without re-deriving anything.
  */
@@ -33,6 +38,8 @@ export interface RouteAccessConfig {
   permission?: Permission;
   anyPermission?: Permission[];
   scoped?: string;
+  /** Answer 404 instead of 403 when the permission check fails. See D4. */
+  notFoundOnDeny?: boolean;
 }
 
 function accessConfigOf(request: FastifyRequest): RouteAccessConfig {
@@ -76,24 +83,28 @@ function enforce(request: FastifyRequest, access: RouteAccessConfig): void {
   const auth = request.auth;
   if (!auth) throw new AppError('UNAUTHENTICATED', 'Authentication required');
 
+  const deny = (required: string, context: Record<string, unknown>): never => {
+    if (access.notFoundOnDeny) {
+      throw new AppError('NOT_FOUND', 'Resource not found', { context });
+    }
+    throw new AppError('FORBIDDEN', `Missing permission: ${required}`, { context });
+  };
+
   if (access.permission && !auth.can(access.permission)) {
-    throw new AppError('FORBIDDEN', `Missing permission: ${access.permission}`, {
-      context: { required: access.permission, role: auth.role },
-    });
+    deny(access.permission, { required: access.permission, role: auth.role });
   }
 
   if (access.anyPermission?.length && !auth.canAny(...access.anyPermission)) {
-    throw new AppError('FORBIDDEN', `Missing any of: ${access.anyPermission.join(', ')}`, {
-      context: { requiredAnyOf: access.anyPermission, role: auth.role },
+    deny(access.anyPermission.join(' | '), {
+      requiredAnyOf: access.anyPermission,
+      role: auth.role,
     });
   }
 
   if (access.scoped) {
     const scope = auth.scopeFor(access.scoped);
     if (!scope) {
-      throw new AppError('FORBIDDEN', `Missing permission: ${access.scoped}:own`, {
-        context: { required: `${access.scoped}:own`, role: auth.role },
-      });
+      deny(`${access.scoped}:own`, { required: `${access.scoped}:own`, role: auth.role });
     }
     request.scope = scope;
   }

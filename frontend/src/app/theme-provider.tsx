@@ -87,8 +87,7 @@ export function ThemeProvider(props: { children: ReactNode; defaultTheme?: Theme
     };
   }, []);
 
-  const resolvedTheme: ResolvedTheme =
-    theme === 'system' ? (systemDark ? 'dark' : 'light') : theme;
+  const resolvedTheme: ResolvedTheme = theme === 'system' ? (systemDark ? 'dark' : 'light') : theme;
 
   useEffect(() => {
     applyTheme(resolvedTheme);

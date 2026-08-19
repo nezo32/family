@@ -100,7 +100,8 @@ export function formatMoney(
 /** Parse a user-typed amount ("1 234,56", "1234.5") back into minor units. */
 export function parseMoney(input: string): number | null {
   const normalized = input
-    .replace(/\s| | /g, '')
+    // `\s` already covers U+00A0 and U+202F, the separators Intl emits for ru-RU.
+    .replace(/\s/g, '')
     .replace(/[^\d.,-]/g, '')
     .replace(',', '.');
   if (normalized === '' || normalized === '-') return null;
@@ -142,12 +143,16 @@ function intl(options: Intl.DateTimeFormatOptions, timeZone?: string): Intl.Date
 
 /** `19:00` — 24-hour, as Russian users expect. */
 export function formatTime(value: Date | string | number, timeZone?: string): string {
-  return intl({ hour: '2-digit', minute: '2-digit', hour12: false }, timeZone).format(toDate(value));
+  return intl({ hour: '2-digit', minute: '2-digit', hour12: false }, timeZone).format(
+    toDate(value),
+  );
 }
 
 /** `07.09.2026` */
 export function formatDateShort(value: Date | string | number, timeZone?: string): string {
-  return intl({ day: '2-digit', month: '2-digit', year: 'numeric' }, timeZone).format(toDate(value));
+  return intl({ day: '2-digit', month: '2-digit', year: 'numeric' }, timeZone).format(
+    toDate(value),
+  );
 }
 
 /** `7 сентября 2026 г.` */

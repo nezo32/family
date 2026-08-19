@@ -54,7 +54,9 @@ export function TopAppBar(props: {
           variant="ghost"
           size="icon"
           aria-label={
-            unread > 0 ? `${NAV_LABELS.notifications}: ${String(unread)} новых` : NAV_LABELS.notifications
+            unread > 0
+              ? `${NAV_LABELS.notifications}: ${String(unread)} новых`
+              : NAV_LABELS.notifications
           }
           onClick={props.onOpenNotifications}
           className="relative"

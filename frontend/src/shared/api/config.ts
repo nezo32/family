@@ -22,9 +22,14 @@ export const API_PREFIX = '/api';
  * Build an absolute (or origin-relative) API URL.
  * `path` may be given with or without the `/api` prefix.
  */
-export function apiUrl(path: string, searchParams?: Record<string, string | number | boolean>): string {
+export function apiUrl(
+  path: string,
+  searchParams?: Record<string, string | number | boolean>,
+): string {
   const normalized = path.startsWith('/') ? path : `/${path}`;
-  const withPrefix = normalized.startsWith(`${API_PREFIX}/`) ? normalized : `${API_PREFIX}${normalized}`;
+  const withPrefix = normalized.startsWith(`${API_PREFIX}/`)
+    ? normalized
+    : `${API_PREFIX}${normalized}`;
   const base = `${API_BASE_URL}${withPrefix}`;
   if (!searchParams) return base;
   const query = new URLSearchParams();

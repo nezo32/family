@@ -10,8 +10,13 @@ import {
   type DayButton,
 } from "react-day-picker"
 
+import { ru } from "date-fns/locale"
+
 import { cn } from "@/shared/lib/utils"
 import { Button, buttonVariants } from "@/shared/ui/button"
+
+// Localised in place rather than at every call site: every calendar in this app
+// is Russian and starts the week on Monday (D7 / shared/lib/i18n.ts).
 
 function Calendar({
   className,
@@ -19,6 +24,8 @@ function Calendar({
   showOutsideDays = true,
   captionLayout = "label",
   buttonVariant = "ghost",
+  locale = ru,
+  weekStartsOn = 1,
   formatters,
   components,
   ...props
@@ -30,6 +37,8 @@ function Calendar({
   return (
     <DayPicker
       showOutsideDays={showOutsideDays}
+      locale={locale}
+      weekStartsOn={weekStartsOn}
       className={cn(
         "group/calendar bg-background p-3 [--cell-size:--spacing(8)] [[data-slot=card-content]_&]:bg-transparent [[data-slot=popover-content]_&]:bg-transparent",
         String.raw`rtl:**:[.rdp-button\_next>svg]:rotate-180`,
@@ -38,8 +47,7 @@ function Calendar({
       )}
       captionLayout={captionLayout}
       formatters={{
-        formatMonthDropdown: (date) =>
-          date.toLocaleString("default", { month: "short" }),
+        formatMonthDropdown: (date) => date.toLocaleString("ru-RU", { month: "long" }),
         ...formatters,
       }}
       classNames={{

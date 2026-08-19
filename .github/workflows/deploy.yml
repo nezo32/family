@@ -1,0 +1,302 @@
+name: Deploy
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Manual deploy to the self-hosted VDI.
+#
+# NOTHING about the target host is hardcoded. Configure these in the repository
+# (Settings -> Secrets and variables -> Actions) before the first run — the
+# preflight step fails with an explicit list if any are missing.
+#
+#   Secret  DEPLOY_SSH_KEY          private key (OpenSSH PEM, no passphrase)
+#                                   whose public half is in the deploy user's
+#                                   ~/.ssh/authorized_keys on the VDI
+#   Secret  DEPLOY_SSH_KNOWN_HOSTS  output of `ssh-keyscan -p <port> <host>`.
+#                                   Optional but strongly recommended: without
+#                                   it the run trusts whatever answers on first
+#                                   connect (TOFU) and logs a warning.
+#   Var/Sec DEPLOY_HOST             hostname or IP of the VDI
+#   Var/Sec DEPLOY_USER             ssh user (member of the `docker` group)
+#   Var/Sec DEPLOY_PATH             absolute path of the checkout on the VDI,
+#                                   e.g. /srv/family — must already contain a
+#                                   populated `.env`
+#   Var     DEPLOY_PORT             ssh port (optional, default 22)
+#   Var     APP_DOMAIN              public domain, used for the environment URL
+#
+# HOST PREREQUISITES (one-time, see infra/README.md):
+#   - docker + compose v2 installed, deploy user in the `docker` group
+#   - $DEPLOY_PATH exists and contains .env (never written by this workflow)
+#   - ports 80/443 open
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to deploy (e.g. latest, sha-<40 hex>, v1.2.3)'
+        type: string
+        required: true
+        default: latest
+      run_migrations:
+        description: 'Run database migrations'
+        type: boolean
+        default: true
+      backup_first:
+        description: 'Take a pg_dump before migrating'
+        type: boolean
+        default: true
+
+concurrency:
+  # Two deploys racing on one host is how a stack ends up half-rolled-back.
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.image_tag }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    # Attach a GitHub Environment so required reviewers / wait timers can be
+    # bolted on later without touching this file.
+    environment:
+      name: production
+      url: https://${{ vars.APP_DOMAIN }}
+
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST || vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER || vars.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || vars.DEPLOY_PATH }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+
+    steps:
+      # ───────────────────────────────────────────────────────
+      - name: Preflight — is this repository configured at all?
+        # The key itself is never interpolated into the script: only the
+        # boolean "is it set". Never paste a secret into a shell command line.
+        env:
+          HAS_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY != '' }}
+        run: |
+          missing=()
+          [ -n "${DEPLOY_HOST}" ]        || missing+=("DEPLOY_HOST (variable or secret)")
+          [ -n "${DEPLOY_USER}" ]        || missing+=("DEPLOY_USER (variable or secret)")
+          [ -n "${DEPLOY_PATH}" ]        || missing+=("DEPLOY_PATH (variable or secret)")
+          [ "${HAS_SSH_KEY}" = "true" ]  || missing+=("DEPLOY_SSH_KEY (secret)")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Deployment is not configured yet. Missing:"
+            printf '::error::  - %s\n' "${missing[@]}"
+            echo "See infra/README.md -> 'GitHub configuration'."
+            exit 1
+          fi
+          case "${DEPLOY_PATH}" in
+            /*) ;;
+            *) echo "::error::DEPLOY_PATH must be absolute, got '${DEPLOY_PATH}'"; exit 1 ;;
+          esac
+          echo "Target: ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PORT}${DEPLOY_PATH}"
+
+      - uses: actions/checkout@v4
+
+      # ───────────────────────────────────────────────────────
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+
+          if [ -n "${SSH_KNOWN_HOSTS}" ]; then
+            printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            echo "::warning::DEPLOY_SSH_KNOWN_HOSTS is not set — accepting the host key on first sight (TOFU). Set it to the output of: ssh-keyscan -p ${DEPLOY_PORT} ${DEPLOY_HOST}"
+            ssh-keyscan -p "${DEPLOY_PORT}" -H "${DEPLOY_HOST}" > ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+          cat > ~/.ssh/config <<EOF
+          Host deploy-target
+            HostName ${DEPLOY_HOST}
+            User ${DEPLOY_USER}
+            Port ${DEPLOY_PORT}
+            IdentityFile ~/.ssh/id_deploy
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            ServerAliveInterval 20
+            ServerAliveCountMax 6
+            BatchMode yes
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Verify connectivity and host prerequisites
+        run: |
+          set -euo pipefail
+          ssh deploy-target 'bash -s' <<'EOS'
+          set -euo pipefail
+          command -v docker >/dev/null || { echo "docker is not installed on the host"; exit 1; }
+          docker compose version >/dev/null || { echo "docker compose v2 plugin is missing"; exit 1; }
+          docker info >/dev/null 2>&1 || { echo "this user cannot talk to the docker daemon (add it to the 'docker' group)"; exit 1; }
+          echo "host ok: $(docker --version), $(docker compose version --short)"
+          EOS
+
+      # ───────────────────────────────────────────────────────
+      # Ship the infra definitions, never the secrets. `.env` lives on the host
+      # and is the one file this workflow must not touch.
+      - name: Sync infra/ and Makefile to the host
+        run: |
+          set -euo pipefail
+          ssh deploy-target "mkdir -p '${DEPLOY_PATH}'"
+          tar czf - infra Makefile | ssh deploy-target "tar xzf - -C '${DEPLOY_PATH}'"
+          ssh deploy-target "chmod +x '${DEPLOY_PATH}'/infra/scripts/*.sh"
+          echo "synced"
+
+      # ───────────────────────────────────────────────────────
+      # The remote script is generated with its inputs prepended as shell
+      # assignments and piped over stdin, so the GHCR token never appears in
+      # argv (and therefore never in the host's process list or shell history).
+      - name: Deploy
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          RUN_MIGRATIONS: ${{ inputs.run_migrations }}
+          BACKUP_FIRST: ${{ inputs.backup_first }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          GHCR_OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+
+          cat > /tmp/remote-deploy.sh <<'REMOTE'
+          set -Eeuo pipefail
+
+          COMPOSE=(docker compose -f infra/docker-compose.yml --env-file .env)
+          STATE_FILE=".deploy-state"
+          say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
+
+          cd "${DEPLOY_PATH}"
+          [ -f .env ] || { echo "FATAL: ${DEPLOY_PATH}/.env does not exist — create it from .env.example first"; exit 1; }
+
+          export IMAGE_TAG GHCR_OWNER
+
+          PREVIOUS_TAG="$(cat "${STATE_FILE}" 2>/dev/null || true)"
+          say "deploying '${IMAGE_TAG}' (previous: '${PREVIOUS_TAG:-none recorded}')"
+
+          say "authenticating to ghcr.io"
+          printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+
+          say "pulling images"
+          "${COMPOSE[@]}" pull --quiet
+
+          # ── Health gate ───────────────────────────────────────────────────
+          # Probes /ready (dependencies reachable), not /health (process alive).
+          # A backend that booted but cannot reach Postgres is not a deploy that
+          # succeeded.
+          wait_healthy() {
+            local tries=45
+            for i in $(seq 1 "${tries}"); do
+              if "${COMPOSE[@]}" exec -T backend wget -q -O /dev/null http://127.0.0.1:3000/ready 2>/dev/null \
+                 && "${COMPOSE[@]}" exec -T caddy wget -q -O /dev/null http://127.0.0.1:8081/healthz 2>/dev/null; then
+                echo "healthy after ${i} attempt(s)"
+                return 0
+              fi
+              sleep 4
+            done
+            return 1
+          }
+
+          rollback() {
+            say "ROLLBACK"
+            if [ -z "${PREVIOUS_TAG}" ]; then
+              echo "No previous tag recorded — cannot roll back automatically."
+              echo "Inspect with: cd ${DEPLOY_PATH} && docker compose -f infra/docker-compose.yml logs --tail=200"
+              return 1
+            fi
+            echo "restoring images tagged '${PREVIOUS_TAG}'"
+            IMAGE_TAG="${PREVIOUS_TAG}" "${COMPOSE[@]}" up -d --remove-orphans
+            if IMAGE_TAG="${PREVIOUS_TAG}" wait_healthy; then
+              echo "rolled back to '${PREVIOUS_TAG}' and healthy"
+              # NOTE: schema changes are NOT reverted. Migrations must be
+              # backward compatible with the previous release (expand/contract);
+              # a destructive migration makes this rollback cosmetic.
+              return 0
+            fi
+            echo "rollback did not become healthy either — manual intervention required"
+            return 1
+          }
+
+          on_error() {
+            echo
+            echo "─── last 120 log lines ───"
+            "${COMPOSE[@]}" logs --tail=120 || true
+            rollback || true
+            exit 1
+          }
+          trap on_error ERR
+
+          say "ensuring datastores are up"
+          "${COMPOSE[@]}" up -d postgres redis
+
+          if [ "${BACKUP_FIRST}" = "true" ]; then
+            say "pre-migration backup"
+            ./infra/scripts/backup.sh
+          fi
+
+          if [ "${RUN_MIGRATIONS}" = "true" ]; then
+            say "running migrations"
+            "${COMPOSE[@]}" --profile tools run --rm migrate
+          fi
+
+          say "starting the stack"
+          "${COMPOSE[@]}" up -d --remove-orphans
+
+          say "waiting for health"
+          if ! wait_healthy; then
+            echo "the new release never became healthy"
+            false
+          fi
+
+          trap - ERR
+          printf '%s' "${IMAGE_TAG}" > "${STATE_FILE}"
+
+          # Dangling layers only. `prune -a` would happily delete the previous
+          # release image and silently disarm the next rollback.
+          say "pruning dangling images"
+          docker image prune -f >/dev/null || true
+
+          say "DEPLOYED ${IMAGE_TAG}"
+          "${COMPOSE[@]}" ps
+          REMOTE
+
+          {
+            echo "DEPLOY_PATH='${DEPLOY_PATH}'"
+            echo "IMAGE_TAG='${IMAGE_TAG}'"
+            echo "GHCR_OWNER='${GHCR_OWNER}'"
+            echo "GHCR_USER='${GHCR_USER}'"
+            echo "GHCR_TOKEN='${GHCR_TOKEN}'"
+            echo "RUN_MIGRATIONS='${RUN_MIGRATIONS}'"
+            echo "BACKUP_FIRST='${BACKUP_FIRST}'"
+            cat /tmp/remote-deploy.sh
+          } | ssh deploy-target 'bash -s'
+
+      # ───────────────────────────────────────────────────────
+      - name: Post-deploy summary
+        if: always()
+        run: |
+          {
+            echo "### Deploy — ${{ job.status }}"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Tag | \`${{ inputs.image_tag }}\` |"
+            echo "| Host | \`${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PORT}\` |"
+            echo "| Path | \`${DEPLOY_PATH}\` |"
+            echo "| Migrations | ${{ inputs.run_migrations }} |"
+            echo "| Backup taken | ${{ inputs.backup_first }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Shred credentials
+        if: always()
+        run: rm -f ~/.ssh/id_deploy /tmp/remote-deploy.sh

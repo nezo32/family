@@ -127,7 +127,10 @@ export function endSession(options: { redirect?: string } = {}): void {
   if (alreadyEnded) return;
 
   const target = options.redirect ?? loginUrl(currentLocationPath());
-  if (typeof window !== 'undefined' && window.location.pathname === new URL(target, window.location.origin).pathname) {
+  if (
+    typeof window !== 'undefined' &&
+    window.location.pathname === new URL(target, window.location.origin).pathname
+  ) {
     return;
   }
   redirectTo(target, { replace: true });

@@ -71,6 +71,7 @@ export const PERMISSIONS = [
 
   // moneybox / savings goals
   'goal:read',
+  'goal:read:any',
   'goal:create',
   'goal:update',
   'goal:delete',
@@ -169,6 +170,7 @@ const ADMIN: Permission[] = [
   'member:update:any',
   'member:remove',
   'member:role:assign',
+  'goal:read:any',
   'settings:manage',
   'audit:read',
   'backup:manage',

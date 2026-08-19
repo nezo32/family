@@ -6,5 +6,12 @@ import { Placeholder } from '@/app/pages/Placeholder';
  * Replace the body; keep the file path and the default export.
  */
 export default function WallPage() {
-  return <Placeholder title="Стена" description="Объявления, благодарности и обсуждения." owner="features/wall" icon={MessageSquareHeart} />;
+  return (
+    <Placeholder
+      title="Стена"
+      description="Объявления, благодарности и обсуждения."
+      owner="features/wall"
+      icon={MessageSquareHeart}
+    />
+  );
 }

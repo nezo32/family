@@ -1,5 +1,6 @@
 import { ERROR_CODES, type ErrorCode } from '@family/shared';
-import { ApiError, isApiError, isNetworkError } from './errors';
+import { isApiError, isNetworkError } from './errors';
+import type { ApiError } from './errors';
 
 /**
  * `ErrorCode` → Russian, user-facing message.

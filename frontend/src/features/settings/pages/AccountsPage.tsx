@@ -6,5 +6,12 @@ import { Placeholder } from '@/app/pages/Placeholder';
  * Replace the body; keep the file path and the default export.
  */
 export default function AccountsPage() {
-  return <Placeholder title="Способы входа" description="Привязанные аккаунты Google, Apple и Telegram." owner="features/settings" icon={KeyRound} />;
+  return (
+    <Placeholder
+      title="Способы входа"
+      description="Привязанные аккаунты Google, Apple и Telegram."
+      owner="features/settings"
+      icon={KeyRound}
+    />
+  );
 }
