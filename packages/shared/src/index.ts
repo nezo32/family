@@ -14,6 +14,7 @@
 // Domain primitives
 export * from './domain/roles.js';
 export * from './domain/errors.js';
+export * from './domain/routes.js';
 export * from './domain/percent.js';
 export * from './domain/plural.js';
 export * from './domain/quick-add.js';

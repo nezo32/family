@@ -1,4 +1,10 @@
-import { countRu, NOTIFICATION_TYPES, RU_PLURALS, type NotificationType } from '@family/shared';
+import {
+  APP_ROUTES,
+  countRu,
+  NOTIFICATION_TYPES,
+  RU_PLURALS,
+  type NotificationType,
+} from '@family/shared';
 
 /**
  * Notification copy — `(type, payload) → { title, body, navigate }`, in Russian.
@@ -151,7 +157,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
       return {
         title: 'Новая задача',
         body: joinBody(text(p, 'title', 'Вам поручили задачу'), text(p, 'dueLabel')),
-        navigate: route('/tasks', taskId),
+        navigate: route(APP_ROUTES.tasks, taskId),
       };
     }
 
@@ -161,7 +167,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
       return {
         title: 'Скоро срок задачи',
         body: joinBody(text(p, 'title', 'Задача'), due ? `срок ${due}` : 'срок совсем близко'),
-        navigate: route('/tasks', taskId),
+        navigate: route(APP_ROUTES.tasks, taskId),
       };
     }
 
@@ -171,7 +177,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
       return {
         title: 'Задача просрочена',
         body: joinBody(text(p, 'title', 'Задача'), overdueBy ? `просрочена ${overdueBy}` : null),
-        navigate: route('/tasks', taskId),
+        navigate: route(APP_ROUTES.tasks, taskId),
       };
     }
 
@@ -184,7 +190,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
           `${actor(p)}: ${text(p, 'title', 'задача закрыта')}`,
           points !== null && points > 0 ? `+${countRu(points, RU_PLURALS.point)}` : null,
         ),
-        navigate: route('/tasks', taskId),
+        navigate: route(APP_ROUTES.tasks, taskId),
       };
     }
 
@@ -197,7 +203,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
           text(p, 'title'),
           text(p, 'dueLabel'),
         ),
-        navigate: route('/chores/swaps', swapId),
+        navigate: route(APP_ROUTES.tasks, swapId),
       };
     }
 
@@ -210,7 +216,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
           `${actor(p)} ${accepted ? 'согласился подменить' : 'не может подменить'}`,
           text(p, 'title'),
         ),
-        navigate: route('/chores/swaps', swapId),
+        navigate: route(APP_ROUTES.tasks, swapId),
       };
     }
 
@@ -225,7 +231,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
           text(p, 'startsLabel'),
           text(p, 'location'),
         ),
-        navigate: route('/calendar', eventId),
+        navigate: route(APP_ROUTES.calendar, eventId),
       };
     }
 
@@ -238,7 +244,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
           text(p, 'title'),
           text(p, 'startsLabel'),
         ),
-        navigate: route('/calendar', eventId),
+        navigate: route(APP_ROUTES.calendar, eventId),
       };
     }
 
@@ -267,7 +273,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
           text(p, 'goalTitle', text(p, 'title')),
           amount,
         ),
-        navigate: route('/goals', goalId),
+        navigate: route(APP_ROUTES.goals, goalId),
       };
     }
 
@@ -281,7 +287,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
           percent !== null ? `собрано ${Math.round(percent)}%` : null,
           money(p, 'balanceMinor'),
         ),
-        navigate: route('/goals', goalId),
+        navigate: route(APP_ROUTES.goals, goalId),
       };
     }
 
@@ -294,7 +300,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
           'нужная сумма собрана',
           money(p, 'targetMinor'),
         ),
-        navigate: route('/goals', goalId),
+        navigate: route(APP_ROUTES.goals, goalId),
       };
     }
 
@@ -309,7 +315,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
           text(p, 'listName'),
           `добавил${p.actorIsFemale === true ? 'а' : ''} ${actor(p)}`,
         ),
-        navigate: route('/shopping', listId),
+        navigate: route(APP_ROUTES.shopping, listId),
       };
     }
 
@@ -324,7 +330,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
           'ждёт подтверждения',
           text(p, 'provider'),
         ),
-        navigate: route('/settings/members', userId),
+        navigate: route(APP_ROUTES.adminMembers, userId),
       };
     }
 
@@ -346,7 +352,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
       return {
         title: 'Объявление',
         body: joinBody(text(p, 'title', text(p, 'excerpt', 'Новое объявление')), `— ${actor(p)}`),
-        navigate: route('/wall', postId),
+        navigate: route(APP_ROUTES.wall, postId),
       };
     }
 
@@ -358,7 +364,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
           `${actor(p)} сказал${p.actorIsFemale === true ? 'а' : ''} спасибо`,
           text(p, 'reason', text(p, 'message')),
         ),
-        navigate: route('/wall', postId),
+        navigate: route(APP_ROUTES.wall, postId),
       };
     }
 
@@ -375,7 +381,9 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
             events !== null ? countRu(events, RU_PLURALS.event) : null,
             text(p, 'summary'),
           ) || 'Сводка за неделю готова',
-        navigate: '/digest',
+        // There is no /digest screen. The weekly summary is a view of the week
+        // ahead, which is what Сегодня already shows.
+        navigate: APP_ROUTES.today,
       };
     }
 

@@ -74,6 +74,7 @@ import {
   DELIVERY_STATUS_RANK,
   ESCALATION_DEADLINE_MINUTES,
   NOTIFICATION_LIMITS,
+  isKnownAppPath,
   NOTIFICATION_TYPES,
   NOTIFICATION_TYPE_DEFAULT_PRIORITY,
   isForwardDeliveryStatus,
@@ -1043,3 +1044,33 @@ function quietRow(overrides: { startsAt: string; endsAt: string }) {
     ...overrides,
   };
 }
+
+describe('notification deep links', () => {
+  it('every rendered link resolves to a real route', () => {
+    // The regression this exists for: `member_pending_approval` pointed at
+    // `/settings/members` and swap notifications at `/chores/swaps`. Neither is
+    // a route, so tapping the notification landed on a 404 -- from a push, which
+    // is the one place the user has no idea what they did wrong.
+    const unknown: Array<{ type: string; navigate: string }> = [];
+
+    for (const type of NOTIFICATION_TYPES) {
+      const rendered = renderNotification(type, {
+          userId: '00000000-0000-4000-8000-000000000001',
+        taskId: '00000000-0000-4000-8000-000000000002',
+        eventId: '00000000-0000-4000-8000-000000000003',
+        goalId: '00000000-0000-4000-8000-000000000004',
+        listId: '00000000-0000-4000-8000-000000000005',
+        postId: '00000000-0000-4000-8000-000000000006',
+        occurrenceId: '00000000-0000-4000-8000-000000000007',
+        swapId: '00000000-0000-4000-8000-000000000008',
+        displayName: 'Тест',
+        title: 'Тест',
+      });
+      if (rendered.navigate && !isKnownAppPath(rendered.navigate)) {
+        unknown.push({ type, navigate: rendered.navigate });
+      }
+    }
+
+    expect(unknown).toEqual([]);
+  });
+});

@@ -161,16 +161,12 @@ const topLevelRoutes: RouteObject[] = [
       {
         path: ROUTES.login,
         element: <RedirectIfAuthenticated />,
-        children: [
-          { index: true, lazy: page(() => import('@/features/auth/pages/LoginPage')) },
-        ],
+        children: [{ index: true, lazy: page(() => import('@/features/auth/pages/LoginPage')) }],
       },
       {
         path: ROUTES.register,
         element: <RedirectIfAuthenticated />,
-        children: [
-          { index: true, lazy: page(() => import('@/features/auth/pages/RegisterPage')) },
-        ],
+        children: [{ index: true, lazy: page(() => import('@/features/auth/pages/RegisterPage')) }],
       },
       {
         path: ROUTES.authPending,

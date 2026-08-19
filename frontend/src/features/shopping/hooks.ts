@@ -475,7 +475,10 @@ export function useActiveListId(): string | null {
  *   only deep link that resolves, and it is a real, shareable URL.
  */
 export function shoppingListPath(listId: string): string {
-  return `${ROUTES.shopping}?list=${encodeURIComponent(listId)}`;
+  // The `/shopping/:listId` child route is registered, so use the real path.
+  // `useActiveListId` still reads `?list=` as a fallback, which keeps any link
+  // already shared in the family chat working.
+  return `${ROUTES.shopping}/${encodeURIComponent(listId)}`;
 }
 
 /* -------------------------------------------------------------------------- */
