@@ -1,0 +1,8 @@
+node_modules
+dist
+dev-dist
+coverage
+pnpm-lock.yaml
+backend/drizzle
+frontend/src/shared/ui
+infra/data

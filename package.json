@@ -1,0 +1,29 @@
+{
+  "name": "family-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "packageManager": "pnpm@11.1.1",
+  "scripts": {
+    "dev": "pnpm --parallel --filter \"@family/backend\" --filter \"@family/frontend\" run dev",
+    "dev:backend": "pnpm --filter @family/backend run dev",
+    "dev:frontend": "pnpm --filter @family/frontend run dev",
+    "build": "pnpm --filter @family/shared run build && pnpm -r --filter \"!@family/shared\" run build",
+    "typecheck": "pnpm -r run typecheck",
+    "lint": "pnpm -r run lint",
+    "lint:fix": "pnpm -r run lint:fix",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,json,md,yml,yaml}\"",
+    "test": "pnpm -r run test",
+    "db:generate": "pnpm --filter @family/backend run db:generate",
+    "db:migrate": "pnpm --filter @family/backend run db:migrate",
+    "db:seed": "pnpm --filter @family/backend run db:seed",
+    "up": "docker compose -f infra/docker-compose.yml --env-file .env up -d",
+    "down": "docker compose -f infra/docker-compose.yml --env-file .env down",
+    "logs": "docker compose -f infra/docker-compose.yml --env-file .env logs -f"
+  },
+  "devDependencies": {
+    "prettier": "^3.5.3"
+  }
+}

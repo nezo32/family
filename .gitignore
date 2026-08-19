@@ -1,0 +1,40 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# builds
+dist/
+dev-dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# env & secrets
+.env
+.env.*
+!.env.example
+*.p8
+*.pem
+!infra/**/*.example.pem
+
+# infra runtime data
+infra/data/
+infra/**/certs/
+backups/
+
+# test output
+playwright-report/
+test-results/
+
+# os / editor
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# stray agent scratch files
+scratch-*.ts
+*.scratch.*

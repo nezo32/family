@@ -1,0 +1,56 @@
+# ─────────────────────────────────────────────────────────────
+# Root build-context ignore list.
+#
+# Both `backend/Dockerfile` and `frontend/Dockerfile` are built with the
+# REPOSITORY ROOT as the build context, because a pnpm workspace install needs
+# `pnpm-lock.yaml` + `pnpm-workspace.yaml` + every workspace `package.json`.
+# BuildKit therefore reads THIS file; `backend/.dockerignore` and
+# `frontend/.dockerignore` are inert for those builds and are kept only for
+# anyone who builds from inside an app directory.
+# ─────────────────────────────────────────────────────────────
+
+# dependencies (never ship the host's node_modules into the context —
+# it is ~1 GB of symlinks and would be re-installed in the image anyway)
+**/node_modules
+.pnpm-store
+
+# build output
+**/dist
+**/dev-dist
+**/build
+**/coverage
+**/*.tsbuildinfo
+
+# vcs / editor / os
+.git
+.github
+.gitignore
+.vscode
+.idea
+**/.DS_Store
+**/Thumbs.db
+
+# secrets & local env
+.env
+.env.*
+!.env.example
+**/*.p8
+**/*.pem
+
+# infra runtime state — never part of an application image
+infra/data
+infra/**/certs
+backups
+
+# test artefacts
+**/playwright-report
+**/test-results
+**/e2e
+
+# docs & tooling that never affect a build
+docs
+*.md
+!frontend/public/**/*.md
+Makefile
+**/Dockerfile
+**/.dockerignore

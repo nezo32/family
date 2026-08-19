@@ -1,0 +1,88 @@
+import { Suspense, useEffect, useRef } from 'react';
+import { Outlet, useLocation, useNavigation } from 'react-router-dom';
+import { LoadingScreen } from '@/shared/components/LoadingScreen';
+import { setFamilyTimeZone } from '@/shared/lib/format';
+import { useMe } from '@/shared/auth/use-me';
+import { BottomTabBar } from './BottomTabBar';
+import { DesktopSidebar } from './DesktopSidebar';
+import { TopAppBar } from './TopAppBar';
+
+/**
+ * The authenticated application chrome.
+ *
+ * Layout:  [sidebar (≥md)] [ app bar / scrolling main / tab bar (<md) ]
+ *
+ * Scroll handling deserves a note. The page — not an inner div — is the scroll
+ * container, because iOS only collapses the URL bar and only runs the native
+ * "tap the status bar to scroll to top" gesture for the document scroller. The
+ * shell therefore reserves space for the fixed tab bar with padding instead of
+ * clipping content inside an `overflow-auto` box.
+ *
+ * Scroll restoration is handled here rather than with React Router's
+ * `<ScrollRestoration>`: we want *new* navigations to land at the top, and
+ * back/forward to restore where the user was, and the router's component
+ * cannot distinguish the two without a data router.
+ */
+export function AppShell() {
+  const location = useLocation();
+  const navigation = useNavigation();
+  const { data: me } = useMe();
+  const positions = useRef(new Map<string, number>());
+  const previousKey = useRef<string | null>(null);
+
+  // Times and dates are rendered in the family timezone, not the device one (D2).
+  useEffect(() => {
+    setFamilyTimeZone(me?.family?.timezone ?? me?.timezone);
+  }, [me?.family?.timezone, me?.timezone]);
+
+  useEffect(() => {
+    // Remember where we were leaving from.
+    const leavingKey = previousKey.current;
+    if (leavingKey !== null) positions.current.set(leavingKey, window.scrollY);
+    previousKey.current = location.key;
+
+    const restored = positions.current.get(location.key);
+    // POP (back/forward) reuses a key we have seen; PUSH gets a fresh one.
+    window.scrollTo({ top: restored ?? 0, behavior: 'instant' });
+  }, [location.key]);
+
+  return (
+    <div className="flex min-h-dvh bg-background">
+      <DesktopSidebar />
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <TopAppBar />
+
+        <main
+          id="main"
+          className="flex-1 px-4 pt-4 pb-[calc(var(--spacing-tabbar)+env(safe-area-inset-bottom,0px)+1rem)] md:px-6 md:pb-8"
+          aria-busy={navigation.state === 'loading'}
+        >
+          <div className="mx-auto w-full max-w-3xl xl:max-w-5xl">
+            <Suspense fallback={<LoadingScreen />}>
+              <Outlet />
+            </Suspense>
+          </div>
+        </main>
+
+        <BottomTabBar />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Chrome-less shell for the auth screens (`/login`, `/auth/*`).
+ * No navigation: an unauthenticated or non-active user has nowhere to navigate.
+ */
+export function AuthShell() {
+  return (
+    <div className="flex min-h-dvh flex-col items-center justify-center bg-background px-6 py-10 pt-safe pb-safe">
+      <div className="w-full max-w-sm">
+        <Suspense fallback={<LoadingScreen />}>
+          <Outlet />
+        </Suspense>
+      </div>
+    </div>
+  );
+}

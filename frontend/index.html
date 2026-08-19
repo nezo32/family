@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ru" class="no-js">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- viewport-fit=cover is what makes env(safe-area-inset-*) non-zero on iPhone. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no"
+    />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="color-scheme" content="light dark" />
+
+    <title>Семья — общий дом</title>
+    <meta
+      name="description"
+      content="Общие дела, календарь, покупки и копилки одной семьи. Задачи по справедливости, напоминания на телефон."
+    />
+
+    <!-- Matches --background from src/index.css in each scheme, so the iOS status
+         bar and the Android system bars blend into the app. -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fdf8f2" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#211d19" />
+
+    <!-- Installed-PWA flags. `apple-mobile-web-app-capable` is legacy but still
+         required by iOS; `mobile-web-app-capable` is the modern equivalent. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Семья" />
+    <!-- `black-translucent` lets the app paint under the status bar; the shell
+         compensates with env(safe-area-inset-top). -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon-180.png" sizes="180x180" />
+    <link rel="mask-icon" href="/favicon.svg" color="#c2643a" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Семья — общий дом" />
+    <meta
+      property="og:description"
+      content="Общие дела, календарь, покупки и копилки одной семьи."
+    />
+    <meta property="og:locale" content="ru_RU" />
+
+    <!--
+      Flash-of-wrong-theme guard. Runs before the first paint, mirrors exactly
+      what src/app/theme-provider.tsx does on mount, and is deliberately inline
+      so it cannot be deferred behind a network round trip.
+    -->
+    <script>
+      (function () {
+        try {
+          document.documentElement.classList.remove('no-js');
+          var stored = localStorage.getItem('family.theme');
+          var mode = stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'system';
+          var dark =
+            mode === 'dark' ||
+            (mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.classList.toggle('dark', dark);
+          document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+        } catch (e) {
+          /* private mode / storage disabled — fall back to the light default */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>
+      <p style="padding: 2rem; font-family: system-ui, sans-serif">
+        Для работы приложения нужен включённый JavaScript.
+      </p>
+    </noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

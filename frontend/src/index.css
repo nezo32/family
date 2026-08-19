@@ -1,0 +1,307 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/* ---------------------------------------------------------------------------
+ * Palette — "Тёплый дом" (warm home)
+ *
+ * Why not stock shadcn slate: slate is a cool, corporate, dashboard-grey. This
+ * app is a shared living space for a family, opened dozens of times a day from
+ * a phone home screen, often late in the evening. The palette is therefore
+ * built on a warm neutral axis (hue ~70-85, a paper/sand cast rather than blue)
+ * with a terracotta / baked-clay primary (hue ~42) that reads as friendly and
+ * handmade rather than "SaaS blue", and a muted sage accent (hue ~150) for
+ * positive/секондary affordances. Destructive stays a warm brick red so it sits
+ * in the same family instead of screaming.
+ *
+ * Dark mode is a warm charcoal (hue ~55), not a blue-black: on an OLED phone in
+ * a dim room a blue-black UI is the thing that keeps you awake.
+ *
+ * All colours are OKLCH so lightness steps are perceptually even and the dark
+ * ramp can be derived by moving L only.
+ * ------------------------------------------------------------------------- */
+
+:root {
+  --radius: 0.75rem;
+
+  /* surfaces */
+  --background: oklch(0.9905 0.0065 84);
+  --foreground: oklch(0.2585 0.0195 55);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2585 0.0195 55);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2585 0.0195 55);
+
+  /* brand */
+  --primary: oklch(0.6135 0.1495 42);
+  --primary-foreground: oklch(0.9905 0.0125 84);
+
+  /* warm sand */
+  --secondary: oklch(0.945 0.0185 82);
+  --secondary-foreground: oklch(0.325 0.0285 58);
+
+  --muted: oklch(0.9575 0.0135 84);
+  --muted-foreground: oklch(0.5285 0.0295 62);
+
+  /* muted sage — "good news" accent */
+  --accent: oklch(0.9265 0.0405 150);
+  --accent-foreground: oklch(0.3285 0.0525 150);
+
+  --destructive: oklch(0.5785 0.1985 27.5);
+  --destructive-foreground: oklch(0.9865 0.0105 84);
+
+  --success: oklch(0.5885 0.1185 150);
+  --success-foreground: oklch(0.9865 0.0105 84);
+
+  --warning: oklch(0.7585 0.1425 76);
+  --warning-foreground: oklch(0.2685 0.0405 76);
+
+  --border: oklch(0.8985 0.0165 78);
+  --input: oklch(0.8985 0.0165 78);
+  --ring: oklch(0.6135 0.1495 42);
+
+  /* data-viz ramp: clay, sage, honey, plum, sky */
+  --chart-1: oklch(0.6435 0.1585 42);
+  --chart-2: oklch(0.6185 0.1085 158);
+  --chart-3: oklch(0.7785 0.1385 82);
+  --chart-4: oklch(0.5685 0.1285 328);
+  --chart-5: oklch(0.6485 0.1085 232);
+
+  /* desktop sidebar */
+  --sidebar: oklch(0.9705 0.0115 84);
+  --sidebar-foreground: oklch(0.2585 0.0195 55);
+  --sidebar-primary: oklch(0.6135 0.1495 42);
+  --sidebar-primary-foreground: oklch(0.9905 0.0125 84);
+  --sidebar-accent: oklch(0.9345 0.0225 80);
+  --sidebar-accent-foreground: oklch(0.2985 0.0245 55);
+  --sidebar-border: oklch(0.8905 0.0185 78);
+  --sidebar-ring: oklch(0.6135 0.1495 42);
+}
+
+.dark {
+  --background: oklch(0.1985 0.0115 56);
+  --foreground: oklch(0.9485 0.0105 84);
+  --card: oklch(0.2415 0.0135 56);
+  --card-foreground: oklch(0.9485 0.0105 84);
+  --popover: oklch(0.2415 0.0135 56);
+  --popover-foreground: oklch(0.9485 0.0105 84);
+
+  --primary: oklch(0.7085 0.1385 46);
+  --primary-foreground: oklch(0.2085 0.0285 46);
+
+  --secondary: oklch(0.2885 0.0165 60);
+  --secondary-foreground: oklch(0.9285 0.0125 84);
+
+  --muted: oklch(0.2785 0.0145 60);
+  --muted-foreground: oklch(0.7185 0.0195 76);
+
+  --accent: oklch(0.3285 0.0385 155);
+  --accent-foreground: oklch(0.9185 0.0405 150);
+
+  --destructive: oklch(0.6485 0.1885 26);
+  --destructive-foreground: oklch(0.9865 0.0105 84);
+
+  --success: oklch(0.6885 0.1185 152);
+  --success-foreground: oklch(0.1885 0.0285 152);
+
+  --warning: oklch(0.8085 0.1385 78);
+  --warning-foreground: oklch(0.2385 0.0405 78);
+
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.7085 0.1385 46);
+
+  --chart-1: oklch(0.7085 0.1485 44);
+  --chart-2: oklch(0.6985 0.1085 158);
+  --chart-3: oklch(0.8185 0.1385 84);
+  --chart-4: oklch(0.6685 0.1285 328);
+  --chart-5: oklch(0.7185 0.1085 232);
+
+  --sidebar: oklch(0.2285 0.0135 56);
+  --sidebar-foreground: oklch(0.9485 0.0105 84);
+  --sidebar-primary: oklch(0.7085 0.1385 46);
+  --sidebar-primary-foreground: oklch(0.2085 0.0285 46);
+  --sidebar-accent: oklch(0.2985 0.0165 60);
+  --sidebar-accent-foreground: oklch(0.9285 0.0125 84);
+  --sidebar-border: oklch(1 0 0 / 12%);
+  --sidebar-ring: oklch(0.7085 0.1385 46);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+
+  --font-sans:
+    'Inter var', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* iOS safe areas, exposed as Tailwind spacing tokens: `pb-safe-b`, `pt-safe-t`… */
+  --spacing-safe-t: env(safe-area-inset-top, 0px);
+  --spacing-safe-r: env(safe-area-inset-right, 0px);
+  --spacing-safe-b: env(safe-area-inset-bottom, 0px);
+  --spacing-safe-l: env(safe-area-inset-left, 0px);
+
+  /* Height of the mobile bottom tab bar, excluding the home-indicator inset. */
+  --spacing-tabbar: 3.5rem;
+  --spacing-appbar: 3.5rem;
+}
+
+/* ---------------------------------------------------------------------------
+ * Base layer — PWA / iOS hardening
+ * ------------------------------------------------------------------------- */
+
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--border);
+    outline-color: color-mix(in oklab, var(--ring) 50%, transparent);
+  }
+
+  html {
+    /* iOS Safari inflates text in landscape unless this is pinned. */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    /* Kill the grey flash on every tap in the installed PWA. */
+    -webkit-tap-highlight-color: transparent;
+    /* No rubber-band bounce revealing the browser chrome behind the app. */
+    overscroll-behavior-y: none;
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    /* 100dvh, never 100vh: iOS `vh` includes the collapsed URL bar and the
+       layout jumps as the bar shows/hides. */
+    min-height: 100dvh;
+    overscroll-behavior-y: none;
+    /* Painted behind the safe areas so the notch/home indicator match the app. */
+    background-color: var(--background);
+    text-rendering: optimizeLegibility;
+  }
+
+  #root {
+    min-height: 100dvh;
+    isolation: isolate;
+  }
+
+  /* iOS zooms the viewport when a focused input's font-size is < 16px and there
+     is no way to undo it. Every text-entry control is therefore pinned to 16px
+     on touch-primary devices; desktop keeps the denser 14px. */
+  @media (pointer: coarse) {
+    input,
+    select,
+    textarea {
+      font-size: 16px !important;
+    }
+  }
+
+  /* Native-feeling momentum scrolling inside panes. */
+  [data-scroll-pane] {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--primary) 26%, transparent);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer utilities {
+  /* Safe-area helpers. Prefer these over hand-written env() calls. */
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .pl-safe {
+    padding-left: env(safe-area-inset-left, 0px);
+  }
+  .pr-safe {
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+  .px-safe {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+  .mb-safe {
+    margin-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .h-dvh {
+    height: 100dvh;
+  }
+  .min-h-dvh {
+    min-height: 100dvh;
+  }
+  /* Full viewport height minus the mobile chrome (app bar + tab bar + insets). */
+  .h-app-content {
+    height: calc(
+      100dvh - var(--spacing-appbar) - var(--spacing-tabbar) - env(safe-area-inset-top, 0px) -
+        env(safe-area-inset-bottom, 0px)
+    );
+  }
+  /* Text that must never be selected by a long-press in the installed PWA. */
+  .no-callout {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}

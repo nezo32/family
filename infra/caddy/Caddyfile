@@ -1,0 +1,140 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Family App — edge reverse proxy.
+#
+# Mounted read-only at /etc/caddy/Caddyfile by infra/docker-compose.yml.
+# {$APP_DOMAIN} and {$ACME_EMAIL} come from the container environment, which
+# compose fills from the root .env. Set APP_DOMAIN=localhost for a local run —
+# Caddy then issues an internal cert instead of talking to Let's Encrypt.
+#
+# Reload after editing (no downtime, no dropped connections):
+#     docker compose -f infra/docker-compose.yml exec caddy \
+#       caddy reload --config /etc/caddy/Caddyfile
+# ─────────────────────────────────────────────────────────────────────────────
+{
+	# Contact address for the ACME account: expiry and revocation warnings.
+	email {$ACME_EMAIL}
+
+	# The admin API is not needed at runtime and is an unauthenticated
+	# config-write endpoint on :2019. `caddy reload` inside the container still
+	# works because it re-executes the binary against the mounted file.
+	admin off
+
+	servers {
+		# Docker's bridge assigns the container a private address, so only
+		# private ranges may be trusted to set X-Forwarded-*.
+		trusted_proxies static private_ranges
+		client_ip_headers X-Forwarded-For
+	}
+}
+
+# ─────────────────────────────────────────────────────────────
+# Loopback-only health endpoint for the container HEALTHCHECK.
+# Probing :80 instead would hit the automatic HTTP->HTTPS redirect.
+# This port is never published to the host.
+# ─────────────────────────────────────────────────────────────
+:8081 {
+	respond /healthz "ok" 200
+	respond 404
+}
+
+# ─────────────────────────────────────────────────────────────
+# The application.
+# ─────────────────────────────────────────────────────────────
+{$APP_DOMAIN} {
+	encode zstd gzip
+
+	log {
+		output stdout
+		format json
+	}
+
+	# Avatar upload / ICS import ceiling. Fastify enforces its own limits too;
+	# this one stops a large body ever reaching Node.
+	request_body {
+		max_size 10MB
+	}
+
+	# ── Security headers ────────────────────────────────────────────────────
+	header {
+		# One year, subdomains included. `preload` is deliberately NOT set:
+		# it is a browser-vendor-level commitment that is painful to undo and
+		# this is a single family domain.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "accelerometer=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), microphone=(), payment=(), usb=()"
+
+		# ── The one header everyone gets wrong ──
+		# `same-origin` severs window.opener between this page and the popup it
+		# opened. The Telegram login flow opens oauth.telegram.org in a popup
+		# and the popup talks back to us; with `same-origin` the popup can
+		# never hand the result over and the user is stuck on a blank window
+		# forever. `same-origin-allow-popups` keeps the isolation benefit for
+		# *incoming* cross-origin openers while leaving our own popups usable.
+		Cross-Origin-Opener-Policy "same-origin-allow-popups"
+		# COEP is intentionally unset: `require-corp` would block third-party
+		# avatar images (Google/Telegram CDNs) and buys us nothing here.
+		Cross-Origin-Resource-Policy "same-site"
+
+		# Caddy leaks its name otherwise.
+		-Server
+		-X-Powered-By
+	}
+
+	# ── CSP ─────────────────────────────────────────────────────────────────
+	# Applied only to documents. Sending a document CSP on JSON responses is
+	# noise, and `frame-ancestors` on an API response is meaningless.
+	#
+	# 'unsafe-inline' in style-src is unavoidable: Radix/shadcn positioning
+	# (popover, dropdown, tooltip) writes inline styles on every open. Scripts
+	# get no such escape hatch — script-src stays strict.
+	@document {
+		header Accept *text/html*
+		not path /api/*
+	}
+	header @document Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://telegram.org https://oauth.telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://oauth.telegram.org; worker-src 'self' blob:; manifest-src 'self'; media-src 'self'; frame-src https://oauth.telegram.org https://telegram.org; upgrade-insecure-requests"
+
+	# ── Service worker & app shell must never be cached ─────────────────────
+	# The frontend container already sets this, but the edge is where a CDN,
+	# a corporate proxy or a phone's HTTP cache actually looks. A single
+	# stale sw.js pins the PWA to a dead build until the user reinstalls it.
+	@neverCache path /sw.js /service-worker.js /registerSW.js /index.html /manifest.webmanifest /workbox-*.map
+	header @neverCache {
+		Cache-Control "no-cache, no-store, must-revalidate"
+		Pragma "no-cache"
+		Expires "0"
+	}
+	# Allows a service worker served from /sw.js to control the whole origin.
+	@sw path /sw.js /service-worker.js
+	header @sw Service-Worker-Allowed "/"
+
+	# ── API ─────────────────────────────────────────────────────────────────
+	# The prefix is NOT stripped: the backend registers its routes under /api
+	# (GET /api/me and friends), and VITE_API_URL defaults to /api.
+	# /health and /ready stay internal — they are for the container runtime and
+	# the deploy gate, not for the internet.
+	handle /api/* {
+		reverse_proxy backend:3000 {
+			header_up X-Real-IP {http.request.remote.host}
+			# Server-Sent Events / long polling must not be buffered.
+			flush_interval -1
+			transport http {
+				read_timeout 120s
+				write_timeout 120s
+			}
+		}
+	}
+
+	# ── Everything else: the static PWA ─────────────────────────────────────
+	# SPA fallback and hashed-asset immutability are handled inside the
+	# frontend container (see frontend/Dockerfile); this is a plain pass-through.
+	handle {
+		reverse_proxy frontend:8080
+	}
+
+	handle_errors {
+		respond "{err.status_code} {err.status_text}" {err.status_code}
+	}
+}

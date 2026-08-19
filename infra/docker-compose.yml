@@ -1,0 +1,214 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Family App — PRODUCTION stack (single self-hosted VDI).
+#
+# Run from the REPOSITORY ROOT so that `.env` is picked up:
+#     docker compose -f infra/docker-compose.yml --env-file .env up -d
+# (or simply `make up`).
+#
+# Postgres and Redis publish NO host ports. They live on an `internal` network
+# with no route to the internet, and are reachable only by the backend. Use
+# infra/docker-compose.dev.yml if you need them exposed for host-side `pnpm dev`.
+# ─────────────────────────────────────────────────────────────────────────────
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+
+x-restart: &default-restart
+  restart: unless-stopped
+
+name: family
+
+networks:
+  # Reachable from the host / internet via caddy. Containers here can make
+  # outbound calls (OAuth token endpoints, Web Push services, Telegram API).
+  edge:
+    name: family_edge
+  # No gateway, no internet. Only postgres, redis and the backend join it.
+  data:
+    name: family_data
+    internal: true
+
+volumes:
+  pg_data:
+    name: family_pg_data
+  redis_data:
+    name: family_redis_data
+  caddy_data:
+    name: family_caddy_data
+  caddy_config:
+    name: family_caddy_config
+
+services:
+  # ───────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:17.7-alpine
+    <<: *default-restart
+    logging: *default-logging
+    networks: [data]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      # Deterministic collation. Never let the host locale decide index order.
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C'
+      TZ: ${TZ:-Europe/Moscow}
+      PGTZ: ${TZ:-Europe/Moscow}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      # Runs ONCE, only when pg_data is empty. Editing these files later has no
+      # effect on an existing volume — apply such changes as a migration.
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # -U/-d are required: without them pg_isready checks the `root` role and
+      # reports healthy while the app's role does not exist yet.
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -h 127.0.0.1']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    stop_grace_period: 30s
+    shm_size: 256mb
+
+  # ───────────────────────────────────────────────────────────
+  redis:
+    image: redis:7.4-alpine
+    <<: *default-restart
+    logging: *default-logging
+    networks: [data]
+    # appendonly = BullMQ delayed jobs (scheduled notifications, the nightly
+    # recurrence materializer) survive a restart. everysec is the right
+    # durability/throughput trade-off at family scale.
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      - --appendonly
+      - 'yes'
+      - --appendfsync
+      - everysec
+      - --maxmemory-policy
+      - noeviction
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+      TZ: ${TZ:-Europe/Moscow}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      # REDISCLI_AUTH keeps the password out of the process list.
+      test: ['CMD-SHELL', 'redis-cli ping | grep -q PONG']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    stop_grace_period: 30s
+
+  # ───────────────────────────────────────────────────────────
+  backend:
+    image: ${BACKEND_IMAGE:-ghcr.io/${GHCR_OWNER:-local}/family-backend:${IMAGE_TAG:-latest}}
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    <<: *default-restart
+    logging: *default-logging
+    # `edge` for inbound proxying + outbound OAuth/push; `data` for pg/redis.
+    networks: [edge, data]
+    env_file:
+      - ../.env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: '3000'
+      TZ: ${TZ:-Europe/Moscow}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    expose:
+      - '3000'
+    # close-with-grace needs room to drain in-flight requests and BullMQ jobs.
+    stop_grace_period: 25s
+
+  # ───────────────────────────────────────────────────────────
+  frontend:
+    image: ${FRONTEND_IMAGE:-ghcr.io/${GHCR_OWNER:-local}/family-frontend:${IMAGE_TAG:-latest}}
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+      # Vite bakes these into the bundle at BUILD time. They are here only for
+      # local `docker compose build`; CI passes the same values as build-args.
+      args:
+        VITE_API_URL: ${VITE_API_URL:-/api}
+        VITE_VAPID_PUBLIC_KEY: ${VITE_VAPID_PUBLIC_KEY:-}
+        VITE_TELEGRAM_BOT_USERNAME: ${VITE_TELEGRAM_BOT_USERNAME:-}
+    <<: *default-restart
+    logging: *default-logging
+    networks: [edge]
+    environment:
+      TZ: ${TZ:-Europe/Moscow}
+    expose:
+      - '8080'
+
+  # ───────────────────────────────────────────────────────────
+  caddy:
+    image: caddy:2.11-alpine
+    <<: *default-restart
+    logging: *default-logging
+    networks: [edge]
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp' # HTTP/3
+    environment:
+      # Consumed by the Caddyfile as {$APP_DOMAIN} / {$ACME_EMAIL}.
+      APP_DOMAIN: ${APP_DOMAIN:?APP_DOMAIN is required}
+      # Required, not optional: Caddy refuses to adapt a Caddyfile with an
+      # empty `email` directive, and this is where Let's Encrypt sends
+      # expiry/revocation notices. Any valid address works for a localhost run.
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required (ACME account contact address)}
+      TZ: ${TZ:-Europe/Moscow}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # caddy_data holds the ACME account key and issued certificates. Losing
+      # this volume means re-issuing certs and burning Let's Encrypt rate limit.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - frontend
+    healthcheck:
+      # Port 8081 is a plain-HTTP, loopback-only health site defined in the
+      # Caddyfile. Probing :80 would hit Caddy's automatic HTTP->HTTPS redirect
+      # and follow it to a hostname the container cannot resolve.
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:8081/healthz']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ───────────────────────────────────────────────────────────
+  # One-shot migration runner. Not started by `up`; invoke explicitly:
+  #     docker compose -f infra/docker-compose.yml --profile tools \
+  #       run --rm --no-deps migrate
+  # It reuses the backend image, whose dist/ contains the compiled migrator.
+  # (The `db:migrate` package script runs through tsx, a devDependency that the
+  # production image deliberately does not contain.)
+  # ───────────────────────────────────────────────────────────
+  migrate:
+    image: ${BACKEND_IMAGE:-ghcr.io/${GHCR_OWNER:-local}/family-backend:${IMAGE_TAG:-latest}}
+    profiles: ['tools']
+    restart: 'no'
+    logging: *default-logging
+    networks: [data]
+    env_file:
+      - ../.env
+    environment:
+      NODE_ENV: production
+      TZ: ${TZ:-Europe/Moscow}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ['node', 'dist/db/migrate.js']

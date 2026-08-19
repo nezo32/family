@@ -1,0 +1,84 @@
+# Engineering Conventions
+
+Read together with `docs/DECISIONS.md` (binding) and `docs/PLAN.md` (context).
+
+## Repository layout
+
+```
+/                      pnpm monorepo root — infra, compose, CI, docs
+  packages/shared/     @family/shared — zod contracts, permission catalog, error codes
+  backend/             @family/backend — Fastify 5 + Drizzle + Postgres
+  frontend/            @family/frontend — React 19 PWA
+  infra/               docker compose, Caddy, postgres init, backup scripts
+  .github/workflows/   CI
+```
+
+`@family/shared` compiles to `dist/` via `tsc`; both apps import it as
+`@family/shared`. Import types with `import type`.
+
+## Hard rules
+
+1. **Never run `pnpm install` or edit any `package.json`.** If you need a
+   dependency, say so in your final report and the lead adds it. Everything you
+   need is already installed — check `node_modules` before assuming otherwise.
+2. **Only create/modify the files you were assigned.** Another agent owns the
+   rest, and concurrent edits to the same file are lost work.
+3. **Do not create `backend/src/db/schema.ts`** (the barrel) — the lead owns it.
+4. TypeScript is `strict` with `noUncheckedIndexedAccess` and
+   `verbatimModuleSyntax`. No `any`, no `@ts-ignore`, no non-null `!` unless you
+   justify it in a comment.
+5. ESM only. Relative imports inside a package **must** carry the `.js`
+   extension in `backend/` and `packages/shared/` (NodeNext resolution).
+   `frontend/` uses bundler resolution — no extension there.
+6. Path alias `@/` maps to `src/` in both `backend` and `frontend`.
+
+## Backend conventions
+
+- `drizzle.config.ts` sets `casing: 'snake_case'`, so unnamed Drizzle column
+  builders map to snake_case DB columns. Write `uuid().primaryKey()`, not
+  `uuid('id')`.
+- Every table: `id` uuid PK `.defaultRandom()`, `createdAt`/`updatedAt`
+  `timestamp({ withTimezone: true }).notNull().defaultNow()` where meaningful.
+- Money: `bigint({ mode: 'number' })` holding **integer minor units**.
+- Enums: `pgEnum` with an exported const, named snake_case.
+- Indexes go in the third table callback, returning an **array**:
+  `(t) => [ index('...').on(t.x) ]`.
+- Errors: throw `AppError` from `@/core/errors.js` with an `ErrorCode` from
+  `@family/shared`. Never throw bare strings.
+- Services and repositories are plain classes/functions with the `Db` handle
+  injected as the first argument. No global db import inside modules.
+- Every route declares a zod `schema` (body/params/querystring/response) so
+  OpenAPI is generated automatically.
+- Every route declares **either** a permission guard **or** `config: { public: true }`.
+
+## Frontend conventions
+
+- Feature-sliced: `src/features/<domain>/{api.ts,hooks.ts,locale.ts,components/,pages/}`.
+- Shared UI (shadcn) lives in `src/shared/ui/` — treat as vendored, don't lint-fix.
+- **All user-facing text is Russian**, in the feature's `locale.ts` as a typed
+  const object. No hardcoded Russian in JSX except trivial one-offs.
+- Server state is TanStack Query only. Query keys are built by a `keys` object
+  exported from the feature's `api.ts`.
+- Forms: react-hook-form + `zodResolver` against the schema from `@family/shared`.
+- Never branch on `role ===` for access. Use `useCan()`.
+
+## Naming
+
+- Files: `kebab-case.ts`, React components `PascalCase.tsx`.
+- DB tables: `snake_case`, plural. Columns `snake_case`.
+- Zod schemas: `somethingSchema`; inferred types `Something`.
+- Query keys: `['tasks', 'list', filters]`.
+
+## Testing
+
+- Backend: Vitest. Pure logic gets unit tests; routes get `app.inject()` tests.
+- Frontend: Vitest + Testing Library for logic-bearing components.
+- Name tests `*.test.ts(x)` next to the code under test.
+- Do not test framework behaviour. Test business rules and edge cases.
+
+## Definition of done for an agent
+
+- The files you own compile under `pnpm -r typecheck`.
+- `pnpm -r lint` passes for files you own.
+- Your final message lists: files created, deps you need, assumptions made, and
+  anything you deliberately left for another agent.
