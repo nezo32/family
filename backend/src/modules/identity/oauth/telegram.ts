@@ -104,6 +104,16 @@ export async function buildTelegramAuthorizationUrl(input: {
     nonce: input.nonce,
     code_challenge: codeChallenge,
     code_challenge_method: 'S256',
+    /**
+     * Telegram-specific and not part of OIDC.
+     *
+     * `oauth.telegram.org` refuses the request with "Origin required" unless
+     * this is present, and it must match a domain registered against the bot
+     * with BotFather's `/setdomain`. Standard OIDC has no such parameter, so
+     * `openid-client` does not send it and the flow fails on Telegram's page
+     * rather than anywhere in our code.
+     */
+    origin: getConfig().publicOrigin,
   }).href;
 }
 

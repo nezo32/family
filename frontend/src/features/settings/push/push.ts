@@ -109,18 +109,50 @@ export function permissionState(): PushPermission {
 /* -------------------------------------------------------------------------- */
 
 /**
- * The application server key, read from the build.
+ * The application server key.
  *
  * HARD RULE: never fetch `GET /api/notifications/vapid-public-key` inside the
  * click handler. The round trip spends the user-activation token and
  * `pushManager.subscribe()` then fails on Safari with a bare `NotAllowedError`.
+ * This getter is therefore always synchronous, with no I/O of any kind.
  *
- * A plain function rather than a module-level const only so tests can vary it;
- * `import.meta.env` is inlined at build time, so this stays a synchronous
- * property read with no I/O of any kind.
+ * Two sources, in order:
+ *  1. the build-time variable, inlined by Vite;
+ *  2. a value primed at boot by {@link primeVapidKey}, well outside any gesture.
+ *
+ * The second exists because the first silently fails in exactly the situation
+ * you cannot test locally: a CI build where the variable was never configured
+ * produces an empty string, and every attempt to enable notifications then dies
+ * with a generic error. The key is public and the server already serves it, so
+ * depending solely on a build argument bought nothing.
  */
+let primedKey = '';
+
 export function vapidPublicKey(): string {
-  return import.meta.env.VITE_VAPID_PUBLIC_KEY ?? '';
+  return import.meta.env.VITE_VAPID_PUBLIC_KEY || primedKey || '';
+}
+
+/**
+ * Fetch and cache the server's public key. Call once at startup — never from a
+ * click handler, for the reason above. Failure is silent: the app simply falls
+ * back to reporting `misconfigured` when somebody tries to subscribe.
+ */
+export async function primeVapidKey(): Promise<void> {
+  if (import.meta.env.VITE_VAPID_PUBLIC_KEY || primedKey) return;
+  try {
+    const response = await fetch('/api/notifications/vapid-public-key');
+    if (!response.ok) return;
+    const body = (await response.json()) as { publicKey?: unknown };
+    if (typeof body.publicKey === 'string' && body.publicKey) primedKey = body.publicKey;
+  } catch {
+    // Offline or the endpoint is unavailable. Nothing to do; `enablePush()`
+    // reports `misconfigured` rather than burning the one-shot OS prompt.
+  }
+}
+
+/** Test seam. */
+export function setPrimedVapidKeyForTests(key: string): void {
+  primedKey = key;
 }
 
 /** base64url → `Uint8Array`, the only form `applicationServerKey` accepts. */

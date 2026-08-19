@@ -246,12 +246,16 @@ function ChannelToggle(props: {
   reason?: string;
   onChange: (checked: boolean) => void;
 }) {
-  const name = props.disabled && props.reason
-    ? `${props.typeLabel}: ${props.label} — ${props.reason}`
-    : `${props.typeLabel}: ${props.label}`;
+  const name =
+    props.disabled && props.reason
+      ? `${props.typeLabel}: ${props.label} — ${props.reason}`
+      : `${props.typeLabel}: ${props.label}`;
 
   return (
-    <div className="flex min-w-0 items-center gap-2" title={props.disabled ? props.reason : undefined}>
+    <div
+      className="flex min-w-0 items-center gap-2"
+      title={props.disabled ? props.reason : undefined}
+    >
       <Switch
         id={props.id}
         aria-label={name}

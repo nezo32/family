@@ -345,6 +345,7 @@ export function GoalFormDialog(props: {
                 </Label>
                 <Switch
                   id="goal-private"
+                  aria-label={GOALS_RU.formPrivate}
                   checked={form.watch('isPrivate')}
                   onCheckedChange={(checked) => {
                     form.setValue('isPrivate', checked, { shouldDirty: true });

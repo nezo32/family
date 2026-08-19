@@ -145,10 +145,13 @@ export default function GoalDetailPage() {
                 caption={reached ? GOALS_RU.statusReached : GOALS_RU.progressLabel}
               />
               <div className="min-w-0 flex-1 space-y-3">
+                {/* Same rule as `GoalCard`: the goal's colour identifies the
+                    goal on the ring, it does not paint the headline figure.
+                    A seeded sky-blue on the biggest number of the screen is
+                    both the least legible text here and a different brand. */}
                 <p className="flex flex-wrap items-baseline justify-center gap-x-2 sm:justify-start">
                   <span
-                    className="text-3xl font-semibold tabular-nums"
-                    style={{ color: accent }}
+                    className="text-3xl font-semibold text-foreground tabular-nums"
                     data-testid="goal-current-amount"
                   >
                     {formatMoney(goal.currentAmount)}

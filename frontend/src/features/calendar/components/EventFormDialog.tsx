@@ -236,6 +236,7 @@ export function EventFormDialog(props: EventFormDialogProps) {
                   render={({ field }) => (
                     <Switch
                       id="event-all-day"
+                      aria-label={CALENDAR_RU.fieldAllDay}
                       checked={Boolean(field.value)}
                       onCheckedChange={field.onChange}
                     />

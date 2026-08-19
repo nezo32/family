@@ -107,7 +107,12 @@ export default function ListPage() {
               htmlFor="shop-mode"
               className="flex min-h-11 cursor-pointer items-center gap-2 text-sm"
             >
-              <Switch id="shop-mode" checked={shopMode} onCheckedChange={setShopMode} />
+              <Switch
+                id="shop-mode"
+                aria-label={SHOPPING_RU.shopMode}
+                checked={shopMode}
+                onCheckedChange={setShopMode}
+              />
               {SHOPPING_RU.shopMode}
             </Label>
             {boughtCount > 0 ? (

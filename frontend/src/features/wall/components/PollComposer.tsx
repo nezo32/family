@@ -145,7 +145,12 @@ export function PollComposer() {
             <Label htmlFor="poll-multiple" className="cursor-pointer">
               {WALL_RU.polls.allowMultiple}
             </Label>
-            <Switch id="poll-multiple" checked={allowMultiple} onCheckedChange={setAllowMultiple} />
+            <Switch
+              id="poll-multiple"
+              aria-label={WALL_RU.polls.allowMultiple}
+              checked={allowMultiple}
+              onCheckedChange={setAllowMultiple}
+            />
           </div>
 
           <div className="space-y-2">

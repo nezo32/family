@@ -163,17 +163,23 @@ export function GoalCard(props: {
               </Button>
             ) : null}
           </div>
-        </CardContent>
+          {/*
+            The progress strip: a wall of these is a wall of progress.
 
-        {/* The progress strip: a wall of these is a wall of progress.
-            `rounded-b-xl` matches the card so the fill follows the corner
-            instead of squaring it off against the card's own border. */}
-        <div className="h-1.5 w-full overflow-hidden rounded-b-xl bg-secondary" aria-hidden>
-          <div
-            className="h-full transition-[width] duration-700 ease-out"
-            style={{ width: `${String(ringPercent(percent))}%`, backgroundColor: accent }}
-          />
-        </div>
+            Inset inside the card's padding rather than bled to its edge. Bled,
+            it sat on top of the card's own 1px border and its corner radius
+            fought the card's — the fill squared off exactly where the card
+            curves, which read as a bar escaping the card. Inset and
+            `rounded-full`, it matches the contributor bars on the detail screen
+            and cannot collide with the frame.
+          */}
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary" aria-hidden>
+            <div
+              className="h-full rounded-full transition-[width] duration-700 ease-out"
+              style={{ width: `${String(ringPercent(percent))}%`, backgroundColor: accent }}
+            />
+          </div>
+        </CardContent>
       </Card>
 
       {props.canContribute ? (
