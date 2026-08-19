@@ -1,6 +1,14 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, CalendarClock, Check, Pencil, RotateCcw, SkipForward, Trash2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  CalendarClock,
+  Check,
+  Pencil,
+  RotateCcw,
+  SkipForward,
+  Trash2,
+} from 'lucide-react';
 import type { EditScope } from '@family/shared';
 import { Can } from '@/shared/auth/Can';
 import { useCan } from '@/shared/auth/use-can';
@@ -150,7 +158,11 @@ export default function TaskDetailPage() {
               <Button
                 className="min-h-12 flex-1"
                 variant={isDone ? 'outline' : 'default'}
-                disabled={complete.isPending || uncomplete.isPending || (!isDone && !can('task:complete', occurrence))}
+                disabled={
+                  complete.isPending ||
+                  uncomplete.isPending ||
+                  (!isDone && !can('task:complete', occurrence))
+                }
                 onClick={() => {
                   if (isDone) uncomplete.mutate({ occurrenceId: occurrence.id });
                   else complete.mutate({ occurrenceId: occurrence.id });

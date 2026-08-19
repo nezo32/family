@@ -11,12 +11,7 @@ import { Textarea } from '@/shared/ui/textarea';
 import { getFamilyTimeZone } from '@/shared/lib/format';
 import { COMMON } from '@/shared/lib/i18n';
 import { TASKS_RU } from '../locale';
-import {
-  ONCE,
-  scheduleFromView,
-  todayKey,
-  type ScheduleValue,
-} from '../recurrence';
+import { ONCE, scheduleFromView, todayKey, type ScheduleValue } from '../recurrence';
 import { ScheduleField } from './ScheduleField';
 import { SegmentedControl } from './SegmentedControl';
 
@@ -132,8 +127,7 @@ export function TaskForm(props: {
 
   const submit = form.handleSubmit((fields) => {
     const scheduleChanged =
-      !props.scheduleLocked &&
-      JSON.stringify({ dtstartLocal, schedule }) !== initial.current;
+      !props.scheduleLocked && JSON.stringify({ dtstartLocal, schedule }) !== initial.current;
     props.onSubmit({ fields, dtstartLocal, schedule, scheduleChanged });
   });
 
@@ -167,7 +161,9 @@ export function TaskForm(props: {
           id="task-notes"
           placeholder={TASKS_RU.form.notesPlaceholder}
           className="min-h-20 text-base"
-          {...form.register('notes', { setValueAs: (value: string) => (value === '' ? null : value) })}
+          {...form.register('notes', {
+            setValueAs: (value: string) => (value === '' ? null : value),
+          })}
         />
         <FieldMessage error={errors.notes} />
       </div>

@@ -167,9 +167,7 @@ export default function ListPage() {
           <EmptyState
             icon={ShoppingCart}
             title={SHOPPING_RU.itemsEmptyTitle}
-            description={
-              canWrite ? SHOPPING_RU.itemsEmptyDescription : SHOPPING_RU.noWriteAccess
-            }
+            description={canWrite ? SHOPPING_RU.itemsEmptyDescription : SHOPPING_RU.noWriteAccess}
           />
         ) : (
           <AisleList
@@ -192,7 +190,7 @@ export default function ListPage() {
          * element inside an iOS PWA jumps around while the software keyboard
          * animates in, and the shell owns the real fixed chrome.
          */
-        <div className="sticky bottom-0 z-20 -mx-4 border-t border-border bg-background/95 px-4 pt-3 pb-safe backdrop-blur-sm">
+        <div className="sticky bottom-0 z-20 -mx-4 border-t border-border bg-background/95 px-4 pt-3 pb-safe backdrop-blur-sm md:-mx-6 md:px-6">
           <QuickAddBar
             catalogue={catalogue}
             onAdd={(drafts) => addItems(drafts)}

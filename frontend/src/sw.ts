@@ -436,7 +436,7 @@ self.addEventListener('pushsubscriptionchange', ((event: Event) => {
  * module reaches into `window` and must not be pulled into the service-worker
  * bundle.
  */
-function urlBase64ToUint8Array(base64: string | undefined): Uint8Array | null {
+function urlBase64ToUint8Array(base64: string | undefined): Uint8Array<ArrayBuffer> | null {
   if (!base64) return null;
   try {
     const padding = '='.repeat((4 - (base64.length % 4)) % 4);

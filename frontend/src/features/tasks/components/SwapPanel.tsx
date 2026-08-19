@@ -34,7 +34,10 @@ function memberName(members: readonly PublicUser[], id: string | null): string {
 }
 
 /** Incoming requests addressed to me (or open to anyone). */
-export function SwapInbox(props: { swaps: readonly SwapResponse[]; members: readonly PublicUser[] }) {
+export function SwapInbox(props: {
+  swaps: readonly SwapResponse[];
+  members: readonly PublicUser[];
+}) {
   const respond = useRespondToSwap();
   const pending = props.swaps.filter((swap) => swap.status === 'pending');
   if (pending.length === 0) return null;
@@ -223,7 +226,11 @@ export function SwapRequestButton(props: {
                     message: message.trim() === '' ? null : message.trim(),
                     bonusPoints: bonus,
                   },
-                  { onSuccess: () => { setOpen(false); } },
+                  {
+                    onSuccess: () => {
+                      setOpen(false);
+                    },
+                  },
                 );
               }}
             >

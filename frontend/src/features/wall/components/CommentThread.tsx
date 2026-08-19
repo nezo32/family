@@ -8,7 +8,14 @@ import { InlineSpinner } from '@/shared/components';
 import { ConfirmDialog } from '@/shared/components';
 import { cn } from '@/shared/lib/utils';
 import { COMMON } from '@/shared/lib/i18n';
-import { flattenComments, isOptimistic, useAddComment, useComments, useDeleteComment, useRoster } from '../hooks';
+import {
+  flattenComments,
+  isOptimistic,
+  useAddComment,
+  useComments,
+  useDeleteComment,
+  useRoster,
+} from '../hooks';
 import { WALL_RU } from '../locale';
 import { AuthorLine } from './AuthorLine';
 
@@ -35,7 +42,9 @@ export function CommentThread(props: { target: EntityRef; commentCount: number }
           setOpen((value) => !value);
         }}
       >
-        {props.commentCount > 0 ? WALL_RU.comments.count(props.commentCount) : WALL_RU.comments.toggle}
+        {props.commentCount > 0
+          ? WALL_RU.comments.count(props.commentCount)
+          : WALL_RU.comments.toggle}
       </Button>
       {open ? <CommentList target={props.target} /> : null}
     </div>
@@ -109,7 +118,12 @@ function CommentList(props: { target: EntityRef }) {
             className="text-base"
           />
           <div className="flex justify-end">
-            <Button type="submit" size="sm" className="min-h-11 px-4" disabled={draft.trim().length === 0}>
+            <Button
+              type="submit"
+              size="sm"
+              className="min-h-11 px-4"
+              disabled={draft.trim().length === 0}
+            >
               {add.isPending ? <InlineSpinner className="mr-2" /> : null}
               {add.isPending ? WALL_RU.comments.sending : WALL_RU.comments.send}
             </Button>

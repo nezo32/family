@@ -116,7 +116,9 @@ export function PollComposer() {
                     className="size-11 shrink-0 text-muted-foreground"
                     aria-label={WALL_RU.polls.removeOption}
                     onClick={() => {
-                      setOptions((current) => current.filter((_item, position) => position !== index));
+                      setOptions((current) =>
+                        current.filter((_item, position) => position !== index),
+                      );
                     }}
                   >
                     <X className="size-4" aria-hidden />

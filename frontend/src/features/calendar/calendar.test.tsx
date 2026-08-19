@@ -3,11 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
-import type {
-  EventOccurrenceResponse,
-  EventSeriesResponse,
-  PublicUser,
-} from '@family/shared';
+import type { EventOccurrenceResponse, EventSeriesResponse, PublicUser } from '@family/shared';
 
 /* -------------------------------------------------------------------------- */
 /* API stub                                                                    */
@@ -393,7 +389,9 @@ describe('birthdays', () => {
 
     const detail = await screen.findByTestId('event-detail');
     expect(within(detail).getByTestId('birthday-age')).toHaveTextContent('исполняется 9');
-    expect(within(detail).getByText(/Дата рождения меняется в профиле участника/)).toBeInTheDocument();
+    expect(
+      within(detail).getByText(/Дата рождения меняется в профиле участника/),
+    ).toBeInTheDocument();
     expect(within(detail).queryByRole('button', { name: /Изменить/ })).toBeNull();
     expect(within(detail).queryByRole('button', { name: /Удалить/ })).toBeNull();
   });
@@ -485,10 +483,7 @@ describe('recurrence builder grammar', () => {
     });
 
     expect(
-      buildRecurrenceSpec(
-        { ...base, arm: 'weekly', ends: { type: 'after', count: 8 } },
-        anchor,
-      ),
+      buildRecurrenceSpec({ ...base, arm: 'weekly', ends: { type: 'after', count: 8 } }, anchor),
     ).toEqual({
       mode: 'preset',
       preset: { kind: 'weekly', interval: 1, weekdays: ['MO', 'TU'] },
@@ -504,12 +499,7 @@ describe('recurrence builder grammar', () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
 
-    render(
-      <RecurrenceBuilder
-        value={{ ...base, arm: 'once' }}
-        onChange={onChange}
-      />,
-    );
+    render(<RecurrenceBuilder value={{ ...base, arm: 'once' }} onChange={onChange} />);
 
     await user.click(screen.getByRole('radio', { name: 'По дням недели' }));
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ arm: 'weekly', interval: 1 }));

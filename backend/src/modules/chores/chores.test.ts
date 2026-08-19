@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Db } from '../../core/db.js';
 import type { AssignmentRun } from './chores.service.js';
+import type * as RealChoresRepo from './chores.repository.js';
 import {
   materializeThroughPort,
-  TASK_TARGET,
   type ExtraColumnValue,
   type MaterializerPort,
   type PlannedOccurrence,
@@ -529,6 +529,7 @@ describe('swaps', () => {
     store.members.push(
       { rotationId: ROTATION, userId: TEEN, weight: '1.00', position: 0, active: true },
       { rotationId: ROTATION, userId: CHILD, weight: '1.00', position: 1, active: true },
+      { rotationId: ROTATION, userId: ADULT, weight: '1.00', position: 2, active: true },
     );
   });
 
@@ -661,10 +662,12 @@ describe('fairnessSummary — the neutral load bar', () => {
     expect(adult?.fairShare).toBeCloseTo(1 / 1.4, 4);
     expect(child?.fairShare).toBeCloseTo(0.4 / 1.4, 4);
     expect(adult?.actualShare).toBeCloseTo(70 / 98, 4);
+    // 70 points on one unit of weight and 28 on 0.4 of a unit is the *same*
+    // load per unit — equal debt is the definition of balanced here, and the
+    // family-level number says so with a single 0.
     expect(adult?.debt).toBe(70);
     expect(child?.debt).toBe(70);
-    // Equal debt per unit of weight is the definition of balanced here.
-    expect(summary.imbalance).toBeCloseTo(0.5, 1);
+    expect(summary.imbalance).toBeCloseTo(0, 4);
 
     // No rank field, anywhere, ever (D5).
     for (const member of summary.members) {
@@ -900,9 +903,7 @@ describe('assignment is written once at materialization and frozen (D5)', () => 
 
 describe('cursor encoding', () => {
   it('round-trips and rejects rubbish', async () => {
-    const actual = await vi.importActual<typeof import('./chores.repository.js')>(
-      './chores.repository.js',
-    );
+    const actual = await vi.importActual<typeof RealChoresRepo>('./chores.repository.js');
     const row = { createdAt: T0, id: OCCURRENCE };
     expect(actual.decodeCursor(actual.encodeCursor(row))).toEqual(row);
     expect(() => actual.decodeCursor('not-a-cursor')).toThrow();
@@ -926,9 +927,7 @@ const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!TEST_DATABASE_URL)('chores against Postgres', () => {
   it('computes earned and committed for a roster in one query', async () => {
-    const actual = await vi.importActual<typeof import('./chores.repository.js')>(
-      './chores.repository.js',
-    );
+    const actual = await vi.importActual<typeof RealChoresRepo>('./chores.repository.js');
     const { createDbClient } = await import('../../core/db.js');
     const { users } = await import('../identity/users.schema.js');
     const { rotationMembers, rotations, pointsLedger } = await import('./chores.schema.js');
@@ -978,9 +977,7 @@ describe.skipIf(!TEST_DATABASE_URL)('chores against Postgres', () => {
   });
 
   it('refuses a second chore_completed award for the same occurrence and user', async () => {
-    const actual = await vi.importActual<typeof import('./chores.repository.js')>(
-      './chores.repository.js',
-    );
+    const actual = await vi.importActual<typeof RealChoresRepo>('./chores.repository.js');
     const { createDbClient } = await import('../../core/db.js');
     const { users } = await import('../identity/users.schema.js');
     const { pointsLedger } = await import('./chores.schema.js');

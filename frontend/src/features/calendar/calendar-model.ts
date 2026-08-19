@@ -212,10 +212,9 @@ export function compareOccurrences(
 }
 
 /** `dateKey -> occurrences`, an occurrence repeated on every day it spans. */
-export function indexByDay<T extends DatedOccurrence & Pick<EventOccurrenceResponse, 'isAllDay' | 'startsLocal' | 'title'>>(
-  occurrences: readonly T[],
-  timeZone?: string,
-): Map<DateKey, T[]> {
+export function indexByDay<
+  T extends DatedOccurrence & Pick<EventOccurrenceResponse, 'isAllDay' | 'startsLocal' | 'title'>,
+>(occurrences: readonly T[], timeZone?: string): Map<DateKey, T[]> {
   const index = new Map<DateKey, T[]>();
   for (const occurrence of occurrences) {
     for (const key of occurrenceDayKeys(occurrence, timeZone)) {
@@ -238,10 +237,9 @@ export interface DayGroup<T> {
  * Days an event merely spans into are included, so a three-day trip shows up
  * on all three days rather than only on the day it started.
  */
-export function groupByDay<T extends DatedOccurrence & Pick<EventOccurrenceResponse, 'isAllDay' | 'startsLocal' | 'title'>>(
-  occurrences: readonly T[],
-  timeZone?: string,
-): DayGroup<T>[] {
+export function groupByDay<
+  T extends DatedOccurrence & Pick<EventOccurrenceResponse, 'isAllDay' | 'startsLocal' | 'title'>,
+>(occurrences: readonly T[], timeZone?: string): DayGroup<T>[] {
   const index = indexByDay(occurrences, timeZone);
   return [...index.entries()]
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))

@@ -121,10 +121,7 @@ export function TaskCard(props: {
             >
               {occurrence.title}
             </span>
-            <ChevronRight
-              className="mt-1 size-4 shrink-0 text-muted-foreground/60"
-              aria-hidden
-            />
+            <ChevronRight className="mt-1 size-4 shrink-0 text-muted-foreground/60" aria-hidden />
           </span>
 
           <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">

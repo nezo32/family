@@ -76,7 +76,11 @@ export function CreateListDialog(props: {
             >
               {COMMON.cancel}
             </Button>
-            <Button type="submit" className="min-h-11" disabled={trimmed.length === 0 || props.pending}>
+            <Button
+              type="submit"
+              className="min-h-11"
+              disabled={trimmed.length === 0 || props.pending}
+            >
               {props.pending ? COMMON.saving : SHOPPING_RU.createList}
             </Button>
           </DialogFooter>

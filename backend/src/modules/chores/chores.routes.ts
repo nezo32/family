@@ -36,7 +36,6 @@ import {
 
 import { getDb } from '../../core/db.js';
 import { unauthenticated } from '../../core/errors.js';
-import { registerChoreJobs } from './chores.jobs.js';
 import { ChoresService, type ChoreActor } from './chores.service.js';
 
 /**
@@ -89,12 +88,6 @@ function actorOf(request: FastifyRequest): ChoreActor {
 const choresRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const service = new ChoresService(getDb());
-
-  // Swap expiry and streak maintenance. Registering here means the handlers
-  // exist whenever the module is loaded, and `startWorkers` skips repeatables
-  // whose handler is missing — so a half-deployed module never queues work
-  // nothing can run.
-  registerChoreJobs();
 
   /* ----------------------------- rotations ----------------------------- */
 

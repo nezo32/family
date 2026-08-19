@@ -104,7 +104,10 @@ export function bulkAddItems(listId: string, body: BulkAddItems): Promise<BulkAd
   return api.post<BulkAddItemsResponse>(`/shopping/lists/${listId}/items/bulk`, body);
 }
 
-export function updateItem(itemId: string, body: UpdateShoppingItem): Promise<ShoppingItemResponse> {
+export function updateItem(
+  itemId: string,
+  body: UpdateShoppingItem,
+): Promise<ShoppingItemResponse> {
   return api.patch<ShoppingItemResponse>(`/shopping/items/${itemId}`, body);
 }
 

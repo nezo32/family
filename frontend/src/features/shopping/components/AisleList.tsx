@@ -29,7 +29,8 @@ export function AisleList(props: {
   const tail = boughtTail(props.items);
 
   const isPending = (item: ShoppingItemResponse): boolean =>
-    props.pendingIds.has(item.id) || (item.clientId !== null && props.pendingIds.has(item.clientId));
+    props.pendingIds.has(item.id) ||
+    (item.clientId !== null && props.pendingIds.has(item.clientId));
 
   return (
     <div className="space-y-5">

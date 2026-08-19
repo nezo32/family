@@ -190,9 +190,7 @@ export function RecurrenceBuilder(props: {
                   });
                 }}
               />
-              <p className="text-xs text-muted-foreground">
-                {TASKS_RU.recurrence.dayOfMonthHint}
-              </p>
+              <p className="text-xs text-muted-foreground">{TASKS_RU.recurrence.dayOfMonthHint}</p>
             </div>
           ) : null}
 

@@ -53,7 +53,9 @@ export function EventRow(props: {
 
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
-          {isBirthday ? <Cake className="size-3.5 shrink-0 text-muted-foreground" aria-hidden /> : null}
+          {isBirthday ? (
+            <Cake className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          ) : null}
           <span
             className={cn(
               'truncate text-sm font-medium text-foreground',

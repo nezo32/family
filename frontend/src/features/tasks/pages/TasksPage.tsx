@@ -53,12 +53,9 @@ export default function TasksPage() {
   const categories = useMemo(() => collectCategories(items), [items]);
   const roster = members.data ?? [];
 
-  const visibleGroups = filters.showDone
-    ? groups
-    : { ...groups, done: [], skipped: [] };
+  const visibleGroups = filters.showDone ? groups : { ...groups, done: [], skipped: [] };
   const hasVisible = Object.values(visibleGroups).some((group) => group.length > 0);
-  const filtersActive =
-    filters.assignee.kind !== 'all' || filters.category !== null;
+  const filtersActive = filters.assignee.kind !== 'all' || filters.category !== null;
 
   return (
     <>

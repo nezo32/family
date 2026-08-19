@@ -14,7 +14,10 @@ import { WidgetCard } from './WidgetCard';
  * The second line is the week *ahead*, from `GET /dashboard/week` — it answers
  * "is tomorrow going to be busy" without leaving the home screen.
  */
-export function LoadWidget(props: { fairness: DashboardFairness; week?: WeekResponse | undefined }) {
+export function LoadWidget(props: {
+  fairness: DashboardFairness;
+  week?: WeekResponse | undefined;
+}) {
   const me = props.fairness.me;
   const share = Math.max(0, Math.min(100, me.sharePercent));
   const ahead = props.week?.totals;

@@ -61,18 +61,15 @@ export function EditScopeDialog(props: {
     >
       <DialogContent className="max-w-[min(32rem,calc(100vw-2rem))]">
         <DialogHeader>
-          <DialogTitle>{isDelete ? TASKS_RU.scope.deleteTitle : TASKS_RU.scope.editTitle}</DialogTitle>
+          <DialogTitle>
+            {isDelete ? TASKS_RU.scope.deleteTitle : TASKS_RU.scope.editTitle}
+          </DialogTitle>
           <DialogDescription>
             {isDelete ? TASKS_RU.scope.deleteDescription : TASKS_RU.scope.description}
           </DialogDescription>
         </DialogHeader>
 
-        <SegmentedControl<EditScope>
-          value={scope}
-          options={options}
-          onChange={setScope}
-          stacked
-        />
+        <SegmentedControl<EditScope> value={scope} options={options} onChange={setScope} stacked />
 
         <DialogFooter>
           <Button

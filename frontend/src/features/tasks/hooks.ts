@@ -139,7 +139,10 @@ function useOptimisticOccurrence() {
 
     queryClient.setQueriesData<OccurrencePage>({ queryKey: taskKeys.lists() }, (page) =>
       page
-        ? { ...page, items: page.items.map((item) => (item.id === occurrenceId ? patch(item) : item)) }
+        ? {
+            ...page,
+            items: page.items.map((item) => (item.id === occurrenceId ? patch(item) : item)),
+          }
         : page,
     );
     if (detail) queryClient.setQueryData(taskKeys.detail(occurrenceId), patch(detail));
@@ -260,8 +263,13 @@ export function useAssignOccurrence() {
   const { apply, rollback, settle } = useOptimisticOccurrence();
 
   return useMutation({
-    mutationFn: ({ occurrenceId, assigneeId }: { occurrenceId: string; assigneeId: string | null }) =>
-      assignOccurrence(occurrenceId, { assigneeId }),
+    mutationFn: ({
+      occurrenceId,
+      assigneeId,
+    }: {
+      occurrenceId: string;
+      assigneeId: string | null;
+    }) => assignOccurrence(occurrenceId, { assigneeId }),
     onMutate: ({ occurrenceId, assigneeId }) =>
       apply(occurrenceId, (occurrence) => ({
         ...occurrence,

@@ -31,7 +31,7 @@ export function FrequentStrip(props: {
       </h2>
       <ul
         data-scroll-pane
-        className="-mx-4 flex snap-x gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="-mx-4 flex snap-x gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] md:-mx-6 md:px-6 [&::-webkit-scrollbar]:hidden"
       >
         {props.products.map((product) => (
           <li key={product.id} className="snap-start">

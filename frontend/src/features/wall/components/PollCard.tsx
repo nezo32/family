@@ -149,7 +149,9 @@ export function PollCard(props: { poll: PollResponse; roster: Roster }) {
                       className={cn(
                         'flex size-5 shrink-0 items-center justify-center border',
                         poll.allowMultiple ? 'rounded-sm' : 'rounded-full',
-                        isChosen ? 'border-primary bg-primary text-primary-foreground' : 'border-input',
+                        isChosen
+                          ? 'border-primary bg-primary text-primary-foreground'
+                          : 'border-input',
                       )}
                     >
                       {isChosen ? <Check className="size-3.5" /> : null}
@@ -174,7 +176,9 @@ export function PollCard(props: { poll: PollResponse; roster: Roster }) {
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground">
-          {poll.totalVoters > 0 ? WALL_RU.polls.totalVoters(poll.totalVoters) : WALL_RU.polls.noVotesYet}
+          {poll.totalVoters > 0
+            ? WALL_RU.polls.totalVoters(poll.totalVoters)
+            : WALL_RU.polls.noVotesYet}
         </p>
         <div className="flex flex-wrap items-center gap-2">
           {mayVote && poll.allowMultiple ? (

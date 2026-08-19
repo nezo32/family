@@ -43,7 +43,11 @@ export function GoalWidget(props: { milestone: DashboardMilestone | null }) {
         <p className="truncate text-xs text-muted-foreground">{milestone.goalTitle}</p>
       ) : null}
 
-      <Progress value={milestone.progressPercent} className="mt-3 h-2.5" aria-label={milestone.title} />
+      <Progress
+        value={milestone.progressPercent}
+        className="mt-3 h-2.5"
+        aria-label={milestone.title}
+      />
 
       <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <span className="text-sm font-semibold text-foreground">

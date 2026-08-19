@@ -120,7 +120,7 @@ export function ItemRow(props: {
 }
 
 /** «2 кг», «3 шт», «1,5» — the unit is optional and the number is Russian-formatted. */
-export function formatQuantity(item: ShoppingItemResponse): string | null {
+function formatQuantity(item: ShoppingItemResponse): string | null {
   if (item.quantity === null && !item.unit) return null;
   if (item.quantity === null) return item.unit;
   // `formatNumber` pads to a fixed number of decimals; a quantity wants a

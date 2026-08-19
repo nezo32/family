@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
+import type { z } from 'zod';
 import {
   eventSeriesCreateSchema,
   type EditScope,
@@ -25,13 +25,7 @@ import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { Textarea } from '@/shared/ui/textarea';
 import { Switch } from '@/shared/ui/switch';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/shared/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
 import { InlineSpinner } from '@/shared/components/LoadingScreen';
 import { UserAvatar } from '@/shared/components/UserAvatar';
 import { cn } from '@/shared/lib/utils';
@@ -312,9 +306,7 @@ export function EventFormDialog(props: EventFormDialogProps) {
             {scheduleUnparsed ? (
               <p className="rounded-lg bg-muted/60 p-3 text-sm text-muted-foreground">
                 {CALENDAR_RU.scheduleNotEditable}
-                <span className="mt-1 block text-foreground">
-                  {series?.recurrence.summary}
-                </span>
+                <span className="mt-1 block text-foreground">{series?.recurrence.summary}</span>
               </p>
             ) : (
               <RecurrenceBuilder
@@ -522,9 +514,7 @@ export function EventFormDialog(props: EventFormDialogProps) {
                           <SelectItem value="restricted">
                             {CALENDAR_RU.visibility.restricted}
                           </SelectItem>
-                          <SelectItem value="private">
-                            {CALENDAR_RU.visibility.private}
-                          </SelectItem>
+                          <SelectItem value="private">{CALENDAR_RU.visibility.private}</SelectItem>
                         </SelectContent>
                       </Select>
                     )}

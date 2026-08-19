@@ -42,7 +42,9 @@ export function AuthorLine(props: {
           {relativeTime(props.createdAt)}
         </time>
       </div>
-      {props.trailing ? <div className="flex shrink-0 items-center gap-1">{props.trailing}</div> : null}
+      {props.trailing ? (
+        <div className="flex shrink-0 items-center gap-1">{props.trailing}</div>
+      ) : null}
     </div>
   );
 }

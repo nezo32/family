@@ -363,7 +363,10 @@ export async function toggleReaction(
   input: { emoji: string },
 ): Promise<ReactionListResponse> {
   const entityType = assertEntityType(ref.entityType);
-  if (!auth.can('kudos:give')) throw forbidden('Missing permission: kudos:give');
+  // Reacting is a comment-level act, not kudos. `kudos:give` is the deliberate
+  // "thank you" to a person; an emoji on a post is the lightweight equivalent
+  // of leaving a comment, so it rides on the same permission.
+  if (!auth.can('comment:create')) throw forbidden('Missing permission: comment:create');
   await assertCanReadEntity(exec, { entityType, entityId: ref.entityId }, auth);
 
   const emoji = input.emoji.trim();

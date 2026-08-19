@@ -13,13 +13,7 @@ import {
 } from '@/shared/ui/dialog';
 import { Label } from '@/shared/ui/label';
 import { Textarea } from '@/shared/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/shared/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { cn } from '@/shared/lib/utils';
 import { COMMON, relativeTime } from '@/shared/lib/i18n';
@@ -96,7 +90,9 @@ export function KudosPanel() {
                       : 'bg-muted text-muted-foreground',
                   )}
                 >
-                  {row.received > 0 ? WALL_RU.kudos.received(row.received) : WALL_RU.kudos.receivedNone}
+                  {row.received > 0
+                    ? WALL_RU.kudos.received(row.received)
+                    : WALL_RU.kudos.receivedNone}
                 </span>
               </li>
             ))}

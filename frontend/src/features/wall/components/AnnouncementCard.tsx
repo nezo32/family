@@ -67,9 +67,7 @@ export function AnnouncementCard(props: {
                 {WALL_RU.post.pinned}
               </Badge>
             ) : null}
-            {isSystem ? (
-              <Sparkles className="size-4 text-muted-foreground" aria-hidden />
-            ) : null}
+            {isSystem ? <Sparkles className="size-4 text-muted-foreground" aria-hidden /> : null}
             <PostMenu
               post={post}
               onPin={(pinnedUntil) => {
@@ -94,7 +92,9 @@ export function AnnouncementCard(props: {
             {post.title}
           </h3>
         ) : null}
-        <p className="wrap-break-word text-sm whitespace-pre-wrap text-foreground/90">{post.body}</p>
+        <p className="wrap-break-word text-sm whitespace-pre-wrap text-foreground/90">
+          {post.body}
+        </p>
         {post.isPinned && post.pinnedUntil ? (
           <p className="text-xs text-muted-foreground">
             {WALL_RU.post.pinnedUntil(formatDateTime(post.pinnedUntil))}

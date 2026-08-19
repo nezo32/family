@@ -7,13 +7,7 @@ import { ErrorState } from '@/shared/components/ErrorState';
 import { Can } from '@/shared/auth/Can';
 import { Button } from '@/shared/ui/button';
 import { Skeleton } from '@/shared/ui/skeleton';
-import {
-  indexByDay,
-  monthGridRange,
-  monthKeyOf,
-  todayKey,
-  type DateKey,
-} from '../calendar-model';
+import { indexByDay, monthGridRange, monthKeyOf, todayKey, type DateKey } from '../calendar-model';
 import {
   ageForOccurrence,
   useBirthdayAnchors,

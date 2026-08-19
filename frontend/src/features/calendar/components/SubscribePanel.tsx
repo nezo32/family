@@ -72,10 +72,7 @@ export function SubscribePanel(props: { className?: string }) {
       <p className="text-sm text-muted-foreground">{CALENDAR_RU.subscribe.lead}</p>
 
       <div className="space-y-2">
-        <label
-          htmlFor="calendar-feed-url"
-          className="text-xs font-medium text-muted-foreground"
-        >
+        <label htmlFor="calendar-feed-url" className="text-xs font-medium text-muted-foreground">
           {CALENDAR_RU.subscribe.urlLabel}
         </label>
         <div className="flex flex-col gap-2 sm:flex-row">
@@ -114,9 +111,7 @@ export function SubscribePanel(props: { className?: string }) {
       </div>
 
       <div className="rounded-xl bg-muted/60 p-3">
-        <h3 className="text-sm font-medium text-foreground">
-          {CALENDAR_RU.subscribe.iphoneTitle}
-        </h3>
+        <h3 className="text-sm font-medium text-foreground">{CALENDAR_RU.subscribe.iphoneTitle}</h3>
         <ol className="mt-2 list-decimal space-y-1 pl-4 text-sm text-muted-foreground">
           {CALENDAR_RU.subscribe.iphoneSteps.map((step) => (
             <li key={step}>{step}</li>
@@ -149,9 +144,7 @@ export function SubscribeDialog(props: { trigger?: React.ReactNode }) {
       <DialogContent className="max-h-[85dvh] max-w-lg overflow-y-auto" data-scroll-pane>
         <DialogHeader>
           <DialogTitle>{CALENDAR_RU.subscribe.title}</DialogTitle>
-          <DialogDescription className="sr-only">
-            {CALENDAR_RU.subscribe.lead}
-          </DialogDescription>
+          <DialogDescription className="sr-only">{CALENDAR_RU.subscribe.lead}</DialogDescription>
         </DialogHeader>
         <SubscribePanel />
       </DialogContent>

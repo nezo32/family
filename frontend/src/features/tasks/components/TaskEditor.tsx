@@ -7,12 +7,7 @@ import {
   type TaskOccurrenceResponse,
   type TaskSeriesResponse,
 } from '@family/shared';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/shared/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/shared/ui/dialog';
 import { getFamilyTimeZone } from '@/shared/lib/format';
 import { notify } from '@/shared/lib/toast';
 import { TASKS_RU } from '../locale';

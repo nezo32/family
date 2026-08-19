@@ -167,7 +167,9 @@ export async function createPost(body: CreatePost): Promise<PostResponse> {
 
 /** `pinnedUntil: null` unpins. Pins always expire — a boolean would stay forever. */
 export async function setPostPin(id: string, pinnedUntil: string | null): Promise<PostResponse> {
-  return postResponseSchema.parse(await api.post<unknown>(`/wall/posts/${id}/pin`, { pinnedUntil }));
+  return postResponseSchema.parse(
+    await api.post<unknown>(`/wall/posts/${id}/pin`, { pinnedUntil }),
+  );
 }
 
 export async function deletePost(id: string): Promise<void> {
@@ -276,7 +278,9 @@ export async function createPoll(body: CreatePoll): Promise<PollResponse> {
 
 /** Replaces the caller's selection. A closed poll answers `409 CONFLICT`. */
 export async function votePoll(id: string, optionIds: string[]): Promise<PollResponse> {
-  return pollResponseSchema.parse(await api.post<unknown>(`/wall/polls/${id}/votes`, { optionIds }));
+  return pollResponseSchema.parse(
+    await api.post<unknown>(`/wall/polls/${id}/votes`, { optionIds }),
+  );
 }
 
 /** Closing is one-way; reopening is deliberately not offered. */

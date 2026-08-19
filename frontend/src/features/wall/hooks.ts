@@ -375,7 +375,8 @@ export function useToggleReaction(
   const key = useMemo(() => wallKeys.reactions({ entityType, entityId }), [entityType, entityId]);
 
   return useMutation<ReactionSummary[], Error, string, ReactionSnapshot>({
-    mutationFn: (emoji: string) => toggleReaction(ref, emoji).then((response) => response.reactions),
+    mutationFn: (emoji: string) =>
+      toggleReaction(ref, emoji).then((response) => response.reactions),
     onMutate: async (emoji) => {
       await queryClient.cancelQueries({ queryKey: key });
       const previous = queryClient.getQueryData<ReactionSummary[]>(key);
@@ -492,8 +493,9 @@ export function useVotePoll(): UseMutationResult<
     mutationFn: ({ pollId, optionIds }) => votePoll(pollId, optionIds),
     onMutate: async ({ pollId, optionIds }) => {
       await queryClient.cancelQueries({ queryKey: POLLS_ROOT });
-      const previous =
-        queryClient.getQueriesData<InfiniteData<PollListResponse>>({ queryKey: POLLS_ROOT });
+      const previous = queryClient.getQueriesData<InfiniteData<PollListResponse>>({
+        queryKey: POLLS_ROOT,
+      });
       patchPollCaches(queryClient, pollId, (poll) => applyVote(poll, optionIds, userId));
       return { previous };
     },
@@ -608,7 +610,8 @@ export function useRoster(): Roster {
     return {
       byId,
       members,
-      nameOf: (id) => (id ? (byId.get(id)?.displayName ?? WALL_RU.feed.unknownAuthor) : WALL_RU.feed.systemAuthor),
+      nameOf: (id) =>
+        id ? (byId.get(id)?.displayName ?? WALL_RU.feed.unknownAuthor) : WALL_RU.feed.systemAuthor,
     };
   }, [query.data]);
 }

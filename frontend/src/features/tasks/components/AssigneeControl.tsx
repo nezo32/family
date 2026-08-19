@@ -4,12 +4,7 @@ import type { PublicUser, TaskOccurrenceResponse } from '@family/shared';
 import { useCan } from '@/shared/auth/use-can';
 import { UserAvatar } from '@/shared/components/UserAvatar';
 import { Button } from '@/shared/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/shared/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/shared/ui/dialog';
 import { cn } from '@/shared/lib/utils';
 import { TASKS_RU } from '../locale';
 import { useAssignOccurrence, useClaimOccurrence } from '../hooks';

@@ -571,10 +571,14 @@ export function useWakeLock(enabled: boolean): void {
 /* -------------------------------------------------------------------------- */
 
 /** Products the family buys most, minus what is already on this list. */
-export function useFrequentSuggestions(items: readonly ShoppingItemResponse[]): ProductSuggestion[] {
+export function useFrequentSuggestions(
+  items: readonly ShoppingItemResponse[],
+): ProductSuggestion[] {
   const { data } = useFrequentProducts();
   return useMemo(() => {
-    const present = new Set(items.filter((i) => i.state === 'needed').map((i) => normalizeProductName(i.name)));
+    const present = new Set(
+      items.filter((i) => i.state === 'needed').map((i) => normalizeProductName(i.name)),
+    );
     return (data ?? []).filter((product) => !present.has(normalizeProductName(product.name)));
   }, [data, items]);
 }

@@ -295,7 +295,8 @@ const wallRoutes: FastifyPluginAsync = async (fastify) => {
     app.post(
       `/${segment}/:id/reactions`,
       {
-        config: { permission: 'kudos:give' },
+        // Reacting is comment-level, not kudos-level. See comments.service.ts.
+        config: { permission: 'comment:create' },
         schema: {
           tags: ['wall'],
           summary: 'Idempotent toggle; returns the fresh summary',

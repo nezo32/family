@@ -54,8 +54,22 @@ function makeMe(permissions: Permission[]): Me {
 
 const ROSTER = {
   items: [
-    { id: ME_ID, displayName: 'Мама', avatarUrl: null, color: null, role: 'adult', status: 'active' },
-    { id: OTHER_ID, displayName: 'Лиза', avatarUrl: null, color: null, role: 'teen', status: 'active' },
+    {
+      id: ME_ID,
+      displayName: 'Мама',
+      avatarUrl: null,
+      color: null,
+      role: 'adult',
+      status: 'active',
+    },
+    {
+      id: OTHER_ID,
+      displayName: 'Лиза',
+      avatarUrl: null,
+      color: null,
+      role: 'teen',
+      status: 'active',
+    },
   ],
   pendingCount: 0,
 };
@@ -117,7 +131,13 @@ function pollPayload(overrides: { isClosed: boolean; myOptionIds: string[] }) {
         isClosed: overrides.isClosed,
         createdById: OTHER_ID,
         options: [
-          { id: OPTION_A, label: 'На дачу', sortOrder: 0, voteCount: 2, voterIds: [ME_ID, OTHER_ID] },
+          {
+            id: OPTION_A,
+            label: 'На дачу',
+            sortOrder: 0,
+            voteCount: 2,
+            voterIds: [ME_ID, OTHER_ID],
+          },
           { id: OPTION_B, label: 'В город', sortOrder: 1, voteCount: 1, voterIds: [] },
         ],
         totalVoters: 3,
@@ -289,13 +309,20 @@ describe('polls', () => {
     await user.click(second);
 
     await waitFor(() => {
-      expect(screen.getByRole('radio', { name: /В город/ })).toHaveAttribute('aria-checked', 'true');
+      expect(screen.getByRole('radio', { name: /В город/ })).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
     });
     // Replaced, not added: the previous option is deselected and gives its vote
     // back, and the number of voters is unchanged.
     expect(screen.getByRole('radio', { name: /На дачу/ })).toHaveAttribute('aria-checked', 'false');
-    expect(within(screen.getByRole('radio', { name: /На дачу/ })).getByText('33%')).toBeInTheDocument();
-    expect(within(screen.getByRole('radio', { name: /В город/ })).getByText('67%')).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('radio', { name: /На дачу/ })).getByText('33%'),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('radio', { name: /В город/ })).getByText('67%'),
+    ).toBeInTheDocument();
     expect(screen.getByText(WALL_RU.polls.totalVoters(3))).toBeInTheDocument();
 
     expect(postSpy).toHaveBeenCalledWith(`/wall/polls/${POLL_ID}/votes`, { optionIds: [OPTION_B] });

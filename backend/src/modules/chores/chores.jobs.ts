@@ -97,7 +97,7 @@ let registered = false;
 
 /**
  * Idempotent: `registerJobHandler` throws on a duplicate name, and this module
- * is imported both by the routes plugin and by the worker entrypoint.
+ * is imported both for its side effect (below) and, in tests, directly.
  */
 export function registerChoreJobs(): void {
   if (registered) return;
@@ -111,3 +111,7 @@ export function registerChoreJobs(): void {
     await runStreakMaintenance(getDb());
   });
 }
+
+// Self-registering on import, matching `notifications.jobs.ts` and
+// `events.jobs.ts`: `modules/jobs.ts` is a barrel of bare imports.
+registerChoreJobs();

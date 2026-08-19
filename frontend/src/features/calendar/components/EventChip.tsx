@@ -61,10 +61,7 @@ export function AttendeeAvatars(props: {
   if (shown.length === 0) return null;
 
   return (
-    <span
-      className="flex shrink-0 items-center -space-x-1.5"
-      aria-label={CALENDAR_RU.attendees}
-    >
+    <span className="flex shrink-0 items-center -space-x-1.5" aria-label={CALENDAR_RU.attendees}>
       {shown.map((attendee) => {
         const member = props.members.get(attendee.userId);
         const name = member?.displayName ?? '?';

@@ -35,10 +35,7 @@ export function SegmentedControl<T extends string>(props: {
       <div
         role="radiogroup"
         aria-label={props.label}
-        className={cn(
-          'gap-2',
-          props.stacked ? 'flex flex-col' : 'grid grid-cols-2 sm:grid-cols-3',
-        )}
+        className={cn('gap-2', props.stacked ? 'flex flex-col' : 'grid grid-cols-2 sm:grid-cols-3')}
       >
         {props.options.map((option) => {
           const selected = option.value === props.value;

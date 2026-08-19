@@ -295,9 +295,7 @@ describe('offline banner', () => {
   });
 
   it('explains itself when the device is offline', () => {
-    render(
-      <OfflineBanner online={false} pending={0} flushing={false} onRetry={() => undefined} />,
-    );
+    render(<OfflineBanner online={false} pending={0} flushing={false} onRetry={() => undefined} />);
     expect(screen.getByTestId('offline-banner')).toHaveTextContent('Нет сети');
   });
 });

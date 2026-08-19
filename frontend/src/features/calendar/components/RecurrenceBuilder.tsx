@@ -2,7 +2,11 @@ import type { RecurrenceEnd, Weekday } from '@family/shared';
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { cn } from '@/shared/lib/utils';
-import { toFloatingLocal, type RecurrenceArm, type RecurrenceBuilderState } from '../calendar-model';
+import {
+  toFloatingLocal,
+  type RecurrenceArm,
+  type RecurrenceBuilderState,
+} from '../calendar-model';
 import { CALENDAR_RU } from '../locale';
 
 /**
@@ -68,7 +72,11 @@ export function RecurrenceBuilder(props: {
         {CALENDAR_RU.recurrence.legend}
       </legend>
 
-      <div role="radiogroup" aria-label={CALENDAR_RU.recurrence.legend} className="grid grid-cols-2 gap-2">
+      <div
+        role="radiogroup"
+        aria-label={CALENDAR_RU.recurrence.legend}
+        className="grid grid-cols-2 gap-2"
+      >
         {ARMS.map((arm) => (
           <button
             key={arm}
@@ -167,14 +175,20 @@ export function RecurrenceBuilder(props: {
             }}
           />
           {value.dayOfMonth > 28 ? (
-            <p className="text-xs text-muted-foreground">
-              {CALENDAR_RU.recurrence.dayOfMonthHint}
-            </p>
+            <p className="text-xs text-muted-foreground">{CALENDAR_RU.recurrence.dayOfMonthHint}</p>
           ) : null}
         </div>
       ) : null}
 
-      {showEnds ? <RecurrenceEndsField value={value.ends} onChange={(ends) => { patch({ ends }); }} disabled={props.disabled} /> : null}
+      {showEnds ? (
+        <RecurrenceEndsField
+          value={value.ends}
+          onChange={(ends) => {
+            patch({ ends });
+          }}
+          disabled={props.disabled}
+        />
+      ) : null}
     </fieldset>
   );
 }
@@ -193,7 +207,8 @@ function RecurrenceEndsField(props: {
   const select = (type: RecurrenceEnd['type']): void => {
     if (type === 'never') props.onChange({ type: 'never' });
     else if (type === 'after') props.onChange({ type: 'after', count: 10 });
-    else props.onChange({ type: 'until', untilLocal: toFloatingLocal(defaultUntilDate(), '23:59') });
+    else
+      props.onChange({ type: 'until', untilLocal: toFloatingLocal(defaultUntilDate(), '23:59') });
   };
 
   return (
@@ -201,7 +216,11 @@ function RecurrenceEndsField(props: {
       <span className="text-sm font-medium text-foreground">
         {CALENDAR_RU.recurrence.endsLegend}
       </span>
-      <div role="radiogroup" aria-label={CALENDAR_RU.recurrence.endsLegend} className="flex flex-wrap gap-2">
+      <div
+        role="radiogroup"
+        aria-label={CALENDAR_RU.recurrence.endsLegend}
+        className="flex flex-wrap gap-2"
+      >
         {options.map((option) => (
           <button
             key={option.type}

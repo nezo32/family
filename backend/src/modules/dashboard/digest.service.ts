@@ -86,6 +86,9 @@ import {
 /* ========================================================================== */
 
 /** `[одна, две, пять]` — the three Russian numeric agreement forms. */
+/** U+00A0. Russian typography groups digits with it, and never with a comma. */
+export const NBSP = String.fromCharCode(0x00a0);
+
 export type PluralForms = readonly [one: string, few: string, many: string];
 
 /**
@@ -228,12 +231,13 @@ export function formatMoneyRu(minorUnits: number, currency: string): string {
   const abs = Math.abs(Math.trunc(minorUnits));
   const major = Math.trunc(abs / 100);
   const minor = abs % 100;
-  // U+00A0 as an explicit escape, both between groups and before the symbol:
-  // a literal non-breaking space in source is invisible in review and in diffs.
-  const grouped = String(major).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  // U+00A0 goes through a named constant on purpose: a literal non-breaking
+  // space in source is invisible in review and in every diff, and a test
+  // asserting on it then fails with two strings that look identical.
+  const grouped = String(major).replace(/\B(?=(\d{3})+(?!\d))/g, NBSP);
   const symbol = currency === 'RUB' ? '₽' : currency;
   const body = minor === 0 ? grouped : `${grouped},${String(minor).padStart(2, '0')}`;
-  return `${negative ? '−' : ''}${body} ${symbol}`;
+  return `${negative ? '−' : ''}${body}${NBSP}${symbol}`;
 }
 
 /* ========================================================================== */

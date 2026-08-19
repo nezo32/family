@@ -25,8 +25,7 @@ import { TASKS_RU, WEEKDAY_OPTIONS_RU } from './locale';
 export type ScheduleKind = 'once' | 'daily' | 'weekly' | 'monthly_day' | 'monthly_last_day';
 
 export type ScheduleValue =
-  | { mode: 'once' }
-  | { mode: 'preset'; preset: RecurrencePreset; ends: RecurrenceEnd };
+  { mode: 'once' } | { mode: 'preset'; preset: RecurrencePreset; ends: RecurrenceEnd };
 
 export const ONCE: ScheduleValue = { mode: 'once' };
 
@@ -95,7 +94,10 @@ export function kindOf(value: ScheduleValue): ScheduleKind {
  * A sensible preset for a freshly picked arm, anchored on the start date so
  * "по дням недели" pre-selects the weekday the user already chose.
  */
-export function presetForKind(kind: Exclude<ScheduleKind, 'once'>, dtstartLocal: string): RecurrencePreset {
+export function presetForKind(
+  kind: Exclude<ScheduleKind, 'once'>,
+  dtstartLocal: string,
+): RecurrencePreset {
   const { date } = splitFloating(dtstartLocal);
   switch (kind) {
     case 'daily':
@@ -210,8 +212,7 @@ export function describeSchedule(value: ScheduleValue, dtstartLocal: string): st
   let head: string;
   switch (preset.kind) {
     case 'daily':
-      head =
-        preset.interval === 1 ? s.daily : fill(s.everyDays, { '%n': String(preset.interval) });
+      head = preset.interval === 1 ? s.daily : fill(s.everyDays, { '%n': String(preset.interval) });
       break;
     case 'weekly': {
       const days = weekdayNames(preset.weekdays);

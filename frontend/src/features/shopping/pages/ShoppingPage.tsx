@@ -7,7 +7,13 @@ import { Can } from '@/shared/auth/Can';
 import { Button } from '@/shared/ui/button';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { SHOPPING_RU } from '../locale';
-import { shoppingListPath, useActiveListId, useCreateList, useShoppingLists, useShoppingSync } from '../hooks';
+import {
+  shoppingListPath,
+  useActiveListId,
+  useCreateList,
+  useShoppingLists,
+  useShoppingSync,
+} from '../hooks';
 import { CreateListDialog } from '../components/CreateListDialog';
 import { ListCard } from '../components/ListCard';
 import { OfflineBanner } from '../components/OfflineBanner';
@@ -108,7 +114,14 @@ function ShoppingListsOverview() {
         onOpenChange={setCreating}
         pending={createList.isPending}
         onCreate={(name) => {
-          createList.mutate({ name }, { onSuccess: () => { setCreating(false); } });
+          createList.mutate(
+            { name },
+            {
+              onSuccess: () => {
+                setCreating(false);
+              },
+            },
+          );
         }}
       />
     </>

@@ -21,7 +21,6 @@ import {
   getWeek,
   isoWeekdayOf,
   localDateOf,
-  localTimeOf,
   overdueMinutes,
   pickNearestMilestone,
   resolveAccess,
@@ -29,7 +28,6 @@ import {
   startOfLocalDay,
   startOfLocalWeek,
   type DashboardActor,
-  type DashboardPort,
   type EventRow,
   type GoalRow,
   type LoadRow,
@@ -46,6 +44,7 @@ import {
   formatMoneyRu,
   isoWeekKey,
   localSlotInstant,
+  NBSP,
   pluralRu,
   relativeDayRu,
   renderDigestText,
@@ -90,6 +89,8 @@ const CHILD_ID = '22222222-2222-4222-8222-222222222222';
 const TEEN_ID = '33333333-3333-4333-8333-333333333333';
 const PENDING_ID = '44444444-4444-4444-8444-444444444444';
 const ADMIN_ID = '55555555-5555-4555-8555-555555555555';
+const GOAL_ID = '66666666-6666-4666-8666-666666666666';
+const MILESTONE_ID = '77777777-7777-4777-8777-777777777777';
 
 const MOSCOW = 'Europe/Moscow';
 /** UTC−7 in August. Deliberately on the other side of the date line from the
@@ -389,13 +390,13 @@ describe('permission gating of the aggregate', () => {
     world({
       goals: [
         {
-          goalId: 'goal-bike',
+          goalId: GOAL_ID,
           goalTitle: 'Велосипед',
           currency: 'RUB',
           goalTarget: 3_000_000,
           deadline: '2026-12-01',
           saved: 1_240_000,
-          milestoneId: 'ms-half',
+          milestoneId: MILESTONE_ID,
           milestoneTitle: 'Половина пути',
           milestoneTarget: 1_500_000,
           milestoneSortOrder: 0,
@@ -436,7 +437,12 @@ describe('permission gating of the aggregate', () => {
     expect(serialized).not.toContain('Половина пути');
     expect(serialized).not.toContain('1240000');
     expect(serialized).not.toContain('3000000');
-    expect(serialized).not.toContain('goal');
+    expect(serialized).not.toContain('nearestMilestone');
+    expect(serialized).not.toContain('targetAmount');
+    expect(serialized).not.toContain('savedAmount');
+    expect(serialized).not.toContain('remainingAmount');
+    expect(serialized).not.toContain(GOAL_ID);
+    expect(serialized).not.toContain(MILESTONE_ID);
     expect(serialized).not.toContain('Дядя Коля');
 
     // And it was never fetched — the gate is upstream of the payload, so there
@@ -677,20 +683,27 @@ describe('Russian pluralisation', () => {
 describe('Russian formatting helpers', () => {
   it('uses «во» before вторник and the accusative endings', () => {
     // 2026-08-18 is a Tuesday, 2026-08-19 a Wednesday, 2026-08-21 a Friday.
-    expect(relativeDayRu('2026-08-18', '2026-08-17')).toBe('завтра');
     expect(relativeDayRu('2026-08-17', '2026-08-17')).toBe('сегодня');
+    expect(relativeDayRu('2026-08-18', '2026-08-17')).toBe('во вторник');
     expect(relativeDayRu('2026-08-19', '2026-08-17')).toBe('в среду');
     expect(relativeDayRu('2026-08-21', '2026-08-17')).toBe('в пятницу');
-    expect(relativeDayRu('2026-08-25', '2026-08-24')).toBe('завтра');
+    expect(relativeDayRu('2026-08-23', '2026-08-17')).toBe('в воскресенье');
+    // Past a week a weekday is ambiguous, so it falls back to a date.
     expect(relativeDayRu('2026-09-01', '2026-08-17')).toBe('1 сентября');
   });
 
+  it('never says «завтра» — a digest is read days after it is written', () => {
+    expect(relativeDayRu('2026-08-25', '2026-08-24')).toBe('во вторник');
+  });
+
   it('renders money as integer minor units, never as a float', () => {
-    expect(formatMoneyRu(1_240_000, 'RUB')).toBe('12 400 ₽');
-    expect(formatMoneyRu(50, 'RUB')).toBe('0,50 ₽');
-    expect(formatMoneyRu(0, 'RUB')).toBe('0 ₽');
-    expect(formatMoneyRu(123_456_789, 'RUB')).toBe('1 234 567,89 ₽');
-    expect(formatMoneyRu(10_000, 'EUR')).toBe('100 EUR');
+    // Groups and the symbol are separated by U+00A0, spelled out so this test
+    // cannot pass or fail on an invisible character.
+    expect(formatMoneyRu(1_240_000, 'RUB')).toBe(`12${NBSP}400${NBSP}₽`);
+    expect(formatMoneyRu(50, 'RUB')).toBe(`0,50${NBSP}₽`);
+    expect(formatMoneyRu(0, 'RUB')).toBe(`0${NBSP}₽`);
+    expect(formatMoneyRu(123_456_789, 'RUB')).toBe(`1${NBSP}234${NBSP}567,89${NBSP}₽`);
+    expect(formatMoneyRu(10_000, 'EUR')).toBe(`100${NBSP}EUR`);
   });
 });
 

@@ -1,13 +1,7 @@
 import { useState } from 'react';
 import type { EventOccurrenceResponse, EditScope, PublicUser, Rsvp } from '@family/shared';
 import { Cake, CalendarClock, Info, MapPin, Pencil, Repeat, Trash2 } from 'lucide-react';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@/shared/ui/sheet';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/shared/ui/sheet';
 import { Button } from '@/shared/ui/button';
 import { Badge } from '@/shared/ui/badge';
 import { Separator } from '@/shared/ui/separator';
