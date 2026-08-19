@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 
 import { percentOf as sharedPercentOf } from '@family/shared';
+import { decodeCursor, encodeCursor, type Cursor } from '../../core/pagination.js';
 import type { GoalStatus, GoalTxnKind, GoalVisibility } from '@family/shared';
 
 import type { Executor } from '../../core/db.js';
@@ -274,35 +275,17 @@ function mapGoal(row: RawGoalProjection): GoalProjection {
 /* Cursor pagination                                                           */
 /* -------------------------------------------------------------------------- */
 
-interface Cursor {
-  /** The sort key of the last row of the previous page, as text. */
-  v: string;
-  id: string;
-}
-
-export function encodeCursor(cursor: Cursor): string {
-  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
-}
-
-export function decodeCursor(raw: string | undefined): Cursor | null {
-  if (!raw) return null;
-  try {
-    const parsed: unknown = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      typeof (parsed as Cursor).v === 'string' &&
-      typeof (parsed as Cursor).id === 'string'
-    ) {
-      return parsed as Cursor;
-    }
-    return null;
-  } catch {
-    // A malformed cursor is a client bug, not a server error: start from the
-    // top rather than 500-ing a list endpoint.
-    return null;
-  }
-}
+/**
+ * Keyset cursors come from `core/pagination.ts`.
+ *
+ * The `{ v, id }` shape below was the goals module's own, and it is the form the
+ * whole app converged on: `v` carries any sort key as text, which is what the
+ * `sortOrder | deadline | progress | createdAt` orderings here need and what a
+ * bare `createdAt|id` string could never express. The forgiving `null` on a
+ * malformed cursor was this module's policy too, and is now everyone's.
+ */
+export { encodeCursor, decodeCursor };
+export type { Cursor };
 
 type SortField = 'sortOrder' | 'deadline' | 'progress' | 'createdAt';
 

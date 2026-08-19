@@ -3,7 +3,7 @@ import { logger } from '../../core/logger.js';
 import { registerJobHandler } from '../../core/queue/workers.js';
 import type { Db } from '../../core/db.js';
 import { emit, type NotificationAudience } from '../notifications/notifications.service.js';
-import { syncBirthdays } from './birthdays.service.js';
+import { announceBirthdaysToday, syncBirthdays } from './birthdays.service.js';
 import * as repo from './events.repository.js';
 import { canViewEvent } from './events.service.js';
 
@@ -106,10 +106,17 @@ export function registerEventJobs(): void {
    * `users.birth_date`. Safe to run at any time and any number of times.
    */
   registerJobHandler('scheduler.birthdays', async () => {
-    const result = await syncBirthdays(getDb());
+    const db = getDb();
+    const result = await syncBirthdays(db);
     if (result.created + result.updated + result.archived > 0) {
       logger.info(result, 'birthday sync complete');
     }
+
+    // Greeting today's celebrants rides the same nightly pass: it reads the
+    // same profiles and the same family timezone. Idempotent on
+    // `birthday_today:<userId>:<date>`, so an extra run greets nobody twice.
+    const greeted = await announceBirthdaysToday(db);
+    if (greeted > 0) logger.info({ greeted }, 'birthday greetings emitted');
   });
 
   /**

@@ -14,7 +14,7 @@ import FamilyPage from './pages/FamilyPage';
  *  - the weekly load renders as a **neutral bar**, and the roster is never
  *    re-ordered by it — D5's "no sibling leaderboard" is a property of the DOM,
  *    not of a comment;
- *  - the role picker offers exactly `assignableRoles(me.role)`;
+ *  - the role picker offers exactly `assignableRoles(me.user.role)`;
  *  - without the permission the controls **do not render** — not disabled,
  *    absent;
  *  - suspending asks first and says that every session ends.

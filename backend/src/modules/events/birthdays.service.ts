@@ -1,5 +1,6 @@
 import type { Db, Executor } from '../../core/db.js';
 import { recurrenceEngine } from '../../core/recurrence/engine.js';
+import { emit } from '../notifications/notifications.service.js';
 import * as repo from './events.repository.js';
 import type { EventSeriesRow } from './events.schema.js';
 import { localDateIn } from './events.service.js';
@@ -238,4 +239,103 @@ export async function syncBirthdays(db: Db): Promise<BirthdaySyncResult> {
     result[outcome] += 1;
   }
   return result;
+}
+
+/* -------------------------------------------------------------------------- */
+/* «Сегодня день рождения» (D10 — `birthday_today`)                            */
+/* -------------------------------------------------------------------------- */
+
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+/**
+ * Does this birth date fall on `localDate` (`YYYY-MM-DD`) in the family's zone?
+ *
+ * The 29-February rule is the *same* one `planBirthday` compiles into the
+ * calendar series (`BYMONTHDAY=-1`): in a common year the celebration is the
+ * last day of February, so a leap-day person is greeted on 28 February rather
+ * than three years out of four not at all. Keeping the two in one file is what
+ * stops the calendar and the notification from disagreeing about the date.
+ */
+export function birthdayFallsOn(birthDate: string | null, localDate: string): boolean {
+  if (birthDate === null) return false;
+  const birth = BIRTH_DATE.exec(birthDate.slice(0, 10));
+  const today = BIRTH_DATE.exec(localDate.slice(0, 10));
+  if (!birth || !today) return false;
+
+  const [, , birthMonth, birthDay] = birth;
+  const [, todayYear, todayMonth, todayDay] = today;
+  if (todayYear === undefined || todayMonth === undefined || todayDay === undefined) return false;
+
+  if (birthMonth === todayMonth && birthDay === todayDay) return true;
+
+  // 29 February in a common year: greet on the 28th, the last day of February.
+  const isLeapDayBirth = birthMonth === '02' && birthDay === '29';
+  return (
+    isLeapDayBirth &&
+    todayMonth === '02' &&
+    todayDay === '28' &&
+    !isLeapYear(Number(todayYear))
+  );
+}
+
+/** Whole years completed today. `null` when the year is not usable. */
+export function ageOn(birthDate: string, localDate: string): number | null {
+  const birthYear = Number(birthDate.slice(0, 4));
+  const todayYear = Number(localDate.slice(0, 4));
+  if (!Number.isFinite(birthYear) || !Number.isFinite(todayYear)) return null;
+  const age = todayYear - birthYear;
+  return age > 0 && age < 130 ? age : null;
+}
+
+/**
+ * Tell the family who is celebrating today.
+ *
+ * `birthday_today` shipped with a renderer, a preference row, a Russian label
+ * and a UI toggle — and no producer, so the toggle promised something that
+ * never arrived. The nightly `scheduler.birthdays` job is the natural home: it
+ * already reads every profile and already knows the family timezone.
+ *
+ * **The celebrant is not told about their own birthday.** `actorId` is null for
+ * a scheduler intent, so self-suppression would not fire; the audience is built
+ * as "everyone else" instead. The fan-out still narrows it to active members
+ * holding `event:read`.
+ *
+ * Idempotent on `birthday_today:<userId>:<YYYY-MM-DD>`, so re-running the job —
+ * or running it twice around midnight — greets each person once per year.
+ */
+export async function announceBirthdaysToday(db: Db, now: Date = new Date()): Promise<number> {
+  const timezone = await repo.getFamilyTimezone(db);
+  const today = localDateIn(now, timezone);
+  const users = await repo.listBirthdayCandidates(db);
+
+  let emitted = 0;
+  for (const user of users) {
+    if (!CELEBRATED_STATUSES.has(user.status)) continue;
+    if (!birthdayFallsOn(user.birthDate, today)) continue;
+
+    const others = users.filter((u) => u.id !== user.id).map((u) => u.id);
+    if (others.length === 0) continue;
+
+    const age = user.birthDate === null ? null : ageOn(user.birthDate, today);
+    const result = await emit(db, {
+      type: 'birthday_today',
+      audience: { users: others },
+      actorId: null,
+      entityType: 'user',
+      entityId: user.id,
+      dedupeKey: `birthday_today:${user.id}:${today}`,
+      payload: {
+        userId: user.id,
+        personName: user.displayName,
+        title: user.displayName,
+        localDate: today,
+        ...(age === null ? {} : { age }),
+      },
+    });
+    if (!result.deduped) emitted += 1;
+  }
+
+  return emitted;
 }

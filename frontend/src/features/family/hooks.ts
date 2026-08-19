@@ -40,7 +40,7 @@ import { FAMILY_RU } from './locale';
  *     upcoming-task queries hit endpoints that are specified but not yet
  *     implemented. They never retry, they never surface an error state of their
  *     own, and the roster renders identically with or without them.
- *  2. **Access decisions come from `useCan()`.** `me.role` is read in exactly
+ *  2. **Access decisions come from `useCan()`.** `me.user.role` is read in exactly
  *     two places — `useAssignableRoles()` and `useCanManageMember()` — and only
  *     to compute *rank*, which is what `assignableRoles()` / `canManageRole()`
  *     need. The permission gate always sits in front of it (D4).
@@ -201,7 +201,7 @@ export function useReactivateMember(
  * Roles the current user may assign to somebody else.
  *
  * Gated on `member:role:assign` through `useCan()` — that is the access
- * decision. `assignableRoles(me.role)` then narrows by *rank*, using the same
+ * decision. `assignableRoles(me.user.role)` then narrows by *rank*, using the same
  * shared function the backend enforces with, so the picker can never offer a
  * role the server would reject.
  */

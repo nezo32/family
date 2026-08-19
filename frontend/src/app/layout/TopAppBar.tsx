@@ -58,11 +58,7 @@ export function TopAppBar(props: {
         <Button
           variant="ghost"
           size="icon"
-          aria-label={
-            unread > 0
-              ? NOTIFICATIONS_RU.unreadAria(unread)
-              : NOTIFICATIONS_RU.openAria
-          }
+          aria-label={unread > 0 ? NOTIFICATIONS_RU.unreadAria(unread) : NOTIFICATIONS_RU.openAria}
           onClick={props.onOpenNotifications}
           className="relative"
         >

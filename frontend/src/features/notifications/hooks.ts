@@ -18,7 +18,6 @@ import {
   fetchReceipts,
   fetchUnreadCount,
   markRead,
-  needsAck,
   notificationKeys,
   type InboxPage,
   type NotificationReceipts,
@@ -102,17 +101,6 @@ export function useInbox(
 /** Flatten the cursor pages into the list the panel renders. */
 export function inboxItems(data: InfiniteData<InboxPage> | undefined): InAppNotification[] {
   return data?.pages.flatMap((page) => page.items) ?? [];
-}
-
-/**
- * Rows still waiting for a human «Подтвердить».
- *
- * Surfaced separately because these are the only ones with a consequence for
- * somebody else: until one of them is acknowledged, a `critical` intent keeps
- * climbing the escalation ladder (D11).
- */
-export function pendingAcknowledgements(items: readonly InAppNotification[]): InAppNotification[] {
-  return items.filter(needsAck);
 }
 
 /* -------------------------------------------------------------------------- */

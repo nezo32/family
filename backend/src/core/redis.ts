@@ -38,6 +38,17 @@ export function createBullConnection(): Redis {
     ...baseOptions,
     // Required by BullMQ for blocking operations.
     maxRetriesPerRequest: null,
+    /**
+     * With `maxRetriesPerRequest: null`, ioredis *queues* commands while the
+     * connection is down instead of rejecting them. Callers that wrap
+     * `queue.add()` in a try/catch to survive a Redis outage were therefore
+     * relying on dead code: the promise never settled, and an HTTP request
+     * hung forever — after its database write had already committed.
+     *
+     * Rejecting is the honest behaviour: the durable row is safely on disk and
+     * a sweep can re-dispatch it, whereas a hung request helps nobody.
+     */
+    enableOfflineQueue: false,
   });
   conn.on('error', (err) => logger.error({ err }, 'redis (bullmq) error'));
   bullConnections.push(conn);

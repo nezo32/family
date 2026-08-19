@@ -130,16 +130,22 @@ scp infra/scripts/vdi-bootstrap.sh root@193.124.180.31:/tmp/
 ssh root@193.124.180.31 'bash /tmp/vdi-bootstrap.sh'
 ```
 
-It creates `/opt/family`, a `deploy` user in the `docker` group, a `backup`
+It creates `/opt/family`, a `deploy` user in the `docker` group, a `familybackup`
 user restricted to reading dumps, the backup cron entry, and a firewall that
 opens 22/80/443 **while preserving the existing WireGuard UDP ports**.
 
 ### 4.2 Which SSH user should CI use?
 
 The bootstrap creates a **`deploy`** user rather than using `root`, and puts CI's
-key there. It is one line of extra setup and it means a leaked CI key cannot
-rewrite the whole box — including the VPN containers that have nothing to do
-with this app. `deploy` is in the `docker` group, which is enough for compose.
+key there.
+
+Be clear about how much that buys, though: `deploy` is in the `docker` group,
+and Docker group membership is **effectively root** — anyone in it can start a
+container that mounts the host filesystem. So this is not a real privilege
+boundary. What it does give you is a separate, individually revocable
+credential, no password auth, and a clean audit trail — remove one line from
+`authorized_keys` and CI is locked out without touching your own access. Worth
+doing, but do not treat it as a sandbox.
 
 If you would rather keep it simple, set `DEPLOY_USER=root` and skip that part;
 the workflow works either way.
@@ -261,7 +267,7 @@ The task uses **`StartWhenAvailable`**, so a run missed while the PC was off
 happens as soon as it wakes — without that, a machine that is rarely on at 09:00
 would back up almost nothing.
 
-### Why a separate `backup` user
+### Why a separate `familybackup` user
 
 The pull account can read the dump directory and nothing else. If the PC is ever
 compromised, the key it holds is worth far less than a root key — and the VDI

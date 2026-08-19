@@ -143,9 +143,7 @@ describe('GET /api/me — the real response through the real parser', () => {
     expect(screen.getByTestId('version')).toHaveTextContent('pv-7f3a');
     // `useCan()` reads `permissions` and `user.id` — the two fields the flat
     // shape put in different places.
-    expect(screen.getByTestId('user-id')).toHaveTextContent(
-      '11111111-1111-4111-8111-111111111111',
-    );
+    expect(screen.getByTestId('user-id')).toHaveTextContent('11111111-1111-4111-8111-111111111111');
     expect(screen.getByTestId('can-read-tasks')).toHaveTextContent('да');
   });
 

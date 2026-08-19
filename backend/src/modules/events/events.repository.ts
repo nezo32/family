@@ -20,6 +20,12 @@ import type { EventSourceKind, Rsvp } from '@family/shared';
 import type { Executor } from '../../core/db.js';
 import { internal } from '../../core/errors.js';
 import {
+  decodeTimestampCursor,
+  encodeTimestampCursor,
+  type Page,
+  type TimestampCursor,
+} from '../../core/pagination.js';
+import {
   materializeThroughPort,
   type MaterializeOptions,
   type MaterializeResult,
@@ -304,24 +310,22 @@ export interface ListSeriesQuery {
   readonly sourceKind?: EventSourceKind | undefined;
 }
 
-export interface Page<T> {
-  readonly items: T[];
-  readonly nextCursor: string | null;
-}
+export type { Page };
 
-/** Keyset cursor: `createdAt|id`, base64url. Stable under concurrent inserts. */
+/**
+ * Keyset cursor over `(created_at, id)` — `core/pagination.ts`.
+ *
+ * The `createdAt|id` string this module used to encode is gone; the codec is
+ * the shared `{ v, id }` JSON form, which is what every list endpoint speaks
+ * now. The forgiving `null` on an unreadable cursor is unchanged — events was
+ * already one of the three modules that got that right.
+ */
 export function encodeCursor(createdAt: Date, id: string): string {
-  return Buffer.from(`${createdAt.toISOString()}|${id}`, 'utf8').toString('base64url');
+  return encodeTimestampCursor({ createdAt, id });
 }
 
-export function decodeCursor(cursor: string): { createdAt: Date; id: string } | null {
-  const raw = Buffer.from(cursor, 'base64url').toString('utf8');
-  const separator = raw.lastIndexOf('|');
-  if (separator <= 0) return null;
-  const createdAt = new Date(raw.slice(0, separator));
-  const id = raw.slice(separator + 1);
-  if (Number.isNaN(createdAt.getTime()) || id === '') return null;
-  return { createdAt, id };
+export function decodeCursor(cursor: string): TimestampCursor | null {
+  return decodeTimestampCursor(cursor);
 }
 
 export async function listSeries(

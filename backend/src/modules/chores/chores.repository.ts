@@ -3,7 +3,15 @@ import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from 'driz
 import type { PointsReason, SwapStatus } from '@family/shared';
 
 import type { Executor } from '../../core/db.js';
-import { badRequest, internal } from '../../core/errors.js';
+import {
+  decodeTimestampCursor,
+  encodeTimestampCursor,
+  toTimestampPage,
+  type Timestamped,
+  type TimestampCursor,
+} from '../../core/pagination.js';
+
+import { internal } from '../../core/errors.js';
 import { taskOccurrences, taskSeries } from '../tasks/tasks.schema.js';
 import {
   choreSwaps,
@@ -50,33 +58,23 @@ import type { BlackoutWindow, RotationCandidate } from './rotation.js';
 /* Keyset pagination                                                           */
 /* -------------------------------------------------------------------------- */
 
-export interface Cursor {
-  readonly createdAt: Date;
-  readonly id: string;
-}
-
-interface Timestamped {
-  createdAt: Date;
-  id: string;
-}
+export type Cursor = TimestampCursor;
 
 /**
- * Opaque base64url keyset over `(created_at, id)`. The id is part of the key
- * because two ledger rows written by the same completion share a millisecond,
- * and an offset cursor would then skip or repeat one at the page boundary.
+ * Opaque keyset cursor over `(created_at, id)` — `core/pagination.ts`.
+ *
+ * The codec used to be written out here (and in six other modules) as
+ * `base64url("iso|id")` that **threw `400 Malformed cursor`** on anything it
+ * could not read. It is the shared `{ v, id }` JSON form now, and a stale
+ * cursor quietly restarts at the first page instead of erroring — a bookmarked
+ * page-2 link is not the user doing something wrong.
  */
 export function encodeCursor(row: Timestamped): string {
-  return Buffer.from(`${row.createdAt.toISOString()}|${row.id}`, 'utf8').toString('base64url');
+  return encodeTimestampCursor(row);
 }
 
-export function decodeCursor(raw: string): Cursor {
-  const decoded = Buffer.from(raw, 'base64url').toString('utf8');
-  const sep = decoded.lastIndexOf('|');
-  if (sep <= 0) throw badRequest('Malformed cursor');
-  const createdAt = new Date(decoded.slice(0, sep));
-  const id = decoded.slice(sep + 1);
-  if (Number.isNaN(createdAt.getTime()) || id.length === 0) throw badRequest('Malformed cursor');
-  return { createdAt, id };
+export function decodeCursor(raw: string | undefined): Cursor | undefined {
+  return decodeTimestampCursor(raw) ?? undefined;
 }
 
 /** Splits an over-fetched `limit + 1` result into a page plus the next cursor. */
@@ -84,10 +82,7 @@ export function toPage<T extends Timestamped>(
   rows: T[],
   limit: number,
 ): { items: T[]; nextCursor: string | null } {
-  if (rows.length <= limit) return { items: rows, nextCursor: null };
-  const items = rows.slice(0, limit);
-  const last = items.at(-1);
-  return { items, nextCursor: last ? encodeCursor(last) : null };
+  return toTimestampPage(rows, limit);
 }
 
 /* -------------------------------------------------------------------------- */

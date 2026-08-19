@@ -2,13 +2,7 @@ import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BellOff, CheckCheck } from 'lucide-react';
 import type { InAppNotification } from '@family/shared';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@/shared/ui/sheet';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/shared/ui/sheet';
 import { Button } from '@/shared/ui/button';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { EmptyState } from '@/shared/components/EmptyState';
@@ -45,7 +39,10 @@ import { PushHealthBanner } from './PushHealthBanner';
  * Every failure is rendered through `errorMessageRu` / `ErrorState`, keyed on
  * `ErrorCode`. The server's English `message` never reaches a screen (D7).
  */
-export function NotificationsPanel(props: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function NotificationsPanel(props: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const [unreadOnly, setUnreadOnly] = useState(false);
   const navigate = useNavigate();
 

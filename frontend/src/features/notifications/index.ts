@@ -8,7 +8,6 @@ export {
   fetchInbox,
   fetchReceipts,
   fetchUnreadCount,
-  isUnread,
   markRead,
   needsAck,
   notificationKeys,
@@ -17,7 +16,6 @@ export {
 } from './api';
 export {
   inboxItems,
-  pendingAcknowledgements,
   useAcknowledge,
   useDeliveryReceipts,
   useInbox,

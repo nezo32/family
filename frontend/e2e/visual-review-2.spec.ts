@@ -15,7 +15,7 @@ test.use({ locale: 'ru-RU', timezoneId: 'Europe/Moscow', serviceWorkers: 'block'
 test.setTimeout(240_000);
 
 async function settle(page: Page, ms = 1500) {
-  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
   await page.waitForTimeout(ms);
 }
 async function shot(page: Page, name: string) {

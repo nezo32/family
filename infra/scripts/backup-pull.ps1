@@ -22,7 +22,7 @@
 [CmdletBinding()]
 param(
     [string] $ServerHost = 'nezo.su',
-    [string] $ServerUser = 'backup',
+    [string] $ServerUser = 'familybackup',
     [string] $RemoteDir  = '/opt/family/backups',
     [string] $Destination = "$env:USERPROFILE\Backups\family",
     [string] $IdentityFile = "$env:USERPROFILE\.ssh\family_backup",

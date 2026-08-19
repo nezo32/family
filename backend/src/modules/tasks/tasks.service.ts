@@ -551,6 +551,23 @@ export function toSeriesResponse(series: TaskSeriesRow): TaskSeriesResponse {
 }
 
 /** `YYYY-MM-DD` in a zone, without reaching for Temporal outside the engine. */
+/**
+ * «19.08 в 19:00» from a floating local timestamp.
+ *
+ * Notification copy is rendered from the intent payload, never from a fresh
+ * read (D10), so the label has to be baked in at emit time — and it has to be
+ * short: on iOS a push wears the app icon and nothing else, so the body is all
+ * the reader gets. Returns an empty string for anything malformed; the renderer
+ * drops empty parts rather than printing a stray separator.
+ */
+export function shortDueLabel(startsLocal: string): string {
+  const [date, time] = startsLocal.split('T');
+  if (!date || !time) return '';
+  const [, month, day] = date.split('-');
+  const clock = time.slice(0, 5);
+  return day && month ? `${day}.${month} в ${clock}` : clock;
+}
+
 export function localDateIn(instant: Date, timezone: string): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: timezone,
@@ -1209,15 +1226,47 @@ export class TasksService {
     requireRead(actor);
     if (!actor.can('task:assign:any')) throw forbidden('Missing permission: task:assign:any');
 
-    await this.db.transaction(async (tx) => {
-      await this.loadReadableOccurrence(tx, actor, id);
+    const dispatch = await this.db.transaction(async (tx) => {
+      const current = await this.loadReadableOccurrence(tx, actor, id);
       await repo.assignOccurrence(tx, {
         id,
         assigneeId: input.assigneeId,
         assignedVia: input.assigneeId === null ? null : 'manual',
       });
+
+      /**
+       * «Тебе поручили задачу» — the one person now carrying it.
+       *
+       * Silent in three cases, all of them deliberate: un-assigning is not news
+       * for anybody; re-confirming the same assignee would notify them again on
+       * every save; and assigning yourself needs no announcement (the fan-out
+       * would suppress the actor anyway, but the dedupe key is per assignee, so
+       * saying it here keeps the key honest).
+       */
+      if (input.assigneeId === null || input.assigneeId === current.assigneeId) return null;
+
+      const intent = await emitIntent(tx, {
+        type: 'task_assigned',
+        audience: { users: [input.assigneeId] },
+        actorId: actor.userId,
+        entityType: 'task_occurrence',
+        entityId: id,
+        dedupeKey: `task_assigned:${id}:${input.assigneeId}`,
+        payload: {
+          occurrenceId: id,
+          title: current.title,
+          assigneeId: input.assigneeId,
+          points: current.points,
+          dueAt: current.dueAt.toISOString(),
+          dueLabel: shortDueLabel(current.startsLocal),
+        },
+      });
+      return intent.dispatch;
     });
 
+    // Enqueued only after commit — a worker must never read a row that is not
+    // there yet.
+    if (dispatch) await dispatch();
     return this.reloadOccurrence(this.db, actor, id);
   }
 

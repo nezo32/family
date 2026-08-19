@@ -59,6 +59,13 @@ export const securityPlugin = fp(
       keyGenerator: (request: FastifyRequest) => request.auth?.userId ?? request.ip,
       // Auth endpoints get their own much tighter limit, declared per route.
       allowList: () => false,
+      /**
+       * Fail open. The store is Redis, and without this an unreachable Redis
+       * turns *every* request in the application into a 500 — trading a
+       * secondary abuse control for a total outage. Rate limiting is defence in
+       * depth; argon2id and the per-account counter still apply.
+       */
+      skipOnError: true,
     });
 
     /**

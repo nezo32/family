@@ -98,7 +98,7 @@ export async function collectRouteAccess(plugin: FastifyPluginAsync): Promise<Co
         method,
         url: route.url,
         key: `${method} ${route.url}`,
-        access: (route.config ?? {}) as RouteAccessConfig,
+        access: route.config ?? {},
       });
     }
   });
@@ -114,12 +114,4 @@ export function statusFor(access: RouteAccessConfig, auth: AuthContext): number 
   if (access.public) return 200;
   const decision = decideAccess(access, auth);
   return decision.allowed ? 200 : decision.error.statusCode;
-}
-
-/** `statusFor`, keyed by route, for asserting a whole module at once. */
-export function statusesFor(
-  routes: readonly CollectedRoute[],
-  auth: AuthContext,
-): Record<string, number> {
-  return Object.fromEntries(routes.map((route) => [route.key, statusFor(route.access, auth)]));
 }

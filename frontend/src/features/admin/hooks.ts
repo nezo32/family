@@ -169,7 +169,7 @@ export function useReactivateMember(
  *    the list is empty and the approve flow never renders.
  *  - **Rank** — `assignableRoles()` from `@family/shared`, the same function the
  *    backend enforces with, so the picker cannot offer a role the server will
- *    refuse. Reading `me.role` here is a *rank* computation, not an access
+ *    refuse. Reading `me.user.role` here is a *rank* computation, not an access
  *    decision: the gate above is the permission check (D4).
  */
 export function useAssignableRoles(): Role[] {

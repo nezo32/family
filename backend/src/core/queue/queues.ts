@@ -97,7 +97,27 @@ export async function enqueue<N extends JobName>(
   payload: JobPayloads[N],
   options?: JobsOptions & { jobId?: string },
 ): Promise<void> {
-  await getQueue(QUEUE_FOR_JOB[name]).add(name, payload, options);
+  const opts = options?.jobId
+    ? { ...options, jobId: safeJobId(options.jobId) }
+    : options;
+  await getQueue(QUEUE_FOR_JOB[name]).add(name, payload, opts);
+}
+
+/**
+ * BullMQ rejects a custom job id containing `:` — it uses that character in its
+ * own Redis key layout, and `Job.addJob` throws `Custom Id cannot contain :`.
+ *
+ * Nearly every dedupe key in this codebase is naturally written `scope:uuid`,
+ * so the throw landed on the enqueue path of most notifications and every
+ * repeatable job. Worse, it surfaced *after* the domain write had committed, so
+ * the symptom was a 500 on a request that had already succeeded.
+ *
+ * Sanitising centrally rather than at each call site means a caller can keep
+ * writing the readable `scope:id` form and cannot reintroduce the bug. `:` is
+ * the only forbidden character, and mapping it to `~` keeps ids unique.
+ */
+export function safeJobId(id: string): string {
+  return id.replaceAll(':', '~');
 }
 
 export async function closeQueues(): Promise<void> {

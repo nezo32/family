@@ -19,6 +19,7 @@ import {
   pushSubscriptionRequestSchema,
   pushSubscriptionSummarySchema,
   pushUnsubscribeRequestSchema,
+  queryBooleanSchema,
   quietHoursSchema,
   unreadCountSchema,
   updatePreferencesRequestSchema,
@@ -74,12 +75,6 @@ function auth(request: FastifyRequest): AuthContext {
   return request.auth;
 }
 
-/** `?unreadOnly=true`. `z.coerce.boolean()` would turn `"false"` into `true`. */
-const booleanQuery = z
-  .enum(['true', 'false'])
-  .optional()
-  .transform((value) => value === 'true');
-
 const deliveryParams = z.object({ id: idSchema });
 
 const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
@@ -96,7 +91,7 @@ const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
       schema: {
         tags: ['notifications'],
         summary: 'In-app notification inbox (the bell)',
-        querystring: cursorPaginationSchema.extend({ unreadOnly: booleanQuery }),
+        querystring: cursorPaginationSchema.extend({ unreadOnly: queryBooleanSchema.default(false) }),
         response: { 200: paginatedSchema(inAppNotificationSchema) },
       },
     },

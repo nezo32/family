@@ -159,11 +159,6 @@ export function acknowledgeDelivery(
 /* derivations                                                                 */
 /* -------------------------------------------------------------------------- */
 
-/** Unread = never read. `status` tracks the delivery, `readAt` tracks the human. */
-export function isUnread(notification: InAppNotification): boolean {
-  return notification.readAt === null;
-}
-
 /**
  * Does this row still need a human «Подтвердить»?
  *

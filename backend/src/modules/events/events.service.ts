@@ -20,6 +20,11 @@ import type { AuthContext } from '../../core/auth/context.js';
 import type { Db, Executor } from '../../core/db.js';
 import { badRequest, conflict, forbidden, notFound } from '../../core/errors.js';
 import { recurrenceEngine, type SeriesRule } from '../../core/recurrence/engine.js';
+import {
+  dispatchAfterCommit,
+  emitIntent,
+  type NotificationAudience,
+} from '../notifications/notifications.service.js';
 import * as repo from './events.repository.js';
 import type { EventOccurrenceRow, EventSeriesRow } from './events.schema.js';
 import {
@@ -421,6 +426,34 @@ export interface SeriesDetail {
   readonly attendeeIds: string[];
 }
 
+/**
+ * Who may hear that an event exists.
+ *
+ * Deliberately the same rule `canViewEvent` enforces on reads, expressed as an
+ * audience: a `household` event is family news, while a `private` or
+ * `restricted` one is addressed only to the people who can already see it —
+ * announcing «Новое событие: Приём у врача» to the children would leak exactly
+ * what `restricted` exists to hide. The RBAC filter in the fan-out then drops
+ * anyone without `event:read` on top of this.
+ */
+export function eventAudience(
+  series: Pick<EventSeriesRow, 'visibility' | 'createdById'>,
+  attendeeIds: readonly string[],
+): NotificationAudience | null {
+  if (series.visibility === 'household') return { everyone: true };
+
+  const recipients = [
+    ...new Set(
+      [series.createdById, ...attendeeIds].filter((userId) =>
+        canViewEvent(userId, series, attendeeIds),
+      ),
+    ),
+  ];
+  // Only the author can see it — and the author is the actor, so there is
+  // nobody left to tell.
+  return recipients.length > 0 ? { users: recipients } : null;
+}
+
 export async function createSeries(
   db: Db,
   actor: AuthContext,
@@ -432,7 +465,7 @@ export async function createSeries(
     ? allDayDurationMinutes(input.durationMinutes)
     : input.durationMinutes;
 
-  return db.transaction(async (tx) => {
+  const { detail, dispatch } = await db.transaction(async (tx) => {
     const series = await repo.insertSeries(tx, {
       title: input.title,
       description: input.description ?? null,
@@ -456,8 +489,41 @@ export async function createSeries(
     await materializeAndInvite(tx, series.id, input.attendeeIds);
 
     const fresh = (await repo.findSeriesById(tx, series.id)) ?? series;
-    return { series: fresh, attendeeIds: await repo.listSeriesAttendeeIds(tx, series.id) };
+    const attendeeIds = await repo.listSeriesAttendeeIds(tx, series.id);
+
+    // «Новое событие» — `low` priority in the catalog and in-app only by
+    // default, because a calendar entry three weeks out is not worth a buzz.
+    // The `event_reminder` closer to the day is the one that interrupts.
+    const audience = eventAudience(fresh, attendeeIds);
+    const intent = audience
+      ? await emitIntent(tx, {
+          type: 'event_created',
+          audience,
+          actorId: actor.userId,
+          entityType: 'event_series',
+          entityId: fresh.id,
+          dedupeKey: `event_created:${fresh.id}`,
+          payload: {
+            eventId: fresh.id,
+            seriesId: fresh.id,
+            title: fresh.title,
+            actorName: actor.displayName,
+            startsLabel: fresh.dtstartLocal.slice(0, 16).replace('T', ' '),
+            location: fresh.location,
+            isAllDay: fresh.isAllDay,
+          },
+        })
+      : null;
+
+    return {
+      detail: { series: fresh, attendeeIds },
+      dispatch: intent?.dispatch ?? null,
+    };
   });
+
+  // After the commit, never inside it.
+  if (dispatch) await dispatchAfterCommit([dispatch]);
+  return detail;
 }
 
 export async function getSeries(db: Db, actor: AuthContext, id: string): Promise<SeriesDetail> {

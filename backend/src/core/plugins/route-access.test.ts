@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { ROLES, type Role } from '@family/shared';
 
 import { authFor, collectRouteAccess, statusFor, type CollectedRoute } from '../../test/access.js';
+import choresRoutes from '../../modules/chores/chores.routes.js';
+import goalsRoutes from '../../modules/goals/goals.routes.js';
 import { registerModules } from '../../modules/index.js';
 import { decideAccess, denyError } from './auth.js';
 
@@ -23,6 +25,7 @@ import { decideAccess, denyError } from './auth.js';
 
 let cached: CollectedRoute[] | undefined;
 
+/** Every route the app registers, exactly as `buildApp()` would mount them. */
 async function allRoutes(): Promise<CollectedRoute[]> {
   cached ??= await collectRouteAccess(registerModules);
   return cached;
@@ -60,9 +63,11 @@ describe('D4: a denial must not confirm what it denies', () => {
   });
 
   it('answers a child 404 — not 403 — on every goal read', async () => {
-    const routes = await allRoutes();
     const child = authFor('child');
-    const goalReads = routes.filter((r) => r.method === 'GET' && r.url.startsWith('/goals'));
+    // The moneybox's *own* routes, not "every URL starting with /goals": the
+    // wall also mounts `/goals/:id/comments`, which is `authenticated: true` by
+    // design and narrowed inside `comments.service.ts` instead.
+    const goalReads = (await collectRouteAccess(goalsRoutes)).filter((r) => r.method === 'GET');
     expect(goalReads.length).toBeGreaterThan(0);
 
     for (const route of goalReads) {
@@ -74,9 +79,8 @@ describe('D4: a denial must not confirm what it denies', () => {
   });
 
   it('still answers a teen 403 on the goal writes', async () => {
-    const routes = await allRoutes();
     const teen = authFor('teen');
-    const writes = routes.filter((r) => r.method !== 'GET' && r.url.startsWith('/goals'));
+    const writes = (await collectRouteAccess(goalsRoutes)).filter((r) => r.method !== 'GET');
     expect(writes.length).toBeGreaterThan(0);
 
     for (const route of writes) {
@@ -120,8 +124,11 @@ describe('D4: a denial must not confirm what it denies', () => {
 
   it('gives a suspended member nothing at all', async () => {
     const routes = await allRoutes();
+    // `buildAuthContext` empties the permission set for anybody who is not
+    // `active`, so a token that outlived a suspension buys nothing.
     const suspended = authFor('owner', { status: 'suspended' });
-    for (const route of await Promise.resolve(routes.filter((r) => r.method === 'GET'))) {
+    for (const route of routes) {
+      if (route.method !== 'GET') continue;
       if (route.access.public || route.access.authenticated) continue;
       expect(statusFor(route.access, suspended), route.key).not.toBe(200);
     }
@@ -136,7 +143,7 @@ describe('chore swaps are guarded by the chore-swap permissions', () => {
    * written for children were unreachable by a child.
    */
   it('lets a child request, answer and cancel a swap', async () => {
-    const routes = await allRoutes();
+    const routes = await collectRouteAccess(choresRoutes);
     const child = authFor('child');
 
     for (const key of [
@@ -149,7 +156,7 @@ describe('chore swaps are guarded by the chore-swap permissions', () => {
   });
 
   it('names the swap permissions, not the task ones', async () => {
-    const routes = await allRoutes();
+    const routes = await collectRouteAccess(choresRoutes);
     expect(routeAt(routes, 'POST /chores/swaps').access.permission).toBe('chore:swap:request');
     expect(routeAt(routes, 'POST /chores/swaps/:id/respond').access.anyPermission).toContain(
       'chore:swap:accept',
@@ -157,7 +164,7 @@ describe('chore swaps are guarded by the chore-swap permissions', () => {
   });
 
   it('refuses a guest, who holds neither', async () => {
-    const routes = await allRoutes();
+    const routes = await collectRouteAccess(choresRoutes);
     const guest = authFor('guest');
     expect(statusFor(routeAt(routes, 'POST /chores/swaps').access, guest)).toBe(403);
   });

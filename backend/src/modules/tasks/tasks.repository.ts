@@ -1,7 +1,13 @@
 import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, or, sql, type SQL } from 'drizzle-orm';
 
 import type { Executor } from '../../core/db.js';
-import { badRequest } from '../../core/errors.js';
+import {
+  decodeCursor,
+  encodeCursor,
+  toPage as paginate,
+  type Cursor,
+  type Page,
+} from '../../core/pagination.js';
 import {
   taskOccurrences,
   taskSeries,
@@ -198,50 +204,16 @@ function selectOccurrences(ex: Executor, now: Date | undefined) {
 /* Keyset cursors                                                              */
 /* -------------------------------------------------------------------------- */
 
-interface Cursor {
-  /** Sort key, as text. */
-  readonly v: string;
-  readonly id: string;
-}
-
-export function encodeCursor(cursor: Cursor): string {
-  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
-}
-
-export function decodeCursor(raw: string | undefined): Cursor | null {
-  if (raw === undefined || raw === '') return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
-  } catch {
-    throw badRequest('Malformed cursor');
-  }
-  if (
-    typeof parsed !== 'object' ||
-    parsed === null ||
-    typeof (parsed as Cursor).v !== 'string' ||
-    typeof (parsed as Cursor).id !== 'string'
-  ) {
-    throw badRequest('Malformed cursor');
-  }
-  return parsed as Cursor;
-}
-
-export interface Page<T> {
-  readonly items: T[];
-  readonly nextCursor: string | null;
-}
-
-/** Splits an over-fetched `limit + 1` result into a page plus its cursor. */
-function paginate<T>(rows: T[], limit: number, key: (row: T) => Cursor): Page<T> {
-  const hasMore = rows.length > limit;
-  const items = hasMore ? rows.slice(0, limit) : rows;
-  const last = items.at(-1);
-  return {
-    items,
-    nextCursor: hasMore && last !== undefined ? encodeCursor(key(last)) : null,
-  };
-}
+/**
+ * Keyset cursors come from `core/pagination.ts`.
+ *
+ * This module's `{ v, id }` shape won and moved there; what did **not** survive
+ * is the `throw badRequest('Malformed cursor')`. A stale cursor now restarts at
+ * the first page, the same as it always did on events, goals and notifications
+ * — the same reload used to 400 here and silently work there.
+ */
+export { encodeCursor, decodeCursor, paginate };
+export type { Cursor, Page };
 
 /* -------------------------------------------------------------------------- */
 /* Series                                                                      */

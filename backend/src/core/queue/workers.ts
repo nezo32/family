@@ -2,7 +2,14 @@ import { Worker, type Job } from 'bullmq';
 
 import { logger } from '../logger.js';
 import { createBullConnection } from '../redis.js';
-import { getQueue, QUEUE_NAMES, type JobName, type JobPayloads, type QueueName } from './queues.js';
+import {
+  getQueue,
+  QUEUE_NAMES,
+  safeJobId,
+  type JobName,
+  type JobPayloads,
+  type QueueName,
+} from './queues.js';
 
 /**
  * Worker runtime.
@@ -82,7 +89,9 @@ async function scheduleRepeatables(): Promise<void> {
       {
         repeat: { pattern },
         // A stable job id keeps the repeatable definition idempotent across restarts.
-        jobId: `repeat:${name}`,
+        // `repeat:<name>` contains `:`, which BullMQ refuses — every repeatable
+        // job silently failed to schedule, so nothing recurring ever ran.
+        jobId: safeJobId(`repeat:${name}`),
       },
     );
   }

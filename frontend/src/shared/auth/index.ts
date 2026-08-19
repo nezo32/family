@@ -11,11 +11,7 @@ export {
   type UseCanResult,
 } from './use-can';
 export { meKeys, useInvalidateMe, useIsAuthLoading, useMe } from './use-me';
-export {
-  familyWeekStart,
-  toDayPickerWeekStart,
-  type DayPickerWeekStart,
-} from './week-start';
+export { familyWeekStart, toDayPickerWeekStart, type DayPickerWeekStart } from './week-start';
 
 /**
  * The `/api/me` shape itself is **not** re-exported here.

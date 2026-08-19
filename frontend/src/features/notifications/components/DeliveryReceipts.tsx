@@ -64,7 +64,11 @@ export function DeliveryReceipts(props: {
       ) : (
         <ul className="space-y-1.5">
           {receipts.map((receipt) => (
-            <ReceiptRow key={receipt.id} receipt={receipt} user={props.roster?.get(receipt.userId)} />
+            <ReceiptRow
+              key={receipt.id}
+              receipt={receipt}
+              user={props.roster?.get(receipt.userId)}
+            />
           ))}
         </ul>
       )}

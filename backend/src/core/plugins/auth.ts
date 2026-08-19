@@ -28,6 +28,15 @@ import { AppError } from '../errors.js';
  * permission whatsoever, so `/goals` must answer 404, not 403. A 403 would
  * confirm the family has a moneybox (D4).
  *
+ * In practice that puts it on **reads**: a `GET` is the caller asking "what is
+ * here?", and 403 answers the very question the guard refused to answer. Writes
+ * keep 403, because the caller who reaches one can already see the thing they
+ * are trying to change — "you may not do that to it" is honest and useful. The
+ * exception is a write gated on the section's own *read* permission (`PUT
+ * /events/occurrences/:id/rsvp`): lacking it means the row is invisible, so the
+ * refusal must be too. `route-access.test.ts` asserts the resulting invariant
+ * across every module: no read route ever answers 403.
+ *
  * With `scoped`, the resolved scope is stashed on `req.scope` so the handler can
  * narrow its query without re-deriving anything.
  */
@@ -43,14 +52,14 @@ export interface RouteAccessConfig {
   public?: boolean;
   authenticated?: boolean;
   permission?: Permission;
-  anyPermission?: Permission[];
+  anyPermission?: readonly Permission[];
   scoped?: string;
   /** Answer 404 instead of 403 when the permission check fails. See D4. */
   notFoundOnDeny?: boolean;
 }
 
 function accessConfigOf(request: FastifyRequest): RouteAccessConfig {
-  return (request.routeOptions.config ?? {}) as RouteAccessConfig;
+  return request.routeOptions.config ?? {};
 }
 
 function extractBearer(request: FastifyRequest): string | null {

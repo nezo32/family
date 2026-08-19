@@ -3,6 +3,14 @@ import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte
 import type { CommentableEntityType, ReactionSummary } from '@family/shared';
 
 import type { Executor } from '../../core/db.js';
+import {
+  decodeTimestampCursor,
+  encodeTimestampCursor,
+  toTimestampPage,
+  type Timestamped,
+  type TimestampCursor,
+} from '../../core/pagination.js';
+
 import { badRequest } from '../../core/errors.js';
 import { kudos, type KudosRow, type NewKudosRow } from '../chores/chores.schema.js';
 import {
@@ -39,49 +47,32 @@ import {
 /* Cursor pagination                                                           */
 /* -------------------------------------------------------------------------- */
 
-export interface Cursor {
-  createdAt: Date;
-  id: string;
-}
-
-export interface Timestamped {
-  createdAt: Date;
-  id: string;
-}
+export type Cursor = TimestampCursor;
+export type { Timestamped };
 
 /**
- * Keyset cursor over `(created_at, id)`.
+ * Opaque keyset cursor over `(created_at, id)` — `core/pagination.ts`.
  *
- * Opaque base64url so nothing client-side starts depending on the shape, and
- * `id` is in there because two rows can share a millisecond — an offset-based
- * cursor would then skip or repeat a row on every page boundary.
+ * The codec used to be written out here (and in six other modules) as
+ * `base64url("iso|id")` that **threw `400 Malformed cursor`** on anything it
+ * could not read. It is the shared `{ v, id }` JSON form now, and a stale
+ * cursor quietly restarts at the first page instead of erroring — a bookmarked
+ * page-2 link is not the user doing something wrong.
  */
 export function encodeCursor(row: Timestamped): string {
-  return Buffer.from(`${row.createdAt.toISOString()}|${row.id}`, 'utf8').toString('base64url');
+  return encodeTimestampCursor(row);
 }
 
-export function decodeCursor(raw: string): Cursor {
-  const decoded = Buffer.from(raw, 'base64url').toString('utf8');
-  const sep = decoded.lastIndexOf('|');
-  if (sep <= 0) throw badRequest('Malformed cursor');
-  const createdAt = new Date(decoded.slice(0, sep));
-  const id = decoded.slice(sep + 1);
-  if (Number.isNaN(createdAt.getTime()) || id.length === 0) throw badRequest('Malformed cursor');
-  return { createdAt, id };
+export function decodeCursor(raw: string | undefined): Cursor | undefined {
+  return decodeTimestampCursor(raw) ?? undefined;
 }
 
-/**
- * Splits an over-fetched result (`limit + 1` rows) into a page plus the cursor
- * for the next one. Pure, so it is unit-testable without a database.
- */
+/** Splits an over-fetched `limit + 1` result into a page plus the next cursor. */
 export function toPage<T extends Timestamped>(
   rows: T[],
   limit: number,
 ): { items: T[]; nextCursor: string | null } {
-  if (rows.length <= limit) return { items: rows, nextCursor: null };
-  const items = rows.slice(0, limit);
-  const last = items.at(-1);
-  return { items, nextCursor: last ? encodeCursor(last) : null };
+  return toTimestampPage(rows, limit);
 }
 
 /** `(created_at, id) < (cursor)` — the descending keyset predicate. */

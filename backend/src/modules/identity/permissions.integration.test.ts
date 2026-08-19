@@ -59,17 +59,16 @@ describe.skipIf(!hasTestDb)('permissions (integration)', () => {
 
   describe('the moneybox is invisible below `goal:read`', () => {
     /**
-     * KNOWN FAILURE — documents a real bug, do not relax.
-     *
-     * `core/plugins/auth.ts` names this exact case in its own documentation:
+     * The case `core/plugins/auth.ts` names in its own documentation:
      *
      *   > a child has no `goal:*` permission whatsoever, so `/goals` must answer
      *   > 404, not 403. A 403 would confirm the family has a moneybox (D4).
      *
-     * `goals.routes.ts` declares `config: { permission: 'goal:read' }` on every
-     * read route and never sets `notFoundOnDeny: true`, so the deny path lands
-     * on the 403 branch of `enforce()`. `tasks.routes.ts` gets this right; the
-     * moneybox — the one section the rule was written for — does not.
+     * Every read in `GOAL_ROUTE_ACCESS` now carries `notFoundOnDeny: true`, so
+     * the denial leaves through the 404 branch of `decideAccess()`. The
+     * status-code half of this is asserted without a database in
+     * `core/plugins/route-access.test.ts`; what needs the app is that the real
+     * hook, the real token and the real error handler agree with it.
      */
     it('404s a child on /goals rather than 403', async () => {
       const response = await request(h.app, {
@@ -82,7 +81,7 @@ describe.skipIf(!hasTestDb)('permissions (integration)', () => {
       expect(errorCode(response)).toBe('NOT_FOUND');
     });
 
-    /** KNOWN FAILURE — same bug, across the whole read surface. */
+    /** The same answer across the whole read surface, existing id or not. */
     it('404s a child on every goal read route, existing or not', async () => {
       const madeUpId = '00000000-0000-4000-8000-00000000dead';
       for (const url of ['/api/goals', '/api/goals/summary', `/api/goals/${madeUpId}`]) {
@@ -257,6 +256,86 @@ describe.skipIf(!hasTestDb)('permissions (integration)', () => {
       });
       // No `task:read:*` at all — the section must look absent, not forbidden.
       expect(tasks.statusCode).toBe(404);
+    });
+
+    it('hides every section a guest holds no read permission for', async () => {
+      for (const url of [
+        '/api/goals',
+        '/api/tasks/series',
+        '/api/shopping/lists',
+        '/api/chores/rotations',
+        '/api/chores/fairness',
+      ]) {
+        const response = await request(h.app, { method: 'GET', url, token: guest.accessToken });
+        expect({ url, status: response.statusCode }).toEqual({ url, status: 404 });
+      }
+
+      // …but the calendar is a guest's whole reason to be here, so it answers.
+      const calendar = await request(h.app, {
+        method: 'GET',
+        url: '/api/events/occurrences',
+        token: guest.accessToken,
+      });
+      expectStatus(calendar, 200);
+    });
+  });
+
+  describe('a revoked permission behaves like a missing one', () => {
+    /**
+     * The guard reads the *effective* permission set, so a per-user deny hides
+     * the section from an admin exactly as the role matrix hides it from a
+     * child. Anything that branches on the role string instead — and both the
+     * wall's private-goal resolver and the dashboard's `everyGoal` did — quietly
+     * keeps serving the admin.
+     */
+    it('404s an admin who has been denied `goal:read`', async () => {
+      const admin = await createMember(h.app, owner, 'admin', { displayName: 'Админ-без-целей' });
+
+      const before = await request(h.app, {
+        method: 'GET',
+        url: '/api/goals',
+        token: admin.accessToken,
+      });
+      expectStatus(before, 200);
+
+      const revoke = await request(h.app, {
+        method: 'PATCH',
+        url: `/api/members/${admin.id}`,
+        token: owner.accessToken,
+        payload: { permissionDenies: ['goal:read', 'goal:read:any'] },
+      });
+      expectStatus(revoke, 200);
+
+      const after = await request(h.app, {
+        method: 'GET',
+        url: '/api/goals',
+        token: admin.accessToken,
+      });
+      expect(after.statusCode).toBe(404);
+      expect(errorCode(after)).toBe('NOT_FOUND');
+    });
+  });
+
+  describe('a child may negotiate a chore swap', () => {
+    /**
+     * The role matrix grants `child` both `chore:swap:request` and
+     * `chore:swap:accept`. The routes used to demand `task:update:own` /
+     * `task:assign:any`, which a child does not hold, so the guard refused
+     * before the service ever ran — two permissions written for children that a
+     * child could not reach.
+     */
+    it('gets past the guard on the swap routes', async () => {
+      const response = await request(h.app, {
+        method: 'POST',
+        url: '/api/chores/swaps',
+        token: child.accessToken,
+        payload: { occurrenceId: '00000000-0000-4000-8000-00000000dead' },
+      });
+
+      // The occurrence does not exist, so the *service* answers 404. What
+      // matters is that it is not the guard's 403: the child was allowed in.
+      expect(response.statusCode).not.toBe(403);
+      expect([400, 404]).toContain(response.statusCode);
     });
   });
 

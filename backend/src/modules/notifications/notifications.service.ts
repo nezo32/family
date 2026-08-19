@@ -27,6 +27,11 @@ import {
 
 import type { Db, Executor } from '../../core/db.js';
 import { AppError, notFound } from '../../core/errors.js';
+import {
+  decodeTimestampCursor,
+  encodeTimestampCursor,
+  type TimestampCursor,
+} from '../../core/pagination.js';
 import { logger } from '../../core/logger.js';
 import { enqueue } from '../../core/queue/queues.js';
 import * as repo from './notifications.repository.js';
@@ -1377,19 +1382,13 @@ export async function runEscalationSweep(db: Db, now = new Date()): Promise<numb
 /* In-app inbox                                                                */
 /* ========================================================================== */
 
+/** Inbox paging uses the app-wide keyset codec — `core/pagination.ts`. */
 function encodeCursor(createdAt: Date, id: string): string {
-  return Buffer.from(`${createdAt.toISOString()}|${id}`, 'utf8').toString('base64url');
+  return encodeTimestampCursor({ createdAt, id });
 }
 
-function decodeCursor(cursor: string): { createdAt: Date; id: string } | undefined {
-  try {
-    const [iso, id] = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
-    if (!iso || !id) return undefined;
-    const createdAt = new Date(iso);
-    return Number.isNaN(createdAt.getTime()) ? undefined : { createdAt, id };
-  } catch {
-    return undefined;
-  }
+function decodeCursor(cursor: string): TimestampCursor | undefined {
+  return decodeTimestampCursor(cursor) ?? undefined;
 }
 
 /**

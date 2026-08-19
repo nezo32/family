@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { effectivePermissions, type Role } from '@family/shared';
 
 import { buildAuthContext, type AuthContext } from '../../core/auth/context.js';
-import { createDbClient, type Db } from '../../core/db.js';
+import { createDbClient, type Db, type Executor } from '../../core/db.js';
 import { AppError } from '../../core/errors.js';
 import type { UserRow } from '../identity/users.schema.js';
 import {
@@ -18,6 +18,7 @@ import {
 } from './activity.service.js';
 import {
   addComment,
+  assertCanReadEntity,
   assertEntityType,
   deleteComment,
   deleteCommentsFor,
@@ -30,6 +31,7 @@ import {
   isPollClosed,
   resolveVoteWrite,
 } from './polls.service.js';
+import * as choresRepo from '../chores/chores.repository.js';
 import * as repo from './wall.repository.js';
 import type { PollOptionRow, PollRow } from './wall.schema.js';
 import { hydratePosts, isUniqueViolation, mergeStreams, setPin } from './wall.service.js';
@@ -186,6 +188,97 @@ describe('wall permissions (D4)', () => {
     const mutedTeen = authFor('teen', { permissionDenies: ['comment:create'] });
     expect(mutedTeen.can('comment:create')).toBe(false);
     expect(mutedTeen.can('poll:vote')).toBe(true);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Comments inherit the target's visibility                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A stub executor that answers one `select(...).from(...).where(...).limit(1)`
+ * with the row it was given. `assertCanReadEntity` runs exactly that query and
+ * then decides, so this is enough to test the decision without Postgres.
+ */
+const execReturning = (rows: readonly Record<string, unknown>[]): Executor =>
+  ({
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          limit: async () => rows,
+        }),
+      }),
+    }),
+  }) as unknown as Executor;
+
+describe('a comment on a private goal is exactly as private as the goal', () => {
+  const OWNER_ID = randomUUID();
+  const goalRef = { entityType: 'goal', entityId: randomUUID() } as const;
+  const privateGoal = { visibility: 'private', ownerId: OWNER_ID };
+  const familyGoal = { visibility: 'household', ownerId: null };
+
+  const canRead = async (
+    auth: AuthContext,
+    row: Record<string, unknown>,
+  ): Promise<boolean> => {
+    try {
+      await assertCanReadEntity(execReturning([row]), goalRef, auth);
+      return true;
+    } catch (error) {
+      // 404, never 403: confirming that a private goal exists is itself the leak
+      // (D4). Anything else is a real failure and should surface.
+      expect((error as AppError).code).toBe('NOT_FOUND');
+      return false;
+    }
+  };
+
+  it('lets the goal owner read their own private goal', async () => {
+    expect(await canRead(authFor('adult', { id: OWNER_ID }), privateGoal)).toBe(true);
+  });
+
+  it('hides it from another adult, who holds every goal permission but `:any`', async () => {
+    expect(await canRead(authFor('adult'), privateGoal)).toBe(false);
+    expect(await canRead(authFor('adult'), familyGoal)).toBe(true);
+  });
+
+  it('hides it from a child, who holds no goal permission at all', async () => {
+    expect(await canRead(authFor('child'), privateGoal)).toBe(false);
+    expect(await canRead(authFor('child'), familyGoal)).toBe(false);
+  });
+
+  it('shows it to an admin, who holds `goal:read:any`', async () => {
+    expect(await canRead(authFor('admin'), privateGoal)).toBe(true);
+  });
+
+  /**
+   * The regression this describe exists for.
+   *
+   * The resolver used to end in `auth.role === 'owner' || auth.role === 'admin'`,
+   * which reads straight past `permission_denies`: an admin explicitly denied
+   * `goal:read` could not open a single goal, and could still read every comment
+   * on every private one. A role string is not a permission (D4).
+   */
+  it('respects a permission deny on an admin — the role is not the permission', async () => {
+    const denied = authFor('admin', { permissionDenies: ['goal:read'] });
+    expect(denied.role).toBe('admin');
+    expect(denied.can('goal:read')).toBe(false);
+
+    expect(await canRead(denied, privateGoal)).toBe(false);
+    expect(await canRead(denied, familyGoal)).toBe(false);
+  });
+
+  it('respects a deny of `goal:read:any` alone', async () => {
+    // Still holds `goal:read`, so household goals stay readable — only the
+    // "administers the family" half is gone.
+    const denied = authFor('owner', { permissionDenies: ['goal:read:any'] });
+    expect(await canRead(denied, privateGoal)).toBe(false);
+    expect(await canRead(denied, familyGoal)).toBe(true);
+  });
+
+  it('404s a goal that does not exist, for a caller who could have read it', async () => {
+    await expect(
+      assertCanReadEntity(execReturning([]), goalRef, authFor('owner')),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });
 
@@ -449,12 +542,24 @@ describe('cursor pagination', () => {
 
   it('round-trips a cursor', () => {
     const decoded = repo.decodeCursor(repo.encodeCursor(row));
-    expect(decoded.id).toBe(row.id);
-    expect(decoded.createdAt.toISOString()).toBe(row.createdAt.toISOString());
+    expect(decoded?.id).toBe(row.id);
+    expect(decoded?.createdAt.toISOString()).toBe(row.createdAt.toISOString());
   });
 
-  it('rejects a malformed cursor with BAD_REQUEST', () => {
-    expect(() => repo.decodeCursor('not-a-cursor')).toThrowError(AppError);
+  /**
+   * The wall used to answer a stale cursor with `400 Malformed cursor` while
+   * events, goals and notifications quietly restarted at page one — same
+   * bookmarked page-2 link, three different outcomes. `core/pagination.ts` is
+   * forgiving everywhere now: a cursor is a token we issued, and a redeploy
+   * that changes the encoding is not the user doing something wrong.
+   */
+  it.each([
+    ['junk', 'not-a-cursor'],
+    ['the old `iso|id` encoding', Buffer.from('2026-08-19T10:00:00.000Z|abc').toString('base64url')],
+    ['valid base64 that is not a cursor', Buffer.from('{"nope":1}').toString('base64url')],
+    ['an empty string', ''],
+  ])('restarts pagination on %s instead of throwing', (_label, raw) => {
+    expect(repo.decodeCursor(raw)).toBeUndefined();
   });
 
   it('returns no cursor when the page is not full', () => {
@@ -466,7 +571,13 @@ describe('cursor pagination', () => {
     const page = repo.toPage([row, second], 1);
     expect(page.items).toEqual([row]);
     expect(page.nextCursor).not.toBeNull();
-    expect(repo.decodeCursor(page.nextCursor as string).id).toBe(row.id);
+    expect(repo.decodeCursor(page.nextCursor as string)?.id).toBe(row.id);
+  });
+
+  /** Every module's codec is the same codec now — this is the proof. */
+  it('is byte-for-byte the same encoding the chores ledger uses', () => {
+    expect(repo.encodeCursor(row)).toBe(choresRepo.encodeCursor(row));
+    expect(choresRepo.decodeCursor(repo.encodeCursor(row))?.id).toBe(row.id);
   });
 });
 

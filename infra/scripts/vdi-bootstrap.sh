@@ -13,7 +13,7 @@ set -euo pipefail
 
 APP_DIR=${APP_DIR:-/opt/family}
 DEPLOY_USER=${DEPLOY_USER:-deploy}
-BACKUP_USER=${BACKUP_USER:-backup}
+BACKUP_USER=${BACKUP_USER:-familybackup}
 BACKUP_DIR="$APP_DIR/backups"
 
 log() { printf '\n\033[1;36m==> %s\033[0m\n' "$1"; }
@@ -42,9 +42,13 @@ chmod 750 "$APP_DIR"
 
 # --------------------------------------------------------------------------
 log "Creating the deploy user"
-# CI gets its own unprivileged account rather than root. A leaked CI key should
-# not be able to rewrite this whole machine — which, on this box, includes the
-# VPN containers that have nothing to do with the family app.
+# CI gets its own account rather than root: a separate, individually revocable
+# credential with no password auth and a clean audit trail.
+#
+# Note honestly that this is NOT a privilege boundary — the account must be in
+# the `docker` group to run compose, and Docker group membership is effectively
+# root (you can mount the host filesystem into a container). The benefit is
+# revocability and traceability, not containment.
 if ! id -u "$DEPLOY_USER" >/dev/null 2>&1; then
   adduser --system --group --shell /bin/bash --home "/home/$DEPLOY_USER" "$DEPLOY_USER"
   echo "created $DEPLOY_USER"
@@ -63,6 +67,19 @@ log "Creating the backup user"
 # Read-only access to the dump directory, nothing else. The home PC pulls with
 # this account, so the key it stores is worth far less than a root key if the
 # PC is ever compromised.
+# Debian/Ubuntu ship a system account literally called `backup` (uid 34,
+# home /var/backups, shell nologin). Reusing it silently produces an account
+# that can never log in and an ~/.ssh in the wrong directory, so the name is
+# deliberately distinct and a collision is refused rather than worked around.
+if id -u "$BACKUP_USER" >/dev/null 2>&1; then
+  EXISTING_SHELL=$(getent passwd "$BACKUP_USER" | cut -d: -f7)
+  if [[ "$EXISTING_SHELL" == *nologin || "$EXISTING_SHELL" == *false ]]; then
+    echo "refusing to reuse system account '$BACKUP_USER' (shell: $EXISTING_SHELL)" >&2
+    echo "set BACKUP_USER=<another name> and re-run" >&2
+    exit 1
+  fi
+fi
+
 if ! id -u "$BACKUP_USER" >/dev/null 2>&1; then
   adduser --system --group --shell /bin/bash --home "/home/$BACKUP_USER" "$BACKUP_USER"
   echo "created $BACKUP_USER"

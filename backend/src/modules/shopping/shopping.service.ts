@@ -201,24 +201,22 @@ export function toProductSuggestion(row: ProductCatalogRow): ProductSuggestion {
 /* Cursors                                                                     */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Offset cursors, deliberately.
+/*
+ * Item paging is keyset, and the codec lives with the ordering it encodes:
+ * `repo.encodeItemCursor` / `repo.decodeItemCursor`, both built on
+ * `core/pagination.ts`.
  *
- * The aisle ordering is a five-column tuple (state, urgency, manual order,
- * creation time, id); keyset paging over that is a page of predicate for a list
- * that will never exceed a few hundred rows. The ordering is fully
- * deterministic, so an offset is stable between pages.
+ * It used to be an **offset**, on the argument that "the ordering is fully
+ * deterministic, so an offset is stable between pages". The ordering is; the
+ * rows are not. Anyone ticking an item off while you scroll moves it across the
+ * `state <> 'needed'` boundary, every row after it shifts by one, and page two
+ * skips whatever slid into the gap — or repeats a row, when an item is added.
+ * Two phones on one list in a shop is what this feature is *for*, so that was
+ * the normal case, not an edge case.
+ *
+ * A malformed or stale cursor no longer 400s either; it starts from the top,
+ * like every other list endpoint (see `core/pagination.ts`).
  */
-function encodeCursor(offset: number): string {
-  return Buffer.from(String(offset), 'utf8').toString('base64url');
-}
-
-function decodeCursor(cursor: string | undefined): number {
-  if (!cursor) return 0;
-  const decoded = Number.parseInt(Buffer.from(cursor, 'base64url').toString('utf8'), 10);
-  if (!Number.isSafeInteger(decoded) || decoded < 0) throw badRequest('Malformed cursor');
-  return decoded;
-}
 
 /* -------------------------------------------------------------------------- */
 /* Notifications                                                               */
@@ -261,7 +259,7 @@ export interface UrgentItemNotification {
  * by the time we get here, and the dedupe key (`shopping_urgent_item:<itemId>`)
  * collapses a replayed offline mutation into a single intent and a single job.
  */
-async function recordUrgentItemIntent(db: Db, input: UrgentItemNotification): Promise<void> {
+export async function emitUrgentItemIntent(db: Db, input: UrgentItemNotification): Promise<void> {
   await emit(db, {
     type: 'shopping_urgent_item',
     audience: { users: [input.shopperId] },
@@ -361,20 +359,20 @@ export class ShoppingService {
   ): Promise<ShoppingItemListResponse> {
     await this.assertListExists(listId);
 
-    const offset = decodeCursor(query.cursor);
     const rows = await repo.findItems(this.db, listId, {
       states: query.state,
       category: query.category,
       groupByCategory: query.groupByCategory,
       // One extra row is the cheapest possible "is there a next page?".
       limit: query.limit + 1,
-      offset,
+      cursor: repo.decodeItemCursor(query.cursor),
     });
 
     const page = rows.slice(0, query.limit);
+    const last = page.at(-1);
     return {
       items: page.map(toItemResponse),
-      nextCursor: rows.length > query.limit ? encodeCursor(offset + query.limit) : null,
+      nextCursor: rows.length > query.limit && last ? repo.encodeItemCursor(last) : null,
     };
   }
 
@@ -761,7 +759,7 @@ export class ShoppingService {
       const list = await repo.findListById(this.db, item.listId);
 
       const notify =
-        this.deps.notifyUrgentItem ?? ((input) => recordUrgentItemIntent(this.db, input));
+        this.deps.notifyUrgentItem ?? ((input) => emitUrgentItemIntent(this.db, input));
 
       await notify({
         actorId: actor.id,
