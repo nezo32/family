@@ -37,6 +37,25 @@ Read together with `docs/DECISIONS.md` (binding) and `docs/PLAN.md` (context).
      `ERR_MODULE_NOT_FOUND` inside the production container only. The alias is
      removed from `backend/tsconfig.json` so this fails at compile time instead.
    - `frontend/` — `@/` maps to `src/`; Vite resolves it at build time.
+7. **Never regenerate a migration that has already been applied somewhere.**
+   Once `backend/drizzle/0000_*.sql` exists and any database has run it — a
+   colleague's, CI's, or production's — it is frozen. Schema changes are new
+   migrations, always, even when the diff looks tidier squashed.
+
+   Drizzle picks what to run by comparing each journal entry's `when` against
+   the newest `created_at` in `drizzle.__drizzle_migrations` — **timestamps, not
+   hashes**. A regenerated baseline carries a newer `when`, so it is treated as
+   unapplied and replayed from the top against a database that already has every
+   table, dying on `type "user_role" already exists`. It fails *before* it
+   changes anything, so nothing is corrupted — but the deploy stops dead, and
+   the only way forward is hand-reconciling the live schema.
+
+   This has happened once already: removing the score system regenerated the set
+   into a single `0000_initial_schema` and broke the next production deploy.
+   `infra/scripts/reconcile-squashed-baseline.sql` records the repair — read it
+   if you ever need to do this again, and note that it needed a column-by-column
+   diff of production against a cleanly migrated database before it was safe to
+   run.
 
 ## Backend conventions
 
