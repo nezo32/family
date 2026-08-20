@@ -63,30 +63,99 @@ function hash(input: string): string {
   return (h >>> 0).toString(36);
 }
 
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    (async () => {
-      const cache = await caches.open(PRECACHE);
-      // `reload` bypasses the HTTP cache so a stale CDN copy can't poison the
-      // precache on the very first install.
-      await cache.addAll(PRECACHE_URLS.map((url) => new Request(url, { cache: 'reload' })));
-    })(),
+/**
+ * Precache the shell — **without** letting one bad entry brick the install.
+ *
+ * `cache.addAll()` is all-or-nothing: a single 404, an opaque redirect or a
+ * storage quota refusal rejects the whole call, the `install` handler's
+ * `waitUntil` rejects with it, and the worker is discarded. It never activates,
+ * `navigator.serviceWorker.ready` never settles — that promise has no rejection
+ * path — and the page has no way to find out. From the app's side this is
+ * indistinguishable from "still installing", for ever, across restarts and
+ * across a delete-and-reinstall, because the same asset fails again every time.
+ *
+ * Push cannot exist without an active worker, so the trade is not close: cache
+ * what we can, let the rest fall through to the network, and only fail the
+ * install if the navigation fallback itself is unobtainable — at which point
+ * offline support genuinely cannot work and the failure is the honest answer.
+ *
+ * `cache: 'reload'` bypasses the HTTP cache so a stale CDN copy cannot poison
+ * the precache on the very first install.
+ */
+async function precache(): Promise<void> {
+  const cache = await caches.open(PRECACHE);
+
+  const results = await Promise.allSettled(
+    PRECACHE_URLS.map((url) => cache.add(new Request(url, { cache: 'reload' }))),
   );
+
+  const failed = PRECACHE_URLS.filter((_, index) => results[index]?.status === 'rejected');
+  if (failed.length > 0) {
+    // Visible over USB in Web Inspector, which is the only place anyone can
+    // read it on the device where this matters.
+    console.warn('[sw] precache skipped %d entr(y|ies)', failed.length, failed);
+  }
+
+  // The one entry that is not optional: without the shell there is nothing to
+  // serve a navigation from when the network is gone.
+  if (failed.includes(NAVIGATION_FALLBACK)) {
+    throw new Error(`Precache failed for the navigation fallback ${NAVIGATION_FALLBACK}`);
+  }
+}
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(precache());
 });
 
+/**
+ * Activate, and claim.
+ *
+ * `clients.claim()` is unconditional and is **not** gated behind
+ * `skipWaiting()`: those are different mechanisms for different moments.
+ * `skipWaiting` decides whether a *new* worker displaces a running one — under
+ * `registerType: 'prompt'` that is the user's choice, made from the update
+ * toast. `claim` only decides whether the worker that just activated takes over
+ * the tabs already open, and on a first install there is no previous worker to
+ * displace, so it runs immediately and unconditionally.
+ *
+ * It is also worth being clear about what claiming does *not* do for push.
+ * `pushManager.subscribe()` needs an **active registration**, not a controlled
+ * page — `navigator.serviceWorker.controller` stays `null` on the first launch
+ * until this line lands, while `subscribe()` would already work. Nothing on the
+ * page may wait for control.
+ *
+ * Every step is individually fault-tolerant for the reason `precache()` is: an
+ * `activate` handler whose `waitUntil` rejects still leaves a worker in a state
+ * nobody on the page can diagnose.
+ */
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
-      const names = await caches.keys();
-      await Promise.all(
-        names
-          .filter((name) => name.startsWith('family-') && name !== PRECACHE && name !== RUNTIME)
-          .map((name) => caches.delete(name)),
-      );
-      if ('navigationPreload' in self.registration) {
-        await self.registration.navigationPreload.enable();
+      try {
+        const names = await caches.keys();
+        await Promise.all(
+          names
+            .filter((name) => name.startsWith('family-') && name !== PRECACHE && name !== RUNTIME)
+            .map((name) => caches.delete(name)),
+        );
+      } catch {
+        // A stale cache costs disk; a failed activation costs notifications.
       }
-      await self.clients.claim();
+
+      try {
+        if ('navigationPreload' in self.registration) {
+          await self.registration.navigationPreload.enable();
+        }
+      } catch {
+        // Absent on Safari, and purely an optimisation where it exists.
+      }
+
+      try {
+        await self.clients.claim();
+      } catch {
+        // The page is served fine uncontrolled; it will be controlled on the
+        // next navigation regardless.
+      }
     })(),
   );
 });

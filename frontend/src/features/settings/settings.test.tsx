@@ -14,10 +14,14 @@ import {
 import { parsePushPayload, notificationOptions, safeNavigatePath } from './push/payload';
 import { ackKey, ackPath, postAck } from './push/ack-queue';
 import {
+  PUSH_STARTUP_GRACE_MS,
   enablePush,
+  isPushReady,
   isPushSupported,
   permissionState,
+  primeRegistration,
   pushAvailability,
+  pushReadiness,
   reconcileSubscription,
   setPrimedRegistration,
   setPrimedVapidKeyForTests,
@@ -200,23 +204,163 @@ describe('permission request', () => {
     });
   });
 
-  it('refuses to subscribe against a service worker that is not active yet', () => {
-    // `PushManager.cpp`: `InvalidStateError: Subscribing for push requires an
-    // active service worker`. The first launch after an install is exactly
-    // when a user goes looking for notifications, and exactly when the worker
-    // may still be installing.
+  it('subscribes anyway when the worker is not active, and reports what WebKit said', () => {
+    // The inversion. This used to refuse pre-emptively whenever
+    // `registration.active` was null, on the theory that `subscribe()` would
+    // only throw `InvalidStateError` anyway — but the readiness signal behind
+    // it could be false *for ever* (`navigator.serviceWorker.ready` has no
+    // rejection path), and the refusal we invented carried no error a user
+    // could paste to anybody. WebKit's own sentence is greppable and
+    // documented; ours was neither.
     vi.stubEnv('VITE_VAPID_PUBLIC_KEY', 'BJ_test_key');
     stubNotification('default');
-    stubServiceWorker(fakeSubscription());
+    const thrown = new Error('Subscribing for push requires an active service worker');
+    thrown.name = 'InvalidStateError';
+    const subscribe = vi.fn(() => Promise.reject(thrown));
     setPrimedRegistration({
       active: null,
-      pushManager: { subscribe: vi.fn(), getSubscription: vi.fn() },
+      waiting: null,
+      installing: {},
+      pushManager: { subscribe, getSubscription: vi.fn(() => Promise.resolve(null)) },
     } as unknown as ServiceWorkerRegistration);
+
+    const promise = enablePush();
+
+    // The attempt is made — synchronously, inside the tap's activation window.
+    expect(subscribe).toHaveBeenCalledTimes(1);
+
+    return promise.then((result) => {
+      expect(result.outcome).toBe('not-ready');
+      // Verbatim, and from the platform rather than from us.
+      expect(result.error?.name).toBe('InvalidStateError');
+      expect(result.error?.message).toBe('Subscribing for push requires an active service worker');
+    });
+  });
+
+  it('reports a real absence of a registration instead of pretending to wait', () => {
+    // The other half: nothing to call `subscribe()` on at all. Still an
+    // attempt-shaped answer with a cause attached, never «подождите ещё».
+    vi.stubEnv('VITE_VAPID_PUBLIC_KEY', 'BJ_test_key');
+    stubNotification('default');
+    ensureServiceWorker();
+    setPrimedRegistration(null);
 
     return enablePush().then((result) => {
       expect(result.outcome).toBe('not-ready');
-      expect(result.error?.message).toContain('active service worker');
+      expect(result.error?.message).toContain('No service worker registration');
     });
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* 2b. readiness — the signal that must not be derived from `controller`       */
+/* -------------------------------------------------------------------------- */
+
+describe('push readiness', () => {
+  /**
+   * A registration with an **active** worker that does *not* control this page.
+   *
+   * This is the literal state of a first launch after an install:
+   * `navigator.serviceWorker.controller` is `null` until the worker claims the
+   * page or the page reloads, while `subscribe()` would succeed. Every stub
+   * here sets `controller: null` on purpose.
+   */
+  function stubUncontrolledButActive() {
+    const registration = {
+      active: { state: 'activated' },
+      waiting: null,
+      installing: null,
+      scope: `${ORIGIN}/`,
+      addEventListener: vi.fn(),
+      pushManager: {
+        getSubscription: vi.fn(() => Promise.resolve(null)),
+        subscribe: vi.fn(() => Promise.resolve(fakeSubscription())),
+      },
+    } as unknown as ServiceWorkerRegistration;
+
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: {
+        // The correct primitive: resolves on an active *registration*,
+        // regardless of whether this page is controlled.
+        ready: Promise.resolve(registration),
+        getRegistration: vi.fn(() => Promise.resolve(registration)),
+        // The trap. Anything derived from this is false on a first launch.
+        controller: null,
+        addEventListener: vi.fn(),
+      },
+    });
+    return registration;
+  }
+
+  it('is ready on a first launch, where the page is not yet controlled', async () => {
+    // The regression test the fix exists for. Derive readiness from
+    // `navigator.serviceWorker.controller` — directly, or via anything that
+    // means "is this page controlled" — and this fails.
+    setPrimedVapidKeyForTests('BJ_test_key');
+    stubNotification('default');
+    stubUncontrolledButActive();
+    setPrimedRegistration(null);
+
+    expect(navigator.serviceWorker.controller).toBeNull();
+
+    await primeRegistration();
+
+    expect(pushReadiness()).toBe('ready');
+    expect(isPushReady()).toBe(true);
+  });
+
+  it('becomes ready when the VAPID key lands after the worker does', async () => {
+    // The latch. `serviceWorker.ready` resolves in a tick on a warm start while
+    // `GET /notifications/vapid-public-key` takes a round trip, so a readiness
+    // value computed once — when the registration arrived — was false and
+    // stayed false for the whole session, with the enable button dead behind
+    // it. Readiness has to be re-read, not sampled.
+    // The build-time variable must be genuinely empty here: this is the
+    // deployment where the key is served by the API instead of baked in, which
+    // is precisely the deployment that exposed the latch.
+    vi.stubEnv('VITE_VAPID_PUBLIC_KEY', '');
+    setPrimedVapidKeyForTests('');
+    stubNotification('default');
+    stubUncontrolledButActive();
+    setPrimedRegistration(null);
+
+    await primeRegistration();
+    expect(isPushReady()).toBe(false);
+
+    setPrimedVapidKeyForTests('BJ_test_key');
+    expect(isPushReady()).toBe(true);
+  });
+
+  it('does not resolve readiness from a pending `ready` promise', async () => {
+    // The shape of the owner's phone: the worker never activates, so
+    // `serviceWorker.ready` stays pending. `primeRegistration()` must still
+    // settle — the previous version awaited it and hung for ever — and the
+    // answer must be an honest "not ready", not an eternal "starting".
+    setPrimedVapidKeyForTests('BJ_test_key');
+    stubNotification('default');
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: {
+        ready: new Promise(() => undefined),
+        getRegistration: vi.fn(() => Promise.resolve(undefined)),
+        controller: null,
+        addEventListener: vi.fn(),
+      },
+    });
+    setPrimedRegistration(null);
+
+    vi.useFakeTimers();
+    try {
+      const settled = primeRegistration();
+      await vi.advanceTimersByTimeAsync(PUSH_STARTUP_GRACE_MS + 1_000);
+      await expect(settled).resolves.toBeNull();
+      expect(pushReadiness()).toBe('stalled');
+      expect(isPushReady()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      setPrimedRegistration(null);
+    }
   });
 });
 

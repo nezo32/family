@@ -7,6 +7,7 @@
  * worker bundle grows a React dependency.
  */
 export {
+  PUSH_STARTUP_GRACE_MS,
   currentEndpoint,
   deviceLabel,
   disablePush,
@@ -22,12 +23,18 @@ export {
   clearPushFailure,
   lastEnableOutcome,
   lastPushFailure,
+  noteServiceWorkerRegistration,
+  onPushReadinessChange,
   recordPushFailure,
+  recordRegistrationError,
   permissionState,
   postSubscription,
   primeRegistration,
   pushAvailability,
+  pushReadiness,
+  pushRegistration,
   reconcileSubscription,
+  registrationSnapshot,
   setPrimedRegistration,
   urlBase64ToUint8Array,
   vapidPublicKey,
@@ -36,16 +43,20 @@ export {
   type PushAvailability,
   type PushFailure,
   type PushPermission,
+  type PushReadiness,
   type ReconcileOutcome,
+  type RegistrationSnapshot,
 } from './push';
 export { usePush, type PushState, type UsePushResult } from './use-push';
 export {
+  PUSH_DIAGNOSTICS_ANCHOR,
   PushDeniedCard,
   PushFailureCard,
   PushInstallCard,
   PushPrompt,
   PushReEnableCard,
   PushSection,
+  PushWorkerCard,
 } from './PushPrompt';
 export { isEnableFailure, reportEnableOutcome, type FailureOutcome } from './enable-report';
 /**

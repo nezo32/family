@@ -1,4 +1,4 @@
-import type { EnableOutcome, PushFailure, PushPermission } from './push';
+import type { EnableOutcome, PushFailure, PushPermission, PushReadiness } from './push';
 import {
   isIos,
   isIosNonSafari,
@@ -6,6 +6,7 @@ import {
   lastEnableOutcome,
   lastPushFailure,
   permissionState,
+  registrationSnapshot,
   vapidPublicKey,
 } from './push';
 import { fetchSubscriptions } from '../api';
@@ -80,12 +81,43 @@ export interface PushDiagnostics {
   /**
    * Whether this page is being *controlled* by the worker.
    *
-   * `subscribe()` needs an **active** worker (`InvalidStateError: Subscribing
-   * for push requires an active service worker`), and on the first launch after
-   * an install the worker is often registered but not yet controlling — the
-   * shape Discourse chased for a week.
+   * **Reported, never acted on.** On the first launch after an install
+   * `navigator.serviceWorker.controller` is `null` until the worker claims the
+   * page or the page reloads, while the registration is perfectly active and
+   * `subscribe()` works fine. Anything that gates on this is dead on exactly
+   * the launch a user first goes looking for notifications — the shape
+   * Discourse chased for a week, and the shape that produced the bug this row
+   * now exists to rule out.
    */
   serviceWorkerControlling: boolean;
+
+  /**
+   * The three worker slots, separately.
+   *
+   * {@link serviceWorker} collapses them into the first non-empty one, which
+   * hides the state that matters most: an `installing` worker that never
+   * becomes `active`, or a `waiting` one parked behind `registerType: 'prompt'`
+   * while the page waits for a worker that will never take over.
+   */
+  serviceWorkerInstalling: boolean;
+  serviceWorkerWaiting: boolean;
+  serviceWorkerActive: boolean;
+  /** `registration.active.state`: `activating`, `activated`, `redundant`. */
+  serviceWorkerActiveState: string | null;
+  /**
+   * Whether `navigator.serviceWorker.ready` has actually settled.
+   *
+   * The one fact that separates "still starting" from "will never start": that
+   * promise has no rejection path, so a worker that cannot install leaves it
+   * pending for ever and every naive readiness check false for ever.
+   */
+  serviceWorkerReadyResolved: boolean;
+  /** How long we have been waiting for an active worker, in milliseconds. */
+  serviceWorkerWaitedMs: number | null;
+  /** `starting` / `stalled` / `ready`, as the push module sees it. */
+  serviceWorkerReadiness: PushReadiness;
+  /** `onRegisterError`, verbatim, when `register()` itself failed. */
+  serviceWorkerRegistrationError: string | null;
 
   /* --- gate 5: the subscription ------------------------------------------ */
   subscription: Tristate;
@@ -195,6 +227,10 @@ function healthOf(registration: ServiceWorkerRegistration | null): ServiceWorker
 export async function collectPushDiagnostics(): Promise<PushDiagnostics> {
   const hasWindow = typeof window !== 'undefined';
   const hasNavigator = typeof navigator !== 'undefined';
+  // Read from the push module rather than re-derived here: it holds the handle
+  // the enable path would actually subscribe against, including the case where
+  // `getRegistration()` below can see a registration that priming never got.
+  const snapshot = registrationSnapshot();
 
   const diagnostics: PushDiagnostics = {
     at: new Date().toISOString(),
@@ -221,6 +257,15 @@ export async function collectPushDiagnostics(): Promise<PushDiagnostics> {
       navigator.serviceWorker.controller !== null &&
       navigator.serviceWorker.controller !== undefined,
 
+    serviceWorkerInstalling: snapshot.installing,
+    serviceWorkerWaiting: snapshot.waiting,
+    serviceWorkerActive: snapshot.active,
+    serviceWorkerActiveState: snapshot.activeState,
+    serviceWorkerReadyResolved: snapshot.readyResolved,
+    serviceWorkerWaitedMs: snapshot.waitedMs,
+    serviceWorkerReadiness: snapshot.readiness,
+    serviceWorkerRegistrationError: snapshot.error,
+
     subscription: 'unknown',
     subscriptionOrigin: null,
     subscriptionFingerprint: null,
@@ -239,8 +284,17 @@ export async function collectPushDiagnostics(): Promise<PushDiagnostics> {
 
   const registration = await registrationForDiagnostics();
   diagnostics.serviceWorker = healthOf(registration);
-  diagnostics.serviceWorkerScope = registration?.scope ?? null;
+  diagnostics.serviceWorkerScope = registration?.scope ?? snapshot.scope;
   diagnostics.registrationHasPushManager = Boolean(registration && 'pushManager' in registration);
+  if (registration) {
+    // `getRegistration()` sees the browser's current truth; the snapshot sees
+    // what the enable path is holding. When they disagree the fresher reading
+    // is the one worth printing.
+    diagnostics.serviceWorkerInstalling = registration.installing != null;
+    diagnostics.serviceWorkerWaiting = registration.waiting != null;
+    diagnostics.serviceWorkerActive = registration.active != null;
+    diagnostics.serviceWorkerActiveState = registration.active?.state ?? null;
+  }
 
   let endpoint: string | null = null;
   if (registration && diagnostics.registrationHasPushManager) {
@@ -306,6 +360,8 @@ export type PushVerdict =
   | 'not-asked'
   | 'no-service-worker'
   | 'sw-not-active'
+  /** A registration exists, has had long enough, and still will not activate. */
+  | 'sw-stalled'
   | 'no-subscription'
   | 'server-unaware'
   | 'misconfigured'
@@ -332,6 +388,10 @@ export function pushVerdict(d: PushDiagnostics): PushVerdict {
 
   if (d.vapidKey === 'missing') return 'misconfigured';
   if (d.serviceWorker === 'none') return 'no-service-worker';
+  // "Still starting" and "stuck" need different sentences: one asks for a few
+  // seconds of patience, the other has to stop asking for patience entirely,
+  // because the user has already given it and it did not help.
+  if (!d.serviceWorkerActive && d.serviceWorkerReadiness === 'stalled') return 'sw-stalled';
   if (d.serviceWorker === 'installing' || d.serviceWorker === 'waiting') return 'sw-not-active';
   if (d.permission === 'default') return 'not-asked';
   if (d.subscription === 'no') return 'no-subscription';
@@ -372,7 +432,12 @@ export function formatPushDiagnostics(d: PushDiagnostics): string {
     `Разрешение: ${d.permission}`,
     `Последняя попытка включить: ${d.lastAttempt ?? 'не было в этом сеансе'}`,
     `Service Worker: ${d.serviceWorker}${d.serviceWorkerScope ? ` (scope ${d.serviceWorkerScope})` : ''}`,
-    `Страница под управлением SW: ${bool(d.serviceWorkerControlling)}`,
+    `  installing/waiting/active: ${bool(d.serviceWorkerInstalling)}/${bool(d.serviceWorkerWaiting)}/${bool(d.serviceWorkerActive)}` +
+      (d.serviceWorkerActiveState ? ` (active.state=${d.serviceWorkerActiveState})` : ''),
+    `  serviceWorker.ready сработал: ${bool(d.serviceWorkerReadyResolved)}`,
+    `  ждём активную службу: ${d.serviceWorkerWaitedMs === null ? '—' : `${String(d.serviceWorkerWaitedMs)} мс`} (${d.serviceWorkerReadiness})`,
+    `  ошибка регистрации: ${d.serviceWorkerRegistrationError ?? 'нет'}`,
+    `Страница под управлением SW (controller): ${bool(d.serviceWorkerControlling)}`,
     `pushManager у регистрации: ${bool(d.registrationHasPushManager)}`,
     `Подписка в браузере: ${YES_NO[d.subscription]}`,
     `Сервис подписки: ${d.subscriptionOrigin ?? '—'}`,

@@ -3,7 +3,7 @@ import { ErrorState } from '@/shared/components/ErrorState';
 import { LoadingScreen } from '@/shared/components/LoadingScreen';
 import { useMe } from '@/shared/auth/use-me';
 import { SETTINGS_RU } from '../locale';
-import { PushSection } from '../push/PushPrompt';
+import { PUSH_DIAGNOSTICS_ANCHOR, PushSection } from '../push/PushPrompt';
 import { PushDiagnosticsCard } from '../push/PushDiagnosticsCard';
 import { PreferenceMatrix } from '../components/PreferenceMatrix';
 import { QuietHoursEditor } from '../components/QuietHoursEditor';
@@ -71,7 +71,7 @@ export default function NotificationsPage() {
           we own — so it does not hide behind an error state, and it opens
           itself when the verdict is anything other than «Всё в порядке».
         */}
-        <PushDiagnosticsCard />
+        <PushDiagnosticsCard id={PUSH_DIAGNOSTICS_ANCHOR} />
       </div>
     </>
   );

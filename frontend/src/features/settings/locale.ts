@@ -69,6 +69,8 @@ export const SETTINGS_RU = {
      * 390px.
      */
     pushRowTitle: 'На этом устройстве',
+    /** Shown on `/settings` when the worker is stuck: routes to the diagnostics. */
+    pushRowStalled: 'Фоновая служба не запустилась',
     pushEnableShort: 'Включить',
     pushFix: 'Настроить',
     pushOpen: 'Открыть',
@@ -299,6 +301,21 @@ export const SETTINGS_RU = {
 
     /* --- states ------------------------------------------------------------- */
 
+    /**
+     * Shown next to a **live** enable button, not instead of one.
+     *
+     * The point of the sentence is that pressing it is still the right move: a
+     * tap that fails produces WebKit's own error, which is diagnosable, whereas
+     * the disabled button it replaced produced nothing at all.
+     */
+    startingTitle: 'Фоновая служба ещё запускается',
+    startingText:
+      'Так бывает на первом запуске после установки. Нажать «Включить уведомления» можно уже сейчас — если телефон ответит, что рано, мы покажем его ответ дословно.',
+    stalledTitle: 'Фоновая служба не запустилась',
+    stalledText:
+      'Она нужна для уведомлений, и на этом устройстве она не поднялась — ждать дальше смысла нет. Нажмите «Включить уведомления»: телефон назовёт причину, и она попадёт в «Диагностику уведомлений» ниже. Оттуда одним нажатием копируется отчёт, который нам и нужен.',
+    stalledDiagnostics: 'Открыть диагностику',
+
     statusOn: 'Включены',
     statusOff: 'Выключены',
     /** Not «в настройках телефона»: this same screen runs in Chrome on a desktop. */
@@ -408,7 +425,7 @@ export const SETTINGS_RU = {
       unsupported: 'Этот браузер не умеет уведомления',
       'needs-install': 'Сначала установите приложение',
       misconfigured: 'Приложению не выдан ключ уведомлений',
-      'not-ready': 'Приложение ещё не готово',
+      'not-ready': 'Фоновая служба приложения не запустилась',
       'gesture-lost': 'Телефон не засчитал нажатие',
       'subscribe-rejected': 'Телефон отказался оформить подписку',
       'server-rejected': 'Сервер не принял подписку',
@@ -433,12 +450,30 @@ export const SETTINGS_RU = {
         'На iPhone уведомления работают только у приложения, добавленного на экран «Домой»: «Поделиться» → «На экран „Домой“», и не выключайте «Открыть как веб‑приложение». Потом запустите «Семью» с новой иконки.',
       misconfigured:
         'Это сбой на нашей стороне, а не на телефоне: сервер не отдал ключ для подписки. Откройте «Диагностику уведомлений» ниже и пришлите текст — чинить это здесь нечего.',
+      /**
+       * The message this replaced told the user to wait a few seconds and, if
+       * that failed, to close and reopen the app. The owner did both, and then
+       * deleted and re-added the icon, and the state did not change — because
+       * it never was a timing problem. `navigator.serviceWorker.ready` has no
+       * rejection path: a worker that cannot install leaves it pending for
+       * ever, and "подождите ещё" is then advice that can never come true.
+       *
+       * So this says what is actually known, and sends the reader to the one
+       * screen that can say *why* — never back round the loop they have
+       * already walked.
+       */
       'not-ready':
-        'Фоновая служба приложения ещё запускается — так бывает на первом запуске после установки. Подождите несколько секунд и нажмите ещё раз; если кнопка не оживает, закройте приложение полностью и откройте заново.',
+        'Уведомления работают через фоновую службу приложения, и на этом устройстве она не запустилась. Это не «ещё не успела» — перезапуск приложения и переустановка иконки здесь не помогают. Откройте «Диагностику уведомлений» ниже, нажмите «Скопировать» и пришлите нам текст: в нём видно, на каком шаге служба встала. Пока служба не поднимется, подписка невозможна — но проверить стоит две вещи: есть ли на телефоне свободное место и открыто ли приложение по обычной сети (не через режим экономии данных).',
       'gesture-lost':
         'Между нажатием и запросом прошло слишком много времени — у телефона на это пять секунд. Нажмите «Включить уведомления» ещё раз и не переключайтесь на другие приложения.',
+      /**
+       * Leads with the diagnostics, not with a restart. A restart is a
+       * reasonable thing to try *once*; it is not a thing to keep telling
+       * somebody who has already tried it, and this app has burnt that trust
+       * once already with the `not-ready` copy above.
+       */
       'subscribe-rejected':
-        'Обычно помогает закрыть приложение полностью, открыть заново и нажать «Включить уведомления» одним касанием. Точная причина — в «Диагностике уведомлений» ниже.',
+        'Телефон получил запрос и отклонил его. Точная причина — в «Диагностике уведомлений» ниже: откройте её, нажмите «Скопировать» и пришлите нам текст. Если это первая попытка, имеет смысл нажать «Включить уведомления» ещё раз одним касанием — но если сообщение повторяется, дело не в касании и повторять его незачем.',
       'server-rejected':
         'Телефон подписку оформил, а наш сервер её не принял. Проверьте интернет и попробуйте ещё раз; код ошибки записан в «Диагностике уведомлений» ниже.',
       failed:
@@ -479,8 +514,9 @@ export const SETTINGS_RU = {
       denied: 'Уведомления запрещены в настройках телефона',
       'blocked-in-settings': 'Уведомления выключены в настройках iPhone',
       'not-asked': 'Разрешение ещё не запрашивали',
-      'no-service-worker': 'Фоновая служба приложения не запущена',
+      'no-service-worker': 'Фоновая служба приложения не зарегистрирована',
       'sw-not-active': 'Фоновая служба ещё запускается',
+      'sw-stalled': 'Фоновая служба не запускается',
       'no-subscription': 'Подписка на этом устройстве не оформлена',
       'server-unaware': 'Сервер не знает про это устройство',
       misconfigured: 'Приложению не выдан ключ уведомлений',
@@ -512,10 +548,23 @@ export const SETTINGS_RU = {
         'Телефон отвечает «разрешение ещё не спрашивали», но окно с вопросом так и не появляется. Так ведёт себя iPhone, когда уведомления для «Семьи» уже выключены в его настройках. Включите их по шагам ниже — из приложения это не чинится.',
       'not-asked':
         'Нажмите «Включить уведомления» выше — телефон должен показать окно с вопросом. Если окно не появилось, а надпись не изменилась, значит уведомления выключены в настройках iPhone: смотрите шаги ниже.',
+      /**
+       * No «закройте и откройте заново» here, and none in `sw-stalled` either.
+       * That was the advice the owner had already exhausted twice over before
+       * anybody looked at the code, and repeating it is how a support thread
+       * becomes unclosable.
+       */
       'no-service-worker':
-        'Закройте приложение полностью и откройте заново. Если не помогло — переустановите иконку с экрана «Домой».',
+        'Браузер вообще не зарегистрировал фоновую службу для этого адреса. Чаще всего это значит, что приложение открыто не с иконки на экране «Домой», либо сеть подменяет содержимое страницы (корпоративный Wi‑Fi, VPN, режим экономии трафика). Попробуйте другую сеть, а потом скопируйте отчёт кнопкой ниже и пришлите нам — в строке «ошибка регистрации» будет причина.',
       'sw-not-active':
-        'Так бывает на первом запуске после установки. Подождите несколько секунд и нажмите «Проверить заново»; кнопка «Включить уведомления» оживёт сама.',
+        'Так бывает на первом запуске после установки: служба ставится и через несколько секунд оживает сама. Нажмите «Проверить заново». Кнопку «Включить уведомления» это не блокирует — её можно нажать и сейчас, и телефон сам скажет, если ещё рано.',
+      /**
+       * The state the gate used to hide behind «подождите несколько секунд».
+       * `serviceWorker.ready` never settles when a worker cannot install, so
+       * the wait it asked for had no end.
+       */
+      'sw-stalled':
+        'Служба зарегистрирована, но так и не стала активной — заметно дольше, чем это занимает обычно. Ждать дальше смысла нет: в таком состоянии она сама не поднимется. Скопируйте отчёт кнопкой ниже и пришлите нам — строки «installing/waiting/active» и «ошибка регистрации» показывают, где именно она встала. Заодно проверьте свободное место на телефоне: службе нужно закэшировать приложение целиком, и на переполненном диске установка падает молча.',
       'no-subscription':
         'Разрешение есть, но подписка не создана. Нажмите «Включить уведомления» выше — нужно живое касание, само это не починится.',
       'server-unaware':
@@ -538,7 +587,17 @@ export const SETTINGS_RU = {
       lastAttempt: 'Чем кончилась последняя попытка',
       serviceWorker: 'Фоновая служба (service worker)',
       serviceWorkerScope: 'Область службы',
-      serviceWorkerControlling: 'Служба управляет страницей',
+      serviceWorkerSlots: 'Ставится / ждёт / работает',
+      serviceWorkerActiveState: 'Состояние активной службы',
+      serviceWorkerReadyResolved: 'serviceWorker.ready сработал',
+      serviceWorkerWaited: 'Ждём активную службу',
+      serviceWorkerRegistrationError: 'Ошибка регистрации службы',
+      /**
+       * Kept, and deliberately marked as neutral wherever it is rendered: on
+       * the first launch after an install this is `нет` on a perfectly healthy
+       * device. It is here to be *ruled out*, not to be acted on.
+       */
+      serviceWorkerControlling: 'Служба управляет страницей (controller)',
       registrationPushManager: 'pushManager у службы',
       subscription: 'Подписка в браузере',
       subscriptionOrigin: 'Служба доставки',
@@ -604,6 +663,23 @@ export const SETTINGS_RU = {
       active: 'работает',
       unknown: 'не удалось проверить',
     },
+
+    readinessValue: {
+      unsupported: 'push недоступен',
+      starting: 'запускается',
+      stalled: 'застряла',
+      ready: 'готова',
+    },
+
+    /**
+     * Under the `controller` row, because a reader who sees «нет» there will
+     * otherwise conclude that is the fault. It is not, and a gate built on that
+     * assumption is what produced the bug this screen had to explain.
+     */
+    controllingCaveat:
+      'Строка выше почти всегда «нет» на первом запуске после установки — и это нормально: подписке нужна активная служба, а не управление страницей. Смотрите на строку «Ставится / ждёт / работает».',
+
+    waitedValue: (ms: number) => `${String(Math.round(ms / 100) / 10)} с`,
 
     /* --- the verbatim error ------------------------------------------------- */
 

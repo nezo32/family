@@ -150,7 +150,15 @@ export async function primeVapidKey(): Promise<void> {
     const response = await fetch('/api/notifications/vapid-public-key');
     if (!response.ok) return;
     const body = (await response.json()) as { publicKey?: unknown };
-    if (typeof body.publicKey === 'string' && body.publicKey) primedKey = body.publicKey;
+    if (typeof body.publicKey === 'string' && body.publicKey) {
+      primedKey = body.publicKey;
+      // The key is half of `isPushReady()`, and it arrives on its own schedule.
+      // On a warm start `navigator.serviceWorker.ready` resolves in a tick while
+      // this round trip takes hundreds of milliseconds — so a readiness value
+      // computed once, when `ready` landed, was false and stayed false for the
+      // life of the session. Republish instead of latching.
+      notifyReadiness();
+    }
   } catch {
     // Offline or the endpoint is unavailable. Nothing to do; `enablePush()`
     // reports `misconfigured` rather than burning the one-shot OS prompt.
@@ -160,6 +168,7 @@ export async function primeVapidKey(): Promise<void> {
 /** Test seam. */
 export function setPrimedVapidKeyForTests(key: string): void {
   primedKey = key;
+  notifyReadiness();
 }
 
 /** base64url → `Uint8Array`, the only form `applicationServerKey` accepts. */
@@ -177,30 +186,390 @@ export function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
 /* the registration, primed ahead of the gesture                               */
 /* -------------------------------------------------------------------------- */
 
-let primedRegistration: ServiceWorkerRegistration | null = null;
+/**
+ * ## The bug this section was rewritten to kill
+ *
+ * The enable control used to be **disabled** until a single promise —
+ * `navigator.serviceWorker.ready` — had resolved, and `enablePush()` refused
+ * pre-emptively until the same thing held. That promise has no failure mode:
+ * when the worker cannot activate (a failed `install`, a precache entry that
+ * 404s or blows the quota, a registration the browser rejected) it does not
+ * reject, it stays **pending forever**. Every downstream signal was latched off
+ * it, so a worker that would never activate became a permanently dead button
+ * under a message telling the user to wait a few seconds and try again. The
+ * owner's iPhone sat in that state through a delete-and-reinstall.
+ *
+ * Three rules follow, and all three are load-bearing:
+ *
+ * 1. **`ready` is the primitive, never `controller`.** On the first launch after
+ *    an install `navigator.serviceWorker.controller` is `null` until the worker
+ *    claims the page or the page reloads — while the registration is perfectly
+ *    active and `subscribe()` would work. Anything derived from `controller`
+ *    (or from "is this page controlled") is false on exactly the launch a user
+ *    first goes looking for notifications. {@link pushReadiness} reads
+ *    `registration.active`, and nothing in this file gates on `controller`.
+ * 2. **Readiness is a stream, not a latch.** It is recomputed from live state
+ *    and republished on every event that could change it — `ready` resolving, a
+ *    `getRegistration()` poll, `controllerchange`, a worker `statechange`, the
+ *    VAPID key landing. One-shot evaluation is what let a key that arrived
+ *    150 ms after `ready` pin the button off for the life of the session.
+ * 3. **It is never a veto.** {@link enablePush} subscribes against whatever
+ *    registration handle exists, active or not, and lets WebKit produce its own
+ *    `InvalidStateError`. A refusal we invent is undiagnosable; the platform's
+ *    is greppable and lands verbatim in «Диагностика уведомлений».
+ */
 
 /**
- * Warm the service-worker registration **before** the button becomes clickable.
+ * How long the worker may plausibly still be starting before we stop saying
+ * «подождите» and start saying «застряло».
  *
- * `navigator.serviceWorker.ready` is a promise, and awaiting it inside the click
- * handler would burn the gesture just as surely as a fetch would. Calling this
- * from an effect on mount means the handler can reach the registration
- * synchronously.
+ * A cold first install has to fetch and cache the whole app shell, so a few
+ * seconds is normal. Twelve is generous. Past it the honest answer is that
+ * something is stuck and the user needs the diagnostics, not more waiting.
  */
-export async function primeRegistration(): Promise<ServiceWorkerRegistration | null> {
-  if (primedRegistration) return primedRegistration;
-  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return null;
-  try {
-    primedRegistration = await navigator.serviceWorker.ready;
-    return primedRegistration;
-  } catch {
-    return null;
+export const PUSH_STARTUP_GRACE_MS = 12_000;
+
+/** How often we re-ask `getRegistration()` while nothing has an active worker. */
+const REGISTRATION_POLL_MS = 750;
+
+/** Stop polling here — past this the answer will not change by itself. */
+const REGISTRATION_POLL_LIMIT_MS = 60_000;
+
+let primedRegistration: ServiceWorkerRegistration | null = null;
+let primingStartedAt: number | null = null;
+let readyResolvedAt: number | null = null;
+let registrationError: string | null = null;
+let priming: Promise<ServiceWorkerRegistration | null> | null = null;
+let readyTracking: Promise<ServiceWorkerRegistration | null> | null = null;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+let graceTimer: ReturnType<typeof setTimeout> | null = null;
+
+const readinessListeners = new Set<() => void>();
+const watchedRegistrations = new WeakSet<ServiceWorkerRegistration>();
+
+/**
+ * Subscribe to "the answer to {@link pushReadiness} may have changed".
+ *
+ * Listeners re-read the state rather than receiving it, so one that fires
+ * spuriously costs a render and nothing else — the right trade against the
+ * alternative, a listener that never fires at all.
+ */
+export function onPushReadinessChange(listener: () => void): () => void {
+  readinessListeners.add(listener);
+  return () => {
+    readinessListeners.delete(listener);
+  };
+}
+
+function notifyReadiness(): void {
+  // Copied: a listener may unsubscribe itself from inside its own callback.
+  for (const listener of [...readinessListeners]) {
+    try {
+      listener();
+    } catch {
+      // A subscriber's failure is not this module's problem, and must never
+      // stop the remaining subscribers from hearing about an active worker.
+    }
   }
+}
+
+/**
+ * Take a registration handle from wherever it came from — `ready`, a poll, or
+ * `registerSW`'s `onRegisteredSW` callback, which hands us one *before*
+ * activation and is therefore the earliest thing a tap can subscribe against.
+ */
+export function noteServiceWorkerRegistration(
+  registration: ServiceWorkerRegistration | null | undefined,
+): void {
+  if (!registration) return;
+  // There is only one registration for scope `/`, but a newer object carrying
+  // an active worker always wins over an older one without.
+  if (!primedRegistration || registration.active || !primedRegistration.active) {
+    primedRegistration = registration;
+  }
+  watchRegistration(registration);
+  notifyReadiness();
+}
+
+/** Record why registration itself failed, for the diagnostics screen. */
+export function recordRegistrationError(error: unknown): void {
+  registrationError =
+    error instanceof Error ? `${error.name}: ${error.message}` : String(error ?? 'unknown');
+  recordPushFailure('registration', error);
+  notifyReadiness();
+}
+
+/**
+ * Re-publish readiness whenever any worker attached to this registration moves.
+ *
+ * Without this the only signal that an `installing` worker had become `active`
+ * would be the poll, and the poll is a backstop rather than the mechanism.
+ */
+function watchRegistration(registration: ServiceWorkerRegistration): void {
+  if (watchedRegistrations.has(registration)) return;
+  watchedRegistrations.add(registration);
+
+  const onStateChange = () => {
+    notifyReadiness();
+    if (primedRegistration?.active) stopPolling();
+  };
+
+  const attach = (worker: ServiceWorker | null) => {
+    try {
+      worker?.addEventListener('statechange', onStateChange);
+    } catch {
+      // Non-conforming stubs and old WebViews. The poll still covers us.
+    }
+  };
+
+  attach(registration.installing);
+  attach(registration.waiting);
+  attach(registration.active);
+
+  try {
+    registration.addEventListener('updatefound', () => {
+      attach(registration.installing);
+      notifyReadiness();
+    });
+  } catch {
+    // Same.
+  }
+}
+
+/**
+ * Watch `navigator.serviceWorker.ready` exactly once, independently of priming.
+ *
+ * Separate from {@link primeRegistration} on purpose. Priming can be satisfied
+ * early — `registerSW`'s `onRegisteredSW` hands us a registration before
+ * `ready` settles — and if the two were one code path, an early hand-over would
+ * mean `ready` was never observed at all and the diagnostics row for it read
+ * `нет` for ever on a perfectly healthy device. Whether that promise settled is
+ * the single most useful fact on the screen; it must not be an artefact of
+ * which track happened to win.
+ */
+function trackReady(): Promise<ServiceWorkerRegistration | null> {
+  if (readyTracking) return readyTracking;
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
+    return Promise.resolve(null);
+  }
+  readyTracking = navigator.serviceWorker.ready.then(
+    (registration) => {
+      readyResolvedAt = Date.now();
+      noteServiceWorkerRegistration(registration);
+      stopPolling();
+      return registration;
+    },
+    () => {
+      // Specified never to reject; belt and braces, so a non-conforming
+      // implementation cannot leave this promise dangling.
+      return null;
+    },
+  );
+  return readyTracking;
+}
+
+async function refreshRegistration(): Promise<void> {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+  try {
+    const found =
+      (await navigator.serviceWorker.getRegistration('/')) ??
+      (await navigator.serviceWorker.getRegistration()) ??
+      null;
+    noteServiceWorkerRegistration(found);
+  } catch {
+    // `getRegistration()` can reject in a partitioned or storage-blocked
+    // context. `ready` and the poll are still running.
+  }
+}
+
+function stopPolling(): void {
+  if (pollTimer !== null) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+function startPolling(onFound: () => void): void {
+  if (pollTimer !== null) return;
+  const startedAt = Date.now();
+  pollTimer = setInterval(() => {
+    if (primedRegistration?.active || Date.now() - startedAt > REGISTRATION_POLL_LIMIT_MS) {
+      stopPolling();
+      return;
+    }
+    void refreshRegistration().then(() => {
+      if (primedRegistration) onFound();
+    });
+  }, REGISTRATION_POLL_MS);
+}
+
+/**
+ * Warm the service-worker registration **before** anybody taps anything.
+ *
+ * Idempotent, and safe to call from every mounted push component. The returned
+ * promise settles as soon as we hold *any* registration handle, or when the
+ * startup grace expires — it deliberately cannot hang, because the previous
+ * version's ability to hang is the whole bug.
+ *
+ * The click handler must never await this: WebKit gives the tap five seconds of
+ * transient activation and a cold `ready` can outlast it. This exists so the
+ * handler can read {@link pushRegistration} synchronously.
+ */
+export function primeRegistration(): Promise<ServiceWorkerRegistration | null> {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
+    return Promise.resolve(null);
+  }
+
+  // Track 1 — the correct primitive, and started even on the fast path below:
+  // resolves when a registration for this scope has an **active** worker,
+  // whether or not it controls this page.
+  const ready = trackReady();
+
+  if (primedRegistration?.active) return Promise.resolve(primedRegistration);
+  if (priming) return priming;
+
+  primingStartedAt = Date.now();
+
+  priming = new Promise<ServiceWorkerRegistration | null>((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve(primedRegistration);
+    };
+
+    void ready.then(done);
+
+    // Track 2 — a handle we can subscribe against *before* activation, so that
+    // a tap produces WebKit's own `InvalidStateError` rather than our refusal.
+    void refreshRegistration().then(() => {
+      if (primedRegistration) done();
+    });
+
+    // Track 3 — the backstop. `ready` staying pending is the failure being
+    // defended against here, so nothing may depend on it alone.
+    startPolling(done);
+
+    try {
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        void refreshRegistration();
+      });
+    } catch {
+      // jsdom stubs and old WebViews.
+    }
+
+    graceTimer = setTimeout(() => {
+      // `starting` has just become `stalled`, and nothing else would republish
+      // a transition that is only a function of the clock.
+      notifyReadiness();
+      done();
+    }, PUSH_STARTUP_GRACE_MS);
+  });
+
+  return priming;
+}
+
+/** The registration handle, synchronously. `null` until one exists. */
+export function pushRegistration(): ServiceWorkerRegistration | null {
+  return primedRegistration;
 }
 
 /** Test seam and reset hook; also lets the dev server re-prime after an update. */
 export function setPrimedRegistration(registration: ServiceWorkerRegistration | null): void {
   primedRegistration = registration;
+  priming = null;
+  readyTracking = null;
+  primingStartedAt = registration ? Date.now() : null;
+  readyResolvedAt = null;
+  registrationError = null;
+  stopPolling();
+  if (graceTimer !== null) {
+    clearTimeout(graceTimer);
+    graceTimer = null;
+  }
+  notifyReadiness();
+}
+
+/**
+ * Where the service worker has got to, in one word.
+ *
+ * Deliberately says nothing about the VAPID key — a separate gate with a
+ * separate remedy ({@link isPushReady} combines the two). And deliberately
+ * says nothing about `navigator.serviceWorker.controller`: an uncontrolled page
+ * with an active registration subscribes perfectly well, and on the first
+ * launch after an install being uncontrolled is the *normal* state.
+ */
+export type PushReadiness =
+  /** No Web Push in this browser at all. */
+  | 'unsupported'
+  /** No active worker yet, and early enough for that to be unremarkable. */
+  | 'starting'
+  /** No active worker, and long past the point where waiting is the answer. */
+  | 'stalled'
+  /** A registration with an **active** worker. `subscribe()` can run. */
+  | 'ready';
+
+export function pushReadiness(): PushReadiness {
+  if (!isPushSupported()) return 'unsupported';
+  if (primedRegistration?.active != null) return 'ready';
+  if (primingStartedAt === null) return 'starting';
+  return Date.now() - primingStartedAt >= PUSH_STARTUP_GRACE_MS ? 'stalled' : 'starting';
+}
+
+/**
+ * Everything a tap needs is in place: an **active** worker and a key.
+ *
+ * A hint for the UI — «всё готово» versus «ещё запускается» — and **not** a
+ * gate. Nothing disables the enable control on it any more, because a false
+ * negative here used to mean the user could never try at all.
+ */
+export function isPushReady(): boolean {
+  if (!isPushSupported()) return false;
+  if (!vapidPublicKey()) return false;
+  return pushReadiness() === 'ready';
+}
+
+/**
+ * The worker's real state, for «Диагностика уведомлений».
+ *
+ * The gate used to hide precisely the facts that would explain it. All of them
+ * are here now: which of the three slots holds a worker, the scope, whether
+ * this page happens to be controlled (interesting, never load-bearing),
+ * whether `ready` ever settled, and how long we have been waiting.
+ */
+export interface RegistrationSnapshot {
+  installing: boolean;
+  waiting: boolean;
+  active: boolean;
+  /** `registration.active.state` — `activating`, `activated`, `redundant`. */
+  activeState: string | null;
+  scope: string | null;
+  /** `navigator.serviceWorker.controller !== null`. Diagnostic only. */
+  controlling: boolean;
+  /** Whether `navigator.serviceWorker.ready` has actually settled. */
+  readyResolved: boolean;
+  /** Milliseconds since priming began, or `null` if it never did. */
+  waitedMs: number | null;
+  readiness: PushReadiness;
+  /** `onRegisterError`, verbatim, when registration itself failed. */
+  error: string | null;
+}
+
+export function registrationSnapshot(): RegistrationSnapshot {
+  const registration = primedRegistration;
+  const hasSw = typeof navigator !== 'undefined' && 'serviceWorker' in navigator;
+  return {
+    installing: registration?.installing != null,
+    waiting: registration?.waiting != null,
+    active: registration?.active != null,
+    activeState: registration?.active?.state ?? null,
+    scope: registration?.scope ?? null,
+    controlling: hasSw && navigator.serviceWorker.controller != null,
+    readyResolved: readyResolvedAt !== null,
+    waitedMs: primingStartedAt === null ? null : Date.now() - primingStartedAt,
+    readiness: pushReadiness(),
+    error: registrationError,
+  };
 }
 
 async function currentRegistration(): Promise<ServiceWorkerRegistration | null> {
@@ -385,7 +754,15 @@ export type EnableOutcome =
   | 'needs-install'
   /** No usable VAPID application server key — a deployment fault. */
   | 'misconfigured'
-  /** No **active** service worker yet, so `subscribe()` would `InvalidStateError`. */
+  /**
+   * There was no service-worker registration to subscribe against at all, or
+   * WebKit answered `InvalidStateError: Subscribing for push requires an active
+   * service worker`.
+   *
+   * Note what this is *not*: a pre-emptive refusal. The attempt is always made.
+   * This outcome means the platform (or the absence of a registration) said no,
+   * and `EnableResult.error` carries the sentence it said it with.
+   */
   | 'not-ready'
   /** WebKit reported no transient activation. See {@link enablePush}. */
   | 'gesture-lost'
@@ -422,24 +799,6 @@ export function clearEnableOutcome(): void {
 }
 
 /**
- * True when a tap could actually succeed: an **active** service worker and a
- * key to subscribe with.
- *
- * `PushManager::subscribe` throws `InvalidStateError: Subscribing for push
- * requires an active service worker` if the worker is merely installing, which
- * is the state a user meets on the very first launch after adding the app to
- * the Home Screen — exactly when they first go looking for notifications. The
- * enable control stays disabled until this is true, because the alternative is
- * awaiting `navigator.serviceWorker.ready` *inside* the tap, and on a cold
- * start that await can outlast the five-second activation window.
- */
-export function isPushReady(): boolean {
-  if (!isPushSupported()) return false;
-  if (!vapidPublicKey()) return false;
-  return primedRegistration?.active != null;
-}
-
-/**
  * Turn push on for this device.
  *
  * **Call this straight from the tap handler, and do not put an `await` in
@@ -451,7 +810,9 @@ export function isPushReady(): boolean {
  * - Activation lasts **5 seconds** from the tap and is **consumed once** — the
  *   first caller wins. An `await` is not fatal in itself; an `await` that can
  *   outlast five seconds is. That is why the VAPID key and the service-worker
- *   registration are both resolved before the button is even enabled.
+ *   registration are both primed at boot — so this function can read them
+ *   synchronously. Priming is *preparation*, never permission: if the worker is
+ *   not active yet we subscribe anyway and report what WebKit says.
  * - **`subscribe()` prompts by itself.** `PushManager::subscribe` consumes the
  *   activation and shows the OS prompt when permission is `default`, and skips
  *   the activation check entirely when it is already `granted`.
@@ -481,18 +842,33 @@ export function enablePush(): Promise<EnableResult> {
     );
   }
 
-  // Must already be primed *and* active — see `isPushReady`. Reading the cached
-  // value is synchronous; awaiting `serviceWorker.ready` here would not be.
+  // Read synchronously — `await navigator.serviceWorker.ready` here would burn
+  // the tap. **But we do not require `.active`.** Refusing pre-emptively is
+  // what turned "the worker is still starting" into "this button will never
+  // work"; if the worker is not active WebKit throws
+  // `InvalidStateError: Subscribing for push requires an active service worker`
+  // and *that* is the string worth putting in front of a user, because it is
+  // the platform's own and it is greppable. The only thing we cannot do without
+  // is a registration object to call `subscribe()` on.
   const registration = primedRegistration;
-  if (!registration?.active) {
+  if (!registration) {
     return Promise.resolve(
       finish(
         fail(
           'not-ready',
           'registration',
-          new Error('Subscribing for push requires an active service worker'),
+          new Error(
+            'No service worker registration for scope / — navigator.serviceWorker.ready never resolved and getRegistration() returned nothing',
+          ),
         ),
       ),
+    );
+  }
+  if (!('pushManager' in registration)) {
+    // Seen on registrations iOS accepted and then declined to give a push
+    // manager to. Distinct from "still installing" and worth saying so.
+    return Promise.resolve(
+      finish(fail('not-ready', 'registration', new Error('Registration has no pushManager'))),
     );
   }
 
@@ -504,11 +880,18 @@ export function enablePush(): Promise<EnableResult> {
   }
 
   // ---- the activation-critical line. Exactly one call may consume it. ------
-  const subscribing = registration.pushManager.subscribe({
-    // HARD RULE: `PushManager.cpp` hard-rejects anything else. No silent push.
-    userVisibleOnly: true,
-    applicationServerKey,
-  });
+  let subscribing: Promise<PushSubscription>;
+  try {
+    subscribing = registration.pushManager.subscribe({
+      // HARD RULE: `PushManager.cpp` hard-rejects anything else. No silent push.
+      userVisibleOnly: true,
+      applicationServerKey,
+    });
+  } catch (error) {
+    // `subscribe()` is specified to reject rather than throw, but a synchronous
+    // throw here must still reach the classifier rather than the console.
+    return Promise.resolve(finish(classifySubscribeFailure(error)));
+  }
 
   return completeSubscribe(subscribing, registration).then(finish);
 }

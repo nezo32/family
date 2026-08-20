@@ -14,8 +14,22 @@ import {
   type PushDiagnostics,
   type PushVerdict,
 } from './diagnostics';
+import { onPushReadinessChange, pushReadiness, registrationSnapshot } from './push';
 
 const T = SETTINGS_RU.diagnostics;
+
+/**
+ * What the card considers "the worker moved".
+ *
+ * `readyResolved` is in the key as well as the readiness word because
+ * `serviceWorker.ready` can settle a microtask *after* the registration
+ * arrives from `onRegisteredSW` — same readiness, different row — and that row
+ * reading «нет» next to «готова» is exactly the kind of self-contradiction that
+ * makes a reader distrust the whole screen.
+ */
+function readinessKey(): string {
+  return `${pushReadiness()}:${String(registrationSnapshot().readyResolved)}`;
+}
 
 /**
  * «Диагностика уведомлений» — the instrument, on the device.
@@ -48,7 +62,7 @@ const T = SETTINGS_RU.diagnostics;
  *    and this output is designed to be pasted into a chat. Only the push
  *    service origin and a short digest are shown.
  */
-export function PushDiagnosticsCard({ className }: { className?: string }) {
+export function PushDiagnosticsCard({ className, id }: { className?: string; id?: string }) {
   const [data, setData] = useState<PushDiagnostics | null>(null);
   const [busy, setBusy] = useState(true);
   const [expanded, setExpanded] = useState(false);
@@ -80,6 +94,24 @@ export function PushDiagnosticsCard({ className }: { className?: string }) {
     collect();
   }, [collect]);
 
+  // Re-read when the service worker moves.
+  //
+  // A snapshot taken on mount is taken during the very seconds the worker is
+  // starting, so the card would sit there saying «ещё запускается» about a
+  // worker that went active a moment later — and the owner, who was sent here
+  // *because* something is wrong, would read a stale verdict as the diagnosis.
+  // Only an actual change of readiness triggers a re-collect, so this cannot
+  // become a polling loop over the network.
+  const lastReadiness = useRef<string>(readinessKey());
+  useEffect(() => {
+    return onPushReadinessChange(() => {
+      const next = readinessKey();
+      if (next === lastReadiness.current) return;
+      lastReadiness.current = next;
+      collect();
+    });
+  }, [collect]);
+
   const copy = useCallback(() => {
     if (!data) return;
     const text = formatPushDiagnostics(data);
@@ -108,7 +140,7 @@ export function PushDiagnosticsCard({ className }: { className?: string }) {
   const verdict: PushVerdict | null = data ? pushVerdict(data) : null;
 
   return (
-    <Card className={className} data-testid="push-diagnostics">
+    <Card id={id} className={className} data-testid="push-diagnostics">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Stethoscope className="size-5 shrink-0 text-muted-foreground" aria-hidden />
@@ -283,9 +315,48 @@ function Detail({ data }: { data: PushDiagnostics }) {
         data.serviceWorker === 'active' ? 'ok' : data.serviceWorker === 'none' ? 'bad' : 'neutral',
     },
     {
+      // The row that actually explains a dead enable button. `installing` that
+      // never becomes `active`, or `waiting` parked behind an update prompt,
+      // are two different faults that the collapsed reading above renders
+      // identically.
+      label: T.rows.serviceWorkerSlots,
+      value: `${yesNo(data.serviceWorkerInstalling)} / ${yesNo(data.serviceWorkerWaiting)} / ${yesNo(data.serviceWorkerActive)}`,
+      tone: data.serviceWorkerActive ? 'ok' : 'bad',
+    },
+    {
+      label: T.rows.serviceWorkerActiveState,
+      value: data.serviceWorkerActiveState ?? T.none,
+      tone: data.serviceWorkerActiveState === 'activated' ? 'ok' : 'neutral',
+    },
+    {
+      // The single fact that separates "still starting" from "will never
+      // start": `serviceWorker.ready` has no rejection path, so a worker that
+      // cannot install leaves it pending for ever.
+      label: T.rows.serviceWorkerReadyResolved,
+      value: yesNo(data.serviceWorkerReadyResolved),
+      tone: data.serviceWorkerReadyResolved ? 'ok' : 'bad',
+    },
+    {
+      label: T.rows.serviceWorkerWaited,
+      value:
+        data.serviceWorkerWaitedMs === null
+          ? T.none
+          : `${T.waitedValue(data.serviceWorkerWaitedMs)} · ${T.readinessValue[data.serviceWorkerReadiness]}`,
+      tone: data.serviceWorkerReadiness === 'ready' ? 'ok' : 'bad',
+    },
+    {
+      label: T.rows.serviceWorkerRegistrationError,
+      value: data.serviceWorkerRegistrationError ?? T.none,
+      tone: data.serviceWorkerRegistrationError ? 'bad' : 'neutral',
+      wrap: true,
+    },
+    {
       label: T.rows.serviceWorkerControlling,
       value: yesNo(data.serviceWorkerControlling),
-      tone: data.serviceWorkerControlling ? 'ok' : 'neutral',
+      // Neutral either way, on purpose. `нет` here is the *normal* reading on
+      // the first launch after an install, and colouring it red is how a
+      // reader concludes that this is the fault when it never is.
+      tone: 'neutral',
     },
     {
       label: T.rows.serviceWorkerScope,
@@ -353,6 +424,21 @@ function Detail({ data }: { data: PushDiagnostics }) {
           data-testid="push-diagnostics-default-caveat"
         >
           {T.permissionDefaultCaveat}
+        </p>
+      ) : null}
+
+      {/*
+        The `controller` row is the one a reader will otherwise blame. It is
+        `нет` on every healthy first launch after an install — and a readiness
+        check built on it is exactly the bug that produced this screen's
+        busiest week.
+      */}
+      {!data.serviceWorkerControlling ? (
+        <p
+          className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-pretty"
+          data-testid="push-diagnostics-controller-caveat"
+        >
+          {T.controllingCaveat}
         </p>
       ) : null}
 

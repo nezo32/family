@@ -152,10 +152,11 @@ function PushOfferCard({ className, onDone }: { className?: string; onDone: () =
             // width from `sm` up, so it does not become an 880px slab and the
             // loudest object on a desktop home screen.
             className="h-11 flex-1 sm:flex-none sm:px-8"
-            // `ready` means the service worker is active and a key is loaded.
-            // Offering the tap before that earns an `InvalidStateError` and
-            // spends the user's patience on our race condition.
-            disabled={push.busy || !push.ready}
+            // Never gated on readiness. A card the user cannot act on is
+            // worse than an attempt that fails with a real reason, and the
+            // readiness signal it used to wait for can stay false for ever
+            // when the service worker fails to install.
+            disabled={push.busy}
             onClick={() => {
               // The soft pre-prompt first — always. The OS prompt is one-shot
               // and must never be the user's first surprise.

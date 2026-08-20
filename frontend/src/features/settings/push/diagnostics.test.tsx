@@ -164,7 +164,18 @@ function baseDiagnostics(overrides: Partial<PushDiagnostics> = {}): PushDiagnost
     serviceWorker: 'active',
     serviceWorkerScope: 'https://nezo.su/',
     registrationHasPushManager: true,
-    serviceWorkerControlling: true,
+    // `false` on purpose, and every assertion below still expects `ok`: an
+    // uncontrolled page with an active worker is the normal first launch after
+    // an install, and no verdict may treat it as a fault.
+    serviceWorkerControlling: false,
+    serviceWorkerInstalling: false,
+    serviceWorkerWaiting: false,
+    serviceWorkerActive: true,
+    serviceWorkerActiveState: 'activated',
+    serviceWorkerReadyResolved: true,
+    serviceWorkerWaitedMs: 120,
+    serviceWorkerReadiness: 'ready',
+    serviceWorkerRegistrationError: null,
     subscription: 'yes',
     subscriptionOrigin: 'https://web.push.apple.com',
     subscriptionFingerprint: 'abc12345',
@@ -335,18 +346,63 @@ describe('the permission request survives the click handler', () => {
     expect(screen.getByText(/Настройки.*Уведомления.*Семья/)).toBeInTheDocument();
   });
 
-  it('keeps the enable control disabled until the service worker is active', async () => {
-    // `InvalidStateError: Subscribing for push requires an active service
-    // worker` — the first-launch-after-install trap.
+  it('keeps the enable control live while the worker is still installing', async () => {
+    // The inversion, driven through the real UI. This control used to be
+    // `disabled` until `navigator.serviceWorker.ready` resolved — and that
+    // promise stays pending for ever when a worker cannot install, so the
+    // "temporary" gate was permanent on the one device that hit it. The tap
+    // now goes through and the platform decides.
     stubNotification('default');
-    stubServiceWorker({ registration: 'installing' });
+    const registration = stubServiceWorker({ registration: 'installing' });
     stubDeviceList([]);
 
     renderSection();
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: SETTINGS_RU.push.enable })).toBeDisabled();
+    const enable = await screen.findByRole('button', { name: SETTINGS_RU.push.enable });
+    expect(enable).toBeEnabled();
+
+    // And it says why the worker is not ready, next to a button that works,
+    // rather than in place of one.
+    expect(screen.getByTestId('push-worker-state')).toHaveAttribute('data-stalled', 'false');
+
+    fireEvent.click(enable);
+    fireEvent.click(await screen.findByRole('button', { name: SETTINGS_RU.push.promptAccept }));
+
+    expect(registration?.pushManager.subscribe).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await Promise.resolve();
     });
+  });
+
+  it('routes a service-worker failure to the diagnostics instead of to a retry', async () => {
+    // The advice the old copy gave — wait, then close and reopen the app — is
+    // the advice the owner had already exhausted. Whatever else this says, it
+    // must offer the one thing that actually moves the problem forward.
+    stubNotification('default');
+    stubServiceWorker({
+      registration: 'installing',
+      onSubscribe: () =>
+        Promise.reject(
+          domError('InvalidStateError', 'Subscribing for push requires an active service worker'),
+        ),
+    });
+    stubDeviceList([]);
+
+    renderSection();
+
+    fireEvent.click(await screen.findByRole('button', { name: SETTINGS_RU.push.enable }));
+    fireEvent.click(await screen.findByRole('button', { name: SETTINGS_RU.push.promptAccept }));
+
+    const failure = await screen.findByTestId('push-failure');
+    expect(failure).toHaveAttribute('data-outcome', 'not-ready');
+    // WebKit's sentence, not ours.
+    expect(
+      screen.getByText(/InvalidStateError: Subscribing for push requires an active service worker/),
+    ).toBeInTheDocument();
+    // Never «закройте приложение и откройте заново» again.
+    expect(SETTINGS_RU.push.failureHint['not-ready']).not.toMatch(/закройте приложение/i);
+    expect(screen.getAllByTestId('push-open-diagnostics').length).toBeGreaterThan(0);
   });
 });
 
@@ -418,10 +474,46 @@ describe('pushVerdict', () => {
     );
   });
 
-  it('separates "still starting up" from "never registered"', () => {
-    expect(pushVerdict(baseDiagnostics({ serviceWorker: 'installing' }))).toBe('sw-not-active');
-    expect(pushVerdict(baseDiagnostics({ serviceWorker: 'waiting' }))).toBe('sw-not-active');
-    expect(pushVerdict(baseDiagnostics({ serviceWorker: 'none' }))).toBe('no-service-worker');
+  it('separates "still starting" from "never registered" from "stuck"', () => {
+    const starting = {
+      serviceWorkerActive: false,
+      serviceWorkerReadyResolved: false,
+      serviceWorkerReadiness: 'starting',
+    } as const;
+
+    expect(pushVerdict(baseDiagnostics({ serviceWorker: 'installing', ...starting }))).toBe(
+      'sw-not-active',
+    );
+    expect(pushVerdict(baseDiagnostics({ serviceWorker: 'waiting', ...starting }))).toBe(
+      'sw-not-active',
+    );
+    expect(pushVerdict(baseDiagnostics({ serviceWorker: 'none', ...starting }))).toBe(
+      'no-service-worker',
+    );
+
+    // The state the old copy could not name, and told the user to wait through.
+    // `serviceWorker.ready` never settles when a worker cannot install, so
+    // "подождите ещё несколько секунд" was advice with no end to it.
+    expect(
+      pushVerdict(
+        baseDiagnostics({
+          serviceWorker: 'installing',
+          serviceWorkerActive: false,
+          serviceWorkerReadyResolved: false,
+          serviceWorkerReadiness: 'stalled',
+          serviceWorkerWaitedMs: 45_000,
+        }),
+      ),
+    ).toBe('sw-stalled');
+  });
+
+  it('never reports a fault merely because the page is uncontrolled', () => {
+    // The regression this whole change exists for. On the first launch after an
+    // install `navigator.serviceWorker.controller` is `null` while the
+    // registration is active and `subscribe()` works. A verdict — or a gate —
+    // derived from `controller` is false exactly when a user first goes looking
+    // for notifications.
+    expect(pushVerdict(baseDiagnostics({ serviceWorkerControlling: false }))).toBe('ok');
   });
 
   it('does not call a denied permission "not installed" once the app is standalone', () => {
@@ -510,6 +602,8 @@ describe('collectPushDiagnostics', () => {
 
     expect(d.permission).toBe('granted');
     expect(d.serviceWorker).toBe('active');
+    expect(d.serviceWorkerActive).toBe(true);
+    expect(d.serviceWorkerInstalling).toBe(false);
     expect(d.registrationHasPushManager).toBe(true);
     expect(d.subscription).toBe('yes');
     expect(d.subscriptionOrigin).toBe('https://web.push.apple.com');

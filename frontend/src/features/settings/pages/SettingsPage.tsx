@@ -360,6 +360,28 @@ function pushRowState(push: UsePushResult): PushRowState {
   if (push.needsReEnable) {
     return { tone: 'warn', icon: BellOff, status: SETTINGS_RU.push.reEnableTitle, action: 'link' };
   }
+  // A worker that has had its grace period and still is not active. The soft
+  // pre-prompt from this row would spend the user's attention on a dialog whose
+  // «Разрешить» can only report a failure; `/settings/notifications` holds the
+  // explanation *and* «Диагностика уведомлений», which is what we actually need
+  // back from them. Note this is a routing decision, not a refusal — the enable
+  // button on that page is live.
+  if (push.stalled && !push.isEnabled) {
+    return {
+      tone: 'warn',
+      icon: TriangleAlert,
+      status: SETTINGS_RU.hub.pushRowStalled,
+      action: 'link',
+    };
+  }
+  if (push.lastOutcome === 'not-ready') {
+    return {
+      tone: 'warn',
+      icon: TriangleAlert,
+      status: SETTINGS_RU.push.failureTitle['not-ready'],
+      action: 'link',
+    };
+  }
   if (push.isEnabled) {
     return { tone: 'ok', icon: BellRing, status: SETTINGS_RU.push.statusOn, action: 'link' };
   }

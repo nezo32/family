@@ -10,28 +10,40 @@ import {
   isPushReady,
   isStandalone,
   lastEnableOutcome,
+  onPushReadinessChange,
   permissionState,
   primeRegistration,
   pushAvailability,
+  pushReadiness,
   vapidPublicKey,
   type EnableOutcome,
   type EnableResult,
   type PushAvailability,
   type PushPermission,
+  type PushReadiness,
   type ReconcileOutcome,
 } from './push';
 
 /**
  * The React face of the push module.
  *
- * It exists to keep two invariants out of component code:
+ * It exists to keep three invariants out of component code:
  *
- * 1. **The registration is primed on mount and the control waits for it.** The
- *    click handler must never `await navigator.serviceWorker.ready` — on a cold
- *    start that await can outlast WebKit's five-second transient-activation
- *    window — and `subscribe()` throws `InvalidStateError` if the worker is not
- *    yet active. `ready` is the gate; the button stays disabled until it holds.
- * 2. **The reconcile loop runs for as long as any push UI is mounted.** iOS
+ * 1. **The registration is primed on mount, and priming is preparation rather
+ *    than permission.** The click handler must never
+ *    `await navigator.serviceWorker.ready` — on a cold start that await can
+ *    outlast WebKit's five-second transient-activation window — so the
+ *    registration is resolved here, ahead of any tap. It is *not* a gate:
+ *    `ready` is a hint the UI may show, never a reason to refuse. The previous
+ *    version disabled the enable control until it held, and because
+ *    `serviceWorker.ready` stays pending forever when a worker cannot activate,
+ *    one household ended up with a button that could never be pressed.
+ * 2. **Readiness is subscribed to, not sampled once.** `usePush` re-reads it on
+ *    every `onPushReadinessChange` notification — worker state changes, the
+ *    registration poll, the VAPID key landing. Sampling it once, at the moment
+ *    `primeRegistration()` resolved, is how a key that arrived 150 ms later
+ *    pinned the control off for the whole session.
+ * 3. **The reconcile loop runs for as long as any push UI is mounted.** iOS
  *    never fires `pushsubscriptionchange`, so re-POSTing `getSubscription()` on
  *    every `visibilitychange -> visible` is the only repair path there is.
  */
@@ -46,12 +58,22 @@ export interface PushState {
   /** The build shipped without `VITE_VAPID_PUBLIC_KEY`; subscribing can't work. */
   misconfigured: boolean;
   /**
-   * A tap could actually succeed right now: the service worker is **active**
-   * and a key is available. Gate the enable control on this — `subscribe()`
-   * throws `InvalidStateError` against a merely-installing worker, and awaiting
-   * readiness inside the tap risks the five-second activation window.
+   * A tap would succeed right now: the service worker is **active** and a key
+   * is available.
+   *
+   * Use it to *describe* the state, never to disable the control. A tap made
+   * while this is false produces WebKit's own error, which is diagnosable; a
+   * tap we refuse produces nothing anybody can act on.
    */
   ready: boolean;
+  /** Where the worker itself has got to, ignoring the VAPID key. */
+  readiness: PushReadiness;
+  /**
+   * The worker has had {@link PUSH_STARTUP_GRACE_MS} and still has no active
+   * version. Not "wait a bit longer" — something is wrong, and the honest next
+   * step is «Диагностика уведомлений», not another restart of the app.
+   */
+  stalled: boolean;
   /** How the last enable attempt ended, this session. `null` before the first. */
   lastOutcome: EnableOutcome | null;
   /**
@@ -79,6 +101,9 @@ export interface UsePushResult extends PushState {
    * Turn push on. **Call this directly from `onClick`** — it is not `async`
    * and it reaches `pushManager.subscribe()`, the one call allowed to consume
    * the tap's transient activation, before it returns.
+   *
+   * Callable whatever {@link PushState.ready} says. It is allowed to fail; it
+   * is not allowed to be unreachable.
    */
   enable: () => Promise<EnableResult>;
   disable: () => Promise<boolean>;
@@ -92,6 +117,7 @@ export function usePush(): UsePushResult {
   const [reconcile, setReconcile] = useState<ReconcileOutcome | null>(null);
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(() => isPushReady());
+  const [readiness, setReadiness] = useState<PushReadiness>(() => pushReadiness());
   const [lastOutcome, setLastOutcome] = useState<EnableOutcome | null>(() => lastEnableOutcome());
   const mounted = useRef(true);
 
@@ -107,19 +133,25 @@ export function usePush(): UsePushResult {
     };
   }, []);
 
-  // Prime the SW registration well before any button is pressed.
+  // Prime the SW registration well before any button is pressed, and then
+  // *keep listening*.
   //
-  // Two separate reasons, and both are load-bearing. `subscribe()` throws
-  // `InvalidStateError: Subscribing for push requires an active service worker`
-  // if the worker is only installing — the state on the very first launch after
-  // an install, which is exactly when somebody first looks for notifications.
-  // And awaiting `serviceWorker.ready` *inside* the tap can outlast WebKit's
-  // five-second transient-activation window on a cold start. So we resolve it
-  // here and keep the button disabled until it lands.
+  // Priming is what lets the click handler reach `pushManager.subscribe()`
+  // synchronously: awaiting `serviceWorker.ready` inside the tap can outlast
+  // WebKit's five-second transient-activation window on a cold start. The
+  // subscription to `onPushReadinessChange` is what stops the result being a
+  // latch — the worker can activate, or the VAPID key can land, at any point
+  // after `primeRegistration()` settles, and both have to reach the UI.
   useEffect(() => {
-    void primeRegistration().then(() => {
-      if (mounted.current) setReady(isPushReady());
-    });
+    const publish = () => {
+      if (!mounted.current) return;
+      setReady(isPushReady());
+      setReadiness(pushReadiness());
+    };
+    const unsubscribe = onPushReadinessChange(publish);
+    void primeRegistration().then(publish);
+    publish();
+    return unsubscribe;
   }, []);
 
   // The foreground repair loop (research doc §2). Also refreshes `lastSeenAt`
@@ -138,6 +170,7 @@ export function usePush(): UsePushResult {
   const refresh = useCallback(() => {
     setPermission(permissionState());
     setReady(isPushReady());
+    setReadiness(pushReadiness());
     setLastOutcome(lastEnableOutcome());
   }, []);
 
@@ -184,6 +217,8 @@ export function usePush(): UsePushResult {
     iosNonSafari,
     misconfigured: availability === 'available' && vapidPublicKey().length === 0,
     ready,
+    readiness,
+    stalled: readiness === 'stalled',
     lastOutcome,
     // iOS reports `permission: 'default'` in this state, so nothing else on the
     // device gives it away — only the outcome of a real attempt does.

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { BellOff, BellRing, Smartphone, TriangleAlert } from 'lucide-react';
+import { BellOff, BellRing, Loader2, Smartphone, Stethoscope, TriangleAlert } from 'lucide-react';
 import type { EnableResult } from './push';
 import { isEnableFailure } from './enable-report';
 import {
@@ -20,6 +20,38 @@ import { SETTINGS_RU } from '../locale';
 import { usePush } from './use-push';
 
 const T = SETTINGS_RU.push;
+
+/**
+ * Scroll «Диагностика уведомлений» into view.
+ *
+ * The card is always rendered on this page — but it is the *last* section, and
+ * a person who has just been told something went wrong is not going to go
+ * looking. Every failure surface therefore carries a one-tap route to it. The
+ * whole point of an on-device instrument is that it is reachable from the
+ * failure, especially the failures we cannot reproduce.
+ */
+export const PUSH_DIAGNOSTICS_ANCHOR = 'push-diagnostics';
+
+function showDiagnostics(): void {
+  const target = document.getElementById(PUSH_DIAGNOSTICS_ANCHOR);
+  if (!target) return;
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function DiagnosticsLink() {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      className="h-11"
+      onClick={showDiagnostics}
+      data-testid="push-open-diagnostics"
+    >
+      <Stethoscope aria-hidden />
+      {T.stalledDiagnostics}
+    </Button>
+  );
+}
 
 /**
  * The same explanation, as something that stays on screen.
@@ -44,6 +76,36 @@ export function PushFailureCard(props: { result: EnableResult }) {
             {error.name}: {error.message}
           </p>
         ) : null}
+        {/* Every failure ends somewhere useful, and for the ones we cannot
+            reproduce that somewhere is the report the owner can paste to us. */}
+        <DiagnosticsLink />
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+/**
+ * «Фоновая служба ещё запускается» / «…не запустилась».
+ *
+ * Shown *beside* a live enable button, never instead of one. It replaced a
+ * `disabled` attribute: the control used to be dead until
+ * `navigator.serviceWorker.ready` resolved, and that promise never resolves at
+ * all when a worker cannot install — so a recoverable delay and a permanent
+ * fault rendered identically, as a button that could not be pressed under a
+ * message asking for a few more seconds.
+ */
+export function PushWorkerCard(props: { stalled: boolean }) {
+  return (
+    <Alert
+      variant={props.stalled ? 'destructive' : 'default'}
+      data-testid="push-worker-state"
+      data-stalled={props.stalled ? 'true' : 'false'}
+    >
+      {props.stalled ? <TriangleAlert aria-hidden /> : <Loader2 aria-hidden />}
+      <AlertTitle>{props.stalled ? T.stalledTitle : T.startingTitle}</AlertTitle>
+      <AlertDescription className="space-y-2">
+        <p>{props.stalled ? T.stalledText : T.startingText}</p>
+        {props.stalled ? <DiagnosticsLink /> : null}
       </AlertDescription>
     </Alert>
   );
@@ -251,6 +313,19 @@ export function PushSection() {
 
         {push.needsReEnable ? <PushReEnableCard onEnable={runEnable} busy={push.busy} /> : null}
 
+        {/*
+          Said out loud, next to a button that still works. `stalled` is the
+          state that used to be invisible: it looked exactly like «ещё
+          запускается», and the advice attached to it — wait, then reopen the
+          app — was advice for a state this is not.
+        */}
+        {push.availability === 'available' &&
+        push.permission !== 'denied' &&
+        !push.isEnabled &&
+        push.readiness !== 'ready' ? (
+          <PushWorkerCard stalled={push.stalled} />
+        ) : null}
+
         {push.availability === 'available' && push.permission !== 'denied' ? (
           <div className="flex flex-wrap items-center gap-2">
             {push.isEnabled ? (
@@ -269,11 +344,16 @@ export function PushSection() {
             ) : (
               <Button
                 className="h-11"
-                // `ready` gates on an **active** service worker: `subscribe()`
-                // throws `InvalidStateError` against one that is still
-                // installing, and awaiting readiness inside the tap can blow
-                // the five-second activation window on a cold start.
-                disabled={push.busy || !push.ready}
+                // **Only `busy`.** This used to also require `push.ready`, and
+                // that gate is the bug it replaced: `navigator.serviceWorker
+                // .ready` stays pending for ever when a worker cannot install,
+                // so the control was permanently unpressable on the one device
+                // that needed it. A tap against a worker that is not active
+                // yet earns `InvalidStateError: Subscribing for push requires
+                // an active service worker` — the platform's own sentence,
+                // shown verbatim and recorded in the diagnostics. That is a
+                // strictly better outcome than a refusal we invented.
+                disabled={push.busy}
                 onClick={() => {
                   // Straight to `subscribe()` once permission is granted, or
                   // once we already know iOS is refusing to prompt — the soft
