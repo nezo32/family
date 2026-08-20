@@ -43,6 +43,16 @@ infra/**/certs
 backups
 
 # test artefacts
+#
+# `**/e2e` is the sharp one. It is excluded on purpose — Playwright specs have
+# no business in a build image — but `frontend/tsconfig.node.json` typechecks
+# `playwright.config.ts`, so ANY import from a build-typechecked file into
+# `e2e/` compiles on a developer's machine and dies in the container with
+# `TS2307: Cannot find module`. That is exactly how the frontend image broke
+# once already. If you need a value shared between the config and the specs,
+# put it in the config and let `e2e/` read it back (see `RUN_ID`), never the
+# other way round. `infra/scripts/verify-all.sh` now builds both images'
+# `build` stage so the next one is caught locally.
 **/playwright-report
 **/test-results
 **/e2e

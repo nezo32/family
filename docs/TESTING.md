@@ -160,15 +160,14 @@ Where the integration suite refuses to start a second run (the advisory lock
 above), the end-to-end suite is designed for it: two agents, or a rerun started
 before the first finished, can share one stack. Three things make that true.
 
-**Each run gets its own owner account.** `helpers.ts` derives `RUN_ID` once per
-`playwright test` invocation and registers `e2e-owner-<run id>@example.test`.
-The id comes from `process.env.E2E_RUN_ID` if it is set, and is otherwise minted
-the first time the value is read. That happens in the **runner** process, because
-`playwright.config.ts` imports `RUN_ID`: Playwright evaluates the config in the
-runner before forking any worker, and workers inherit its environment, so the
-`??=` inside a worker only ever reads the value back. Set `E2E_RUN_ID` yourself
-to pin a run (CI job id, say) or to make two invocations deliberately share an
-account.
+**Each run gets its own owner account.** `playwright.config.ts` mints `RUN_ID`
+once per `playwright test` invocation and publishes it as `process.env.E2E_RUN_ID`;
+`helpers.ts` reads it back and registers `e2e-owner-<run id>@example.test`. The
+seeding happens in the **runner** process because Playwright evaluates the config
+there before forking any worker, and workers inherit the runner's environment —
+so the `??=` in a worker, and the one in `helpers.ts`, only ever read the value
+back. Set `E2E_RUN_ID` yourself to pin a run (CI job id, say) or to make two
+invocations deliberately share an account.
 
 This matters because a *shared* account is where two runs collide. Refresh-token
 reuse detection revokes a family the other run is still holding, and the
@@ -176,6 +175,23 @@ per-account login throttle (8 attempts / 15 min, `login-throttle.ts`) counts bot
 runs' sign-ins together. Both are correct behaviour; both surface as unrelated
 tests failing with the login screen («С возвращением») in the snapshot, which
 reads like a broken app rather than two harnesses fighting.
+
+The direction of that dependency is load-bearing and was learned the hard way.
+It used to run the other way — `playwright.config.ts` imported `RUN_ID` from
+`e2e/helpers.ts` — which is tidier and broke the production frontend image:
+`frontend/tsconfig.node.json` typechecks the config, `.dockerignore` excludes
+`**/e2e` from the build context on purpose, and `tsc -b` inside the container
+died with `TS2307: Cannot find module './e2e/helpers'` after three green
+`verify-all.sh` runs. **Nothing the build typechecks may import anything under
+`e2e/`** (hard rule 7 in `docs/CONVENTIONS.md`). If the specs and the config
+need to share a value, the config owns it and `e2e/` reads it back.
+
+`helpers.ts` still mints its own id when `E2E_RUN_ID` is unset — that is not
+dead code, it is the path for anything that imports the helpers without a
+Playwright config in sight (a `tsx`/`vitest` script poking at
+`ensureApprovedOwner`), which would otherwise register
+`e2e-owner-undefined@example.test` and share one account with every other such
+caller.
 
 **Session files are keyed by run and by worker** —
 `frontend/e2e/.auth/run-<run id>/worker-<n>.json` — so concurrent runs cannot
@@ -198,6 +214,37 @@ directory when a run starts, so a second run launched mid-flight deletes the
 first one's screenshots and traces — the tests are unaffected, but a failure you
 wanted to look at comes back empty-handed. Pass `--output=<dir>` to one of the
 runs when you care about the artefacts.
+
+### The images are a gate too
+
+`infra/scripts/verify-all.sh` builds `frontend/Dockerfile` and
+`backend/Dockerfile` up to `--target build` on every run, by default.
+
+It is there because the suites above all run against the **working tree** and
+the images do not: `.dockerignore` withholds `**/e2e`, `**/dist`, `docs` and
+`.env*` from the build context, so a file that compiles here can fail to
+compile in the container. That is not hypothetical — see the `RUN_ID` note
+above, which passed three consecutive green `verify-all.sh` runs and then held
+a production deploy for forty minutes. CI builds the images on push, but that
+is the wrong end of the loop.
+
+`--target build` stops at the stage where `tsc` and `vite build` run, which is
+where the whole class of failure lives, and skips the runtime stages. Both
+builds are started in the background **before the first gate** and collected
+after the frontend production build, so BuildKit runs them underneath the
+backend integration suite and they add close to nothing to wall clock. Layer
+caching means an unchanged dependency set replays instantly.
+
+`SKIP_IMAGE_BUILDS=1` opts out, and the script also skips them with a warning
+if `docker` is not on `PATH`. Reach for it only when you are offline; a flag
+that is set by default is the state that let the last one through.
+
+To reproduce a failure by hand:
+
+```bash
+docker build -f frontend/Dockerfile --target build -t family-frontend-probe .
+docker build -f backend/Dockerfile  --target build -t family-backend-probe  .
+```
 
 ### Housekeeping
 

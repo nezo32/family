@@ -11,6 +11,10 @@
 # Needs Postgres and Redis up:
 #   docker compose -f infra/docker-compose.dev.yml up -d
 #
+# It also builds both Docker images (the `build` stage only). Set
+# SKIP_IMAGE_BUILDS=1 to leave them out — but read why they are here first, in
+# the `images` block below.
+#
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -43,9 +47,73 @@ step() {
 cleanup() {
   [[ -n "${API_PID:-}" ]] && kill "$API_PID" 2>/dev/null
   [[ -n "${WEB_PID:-}" ]] && kill "$WEB_PID" 2>/dev/null
+  [[ -n "${FRONTEND_IMAGE_PID:-}" ]] && kill "$FRONTEND_IMAGE_PID" 2>/dev/null
+  [[ -n "${BACKEND_IMAGE_PID:-}" ]] && kill "$BACKEND_IMAGE_PID" 2>/dev/null
   return 0
 }
 trap cleanup EXIT
+
+# --------------------------------------------------------------- images ----
+#
+# ── Why the image builds are in here, and why they start first ─────────────
+#
+# Everything above and below this runs against the *working tree*. The images
+# do not: `.dockerignore` deliberately withholds parts of it (`**/e2e`,
+# `**/dist`, `docs`, `.env*`), so a file that compiles here can fail to compile
+# in the container because something it imports was never copied in. That is
+# not hypothetical — `playwright.config.ts` importing `RUN_ID` from
+# `e2e/helpers.ts` passed three consecutive green runs of this script and broke
+# the production image build for forty minutes, because nothing here ever built
+# an image. CI catches it, but only after a push.
+#
+# `--target build` is the whole point: it stops at the stage where `tsc` and
+# `vite build` run — which is where this class of failure lives — and skips the
+# runtime stage (Caddy config, the pnpm-symlink-graph copy, healthchecks),
+# which is slow and not what we are testing. Both images, because both compile
+# TypeScript against a filtered context and the risk is identical.
+#
+# The cost is close to zero because they are started HERE, before the first
+# gate, and only collected after the frontend production build: BuildKit runs
+# them while the backend integration suite (the long pole, minutes) is running.
+# Layer caching means an unchanged dependency set replays instantly and only
+# the compile stage re-runs. Second-order benefit: this keeps the pnpm store
+# cache mount warm, so CI-shaped builds are not the only place they happen.
+#
+# They are ON BY DEFAULT on purpose. A flag would mean nobody runs them, which
+# is exactly the state that let the last one through.
+
+FRONTEND_IMAGE_LOG="${TMPDIR:-/tmp}/verify-image-frontend.log"
+BACKEND_IMAGE_LOG="${TMPDIR:-/tmp}/verify-image-backend.log"
+
+# Collects a build started below. Used as a `step` command so a failure lands in
+# the same report as everything else.
+#
+# `wait` only works on a child of THIS shell, which is why the two builds are
+# launched inline further down rather than from a `start_image_build` helper —
+# a `pid=$(helper)` would run the `&` inside the command-substitution subshell
+# and the pid would not be waitable here.
+await_image_build() {
+  local pid="$1" log="$2"
+  if wait "$pid"; then
+    return 0
+  fi
+  tail -30 "$log"
+  return 1
+}
+
+IMAGE_BUILDS=0
+if [[ -n "${SKIP_IMAGE_BUILDS:-}" ]]; then
+  printf '\n\033[1;33m── docker images: skipped (SKIP_IMAGE_BUILDS)\033[0m\n'
+elif ! command -v docker >/dev/null 2>&1; then
+  printf '\n\033[1;33m── docker images: skipped (no docker on PATH)\033[0m\n'
+else
+  printf '\n\033[1;36m── docker images: building `build` stage in the background\033[0m\n'
+  docker build -f frontend/Dockerfile --target build -t family-frontend-verify . >"$FRONTEND_IMAGE_LOG" 2>&1 &
+  FRONTEND_IMAGE_PID=$!
+  docker build -f backend/Dockerfile --target build -t family-backend-verify . >"$BACKEND_IMAGE_LOG" 2>&1 &
+  BACKEND_IMAGE_PID=$!
+  IMAGE_BUILDS=1
+fi
 
 # ---------------------------------------------------------------- build ----
 step "shared: build"        bash -c 'pnpm --filter @family/shared build >/dev/null 2>&1'
@@ -69,6 +137,14 @@ step "frontend: tests"      bash -c 'cd frontend && npx vitest run'
 
 # ---------------------------------------------------------------- build ----
 step "frontend: production build" bash -c 'cd frontend && npx vite build >/dev/null'
+
+# --------------------------------------------------------------- images ----
+# Started before the first gate; by now they have had the whole run to finish.
+if [[ "$IMAGE_BUILDS" == "1" ]]; then
+  step "frontend: docker image (build stage)" await_image_build "$FRONTEND_IMAGE_PID" "$FRONTEND_IMAGE_LOG"
+  step "backend: docker image (build stage)"  await_image_build "$BACKEND_IMAGE_PID" "$BACKEND_IMAGE_LOG"
+  FRONTEND_IMAGE_PID=""; BACKEND_IMAGE_PID=""
+fi
 
 # ------------------------------------------------------------------ e2e ----
 #

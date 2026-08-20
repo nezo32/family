@@ -8,7 +8,7 @@ coverage/
 *.log
 .DS_Store
 playwright-report/
-test-results/
+test-results*/
 e2e/.auth/
 
 # Verification screenshots. Agents write these to prove a screen renders;

@@ -91,14 +91,27 @@ export function assertClean(problems: PageProblems, where: string): void {
 /**
  * Identifier for **this `playwright test` invocation**, shared by every worker.
  *
- * Playwright re-evaluates the config module inside each worker process, so
- * minting an id there would give every worker a different one. What makes this
- * work is that workers are forked from the runner and inherit its
- * `process.env`: the runner's evaluation is the only one that finds the
- * variable unset, and every later `??=` reads the inherited value back. Hence
- * *one* id per run, and a different id for a run started alongside it.
- * `playwright.config.ts` imports this so the seeding always happens in the
- * runner, before any worker exists. Set `E2E_RUN_ID` yourself to pin it.
+ * Under Playwright the value is already set by the time this module loads:
+ * `playwright.config.ts` mints it, the runner evaluates that config before it
+ * forks a single worker, and workers inherit the runner's `process.env`. So the
+ * runner's mint is the only one that ever finds the variable unset, and every
+ * later `??=` — in a worker's re-evaluation of the config, and here — reads the
+ * inherited value back. Hence *one* id per run, and a different id for a run
+ * started alongside it. Set `E2E_RUN_ID` yourself to pin it.
+ *
+ * The `??=` below is **not** dead code, and must not be collapsed to a bare
+ * read of `process.env.E2E_RUN_ID`. It is the mint for anything that imports
+ * these helpers without a Playwright config in sight — a `vitest`/`tsx` script
+ * poking at `ensureApprovedOwner`, say — which would otherwise derive
+ * `e2e-owner-undefined@example.test` and quietly share one account with every
+ * other such caller.
+ *
+ * It is also deliberately *not* the other way round. This module used to own
+ * the mint and `playwright.config.ts` imported it, which is tidier and broke
+ * the production image build: `tsconfig.node.json` typechecks the config,
+ * `.dockerignore` excludes every `e2e` directory, and `tsc -b` in the container
+ * failed with `TS2307: Cannot find module './e2e/helpers'`. Nothing the build
+ * typechecks may import anything under `e2e/` — see the `RUN_ID` comment there.
  */
 export const RUN_ID: string =
   (process.env.E2E_RUN_ID ??= `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`);

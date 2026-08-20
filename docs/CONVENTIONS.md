@@ -37,7 +37,34 @@ Read together with `docs/DECISIONS.md` (binding) and `docs/PLAN.md` (context).
      `ERR_MODULE_NOT_FOUND` inside the production container only. The alias is
      removed from `backend/tsconfig.json` so this fails at compile time instead.
    - `frontend/` — `@/` maps to `src/`; Vite resolves it at build time.
-7. **Never regenerate a migration that has already been applied somewhere.**
+7. **Nothing the build typechecks may import anything the build context
+   excludes.** Sibling of rule 6, and the second time this shape has cost a
+   deploy. `.dockerignore` deliberately withholds parts of the tree from the
+   image — `**/e2e`, `**/dist`, `docs`, `.env*` — while `tsc` on a developer's
+   machine sees all of it. An import that crosses that line compiles green
+   locally and fails only inside the container, with `TS2307: Cannot find
+   module`.
+
+   The instance: `frontend/playwright.config.ts` imported `RUN_ID` from
+   `e2e/helpers.ts`; `frontend/tsconfig.node.json` includes the config, so
+   `tsc -b` typechecked it; `.dockerignore` excludes `**/e2e`. Three
+   consecutive green `verify-all.sh` runs, then a dead production deploy.
+
+   Before adding an import to any file a build typechecks — `vite.config.ts`,
+   `vitest.config.ts`, `playwright.config.ts`, `drizzle.config.ts`, anything
+   under a `build` tsconfig's `include` — check the target is in the build
+   context. **Invert the dependency rather than widen the context**: the
+   typechecked file owns the value and publishes it (through `process.env`, or
+   by exporting it), and the excluded file reads it back with its own fallback.
+   Do not "fix" it by shipping test files into the image, and do not fix it by
+   dropping the file from the tsconfig — that trades a broken build for an
+   untypechecked config.
+
+   `infra/scripts/verify-all.sh` builds both images' `build` stage (in the
+   background, so it costs almost nothing in wall clock) precisely to catch
+   this. Do not remove that step.
+
+8. **Never regenerate a migration that has already been applied somewhere.**
    Once `backend/drizzle/0000_*.sql` exists and any database has run it — a
    colleague's, CI's, or production's — it is frozen. Schema changes are new
    migrations, always, even when the diff looks tidier squashed.
