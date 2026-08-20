@@ -4,8 +4,9 @@ import cookie from '@fastify/cookie';
 import { fastify, type RouteOptions } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { ResponseBodyError } from 'openid-client';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { resetConfigForTests } from '../../../core/config.js';
 import { AppError } from '../../../core/errors.js';
 import { errorHandlerPlugin } from '../../../core/plugins/error-handler.js';
 import { googleProfileFromClaims } from './google.js';
@@ -1073,11 +1074,54 @@ describe('telegram token endpoint errors', () => {
 /* ========================================================================== */
 
 /**
- * Registration-level assertions only — no provider is configured in the test
- * environment, so every one of these requests is answered before anything
- * reaches the network or the database.
+ * Registration-level assertions only — no provider is configured, so every one
+ * of these requests is answered before anything reaches the network or the
+ * database.
+ *
+ * That premise is **established below, not inherited**. Inherited, it was false
+ * in CI and true here, and the difference cost hours: the whole backend suite
+ * runs in one process (`pool: 'forks'`, `singleFork: true`), and
+ * `notifications.test.ts` / `emission.test.ts` set `TELEGRAM_BOT_TOKEN` in a
+ * `vi.hoisted()` block they never restore. Any file ordered after one of them —
+ * and the order is Vitest's cached per-file durations, so a warm developer
+ * checkout and a cold CI runner disagree about it — saw
+ * `oauth.telegram.enabled === true`, walked straight past
+ * `assertProviderEnabled`, and died on the state lookup instead. That is a
+ * *replay*, so the browser landed on `?oauth=replayed` with no `error`
+ * parameter at all: `expected null to be 'SERVICE_UNAVAILABLE'`.
  */
 describe('oauth route plugin', () => {
+  /**
+   * Cleared rather than defaulted: `enabled` is `Boolean(TELEGRAM_BOT_TOKEN)`,
+   * so only absence disables a provider. Both the variables and the memoized
+   * config are put back afterwards — `getConfig()` caches process-wide, and the
+   * next file in this fork inherits whatever we leave behind.
+   */
+  const PROVIDER_ENV = [
+    'GOOGLE_CLIENT_ID',
+    'GOOGLE_CLIENT_SECRET',
+    'TELEGRAM_BOT_TOKEN',
+    'TELEGRAM_BOT_USERNAME',
+    'TELEGRAM_CLIENT_SECRET',
+  ] as const;
+  const savedProviderEnv = new Map<string, string | undefined>();
+
+  beforeAll(() => {
+    for (const key of PROVIDER_ENV) {
+      savedProviderEnv.set(key, process.env[key]);
+      delete process.env[key];
+    }
+    resetConfigForTests();
+  });
+
+  afterAll(() => {
+    for (const [key, value] of savedProviderEnv) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    resetConfigForTests();
+  });
+
   const buildTestApp = async () => {
     const routes: RouteOptions[] = [];
     const app = fastify({ logger: false });

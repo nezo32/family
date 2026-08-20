@@ -42,6 +42,29 @@ process.env.COOKIE_SECRET ??= TEST_SECRET;
 process.env.ENCRYPTION_KEY ??= TEST_SECRET;
 
 /**
+ * The bootstrap owner is a production affordance, and it has to be *absent*.
+ *
+ * `BOOTSTRAP_OWNER_EMAIL` narrows auto-approval to one address, so with it set
+ * the harness's randomly-addressed first registration comes back
+ * `pending_approval` carrying no session, and `createOwner()` throws for every
+ * DB-backed suite at once — 147 tests across 14 files, every one of them
+ * reading like an authentication regression.
+ *
+ * Assigned, not defaulted with `??=`: overruling an ambient value is the entire
+ * point. `backend/.env` carries one, and although `vitest` never reads `.env`
+ * (only `dev`, `db:migrate` and `db:seed` pass `--env-file-if-exists`),
+ * anything that exports it into the shell first — a wrapper script, a
+ * compose-based runner — would otherwise take the suite down.
+ *
+ * The provider credentials are deliberately **not** pinned here.
+ * `notifications.test.ts` needs a real-looking `TELEGRAM_BOT_TOKEN` and sets
+ * one with `??=`, which an empty pin would silently defeat; the suite that
+ * needs them absent — `oauth route plugin` in `oauth/oauth.test.ts` — clears
+ * them for its own duration instead.
+ */
+process.env.BOOTSTRAP_OWNER_EMAIL = '';
+
+/**
  * Object storage for the avatar suite.
  *
  * Gated on `TEST_S3_ENDPOINT` being offered explicitly, exactly like
