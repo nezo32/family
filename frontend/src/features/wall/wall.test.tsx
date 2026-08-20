@@ -148,6 +148,7 @@ function postItem() {
       isPinned: false,
       commentCount: 0,
       reactions: [],
+      attachments: [],
       createdAt: NOW,
       updatedAt: NOW,
     },
@@ -507,6 +508,7 @@ describe('the floating head', () => {
     isPinned: true,
     commentCount: 0,
     reactions: [],
+    attachments: [],
     createdAt: NOW,
     updatedAt: NOW,
   };
@@ -865,6 +867,45 @@ describe('the stream', () => {
     for (const chip of chips) {
       expect(chip.getAttribute('aria-label') ?? '').not.toMatch(/\d/);
       expect(chip.textContent ?? '').not.toMatch(/\d/);
+    }
+  });
+
+  /**
+   * §D7.7a / D14. The regression this guards is not a crash: it is a fresh card
+   * whose foot line is `☺+` alone, so the like costs two taps and a popover.
+   * The unit-level rules live in `wall-media.test.tsx`; this is the one that
+   * checks a real feed card, because that is where the chip is actually read.
+   */
+  it('puts a pressable heart on a card nobody has reacted to', async () => {
+    serveFeed(feedPayload({ items: [postItem()] }));
+
+    const { container } = renderWithProviders(
+      <BoardComposeProvider>
+        <WallStream />
+      </BoardComposeProvider>,
+      ['post:create', 'kudos:give'],
+    );
+
+    await screen.findByText('В субботу едем к бабушке');
+
+    const heart = screen.getByRole('button', { name: WALL_RU.reactions.like });
+    expect(heart).toHaveAttribute('aria-pressed', 'false');
+
+    /*
+      And it says nothing numeric — the sweep covers `title` as well as
+      `aria-label`, because a screen-reader-only leak is exactly how the
+      scoreboard crept back last time: a load bar on Семья read
+      «40 % (своя доля 33 %)» aloud while drawing no numbers at all.
+
+      `<time>` is excluded, and the exclusion is named rather than assumed. A
+      timestamp is not a quantity attached to a person, it does not accumulate,
+      and nothing sorts people by it — D7.2's test, which it passes for the same
+      reason «Обсуждение · 3» and a clip's duration pill do.
+    */
+    for (const element of container.querySelectorAll('[aria-label],[title]')) {
+      if (element.tagName === 'TIME') continue;
+      expect(element.getAttribute('aria-label') ?? '').not.toMatch(/\d/);
+      expect(element.getAttribute('title') ?? '').not.toMatch(/\d/);
     }
   });
 

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { SmilePlus } from 'lucide-react';
-import type { EntityRef, ReactionSummary } from '@family/shared';
+import { LIKE_EMOJI, type EntityRef, type ReactionSummary } from '@family/shared';
 import { useCan } from '@/shared/auth';
 import { Button } from '@/shared/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
@@ -47,16 +47,61 @@ import { REACTION_EMOJI, WALL_RU, reactorLabel, reactorMembers } from '../locale
  * - A reader without `kudos:give` (a guest) gets the chips as **static text**,
  *   not disabled buttons: a control that can be focused and pressed to no
  *   effect is worse than no control.
+ *
+ * ## The ❤️ chip is always drawn, and that chip **is** the like (§D7.7a, D14)
+ *
+ * The owner asked for likes and named Instagram and Threads. A like is not a
+ * second system next to reactions — it is `LIKE_EMOJI`'s row, promoted to one
+ * tap. Two systems would mean two states that can disagree, ❤️ appearing twice
+ * on one card, and a permanently unanswerable question about whether a heart
+ * and a ❤️ reaction from the same person are one act or two.
+ *
+ * So the heart is rendered **whether or not anybody has used it**: an outline
+ * heart, `aria-pressed="false"`, 44px, first position, at the same x on every
+ * card. That fixed position is what makes it a control you learn once. The
+ * previous drawing — no chip until somebody reacted — left a fresh card with
+ * nothing on its foot line but `☺+`, so a like cost two taps and a popover, and
+ * **a like that costs a popover is not a like.**
+ *
+ * `☺+` keeps ❤️ inside it. The promoted chip is a shortcut, not an exclusion: a
+ * member who reaches for the picker must not find the heart missing from it and
+ * conclude the app has two kinds of heart.
+ *
+ * The heart adds no digit to any of this. `aria-label` is «Нравится» while it
+ * is empty and «❤️ — Мама, Лиза» once it is not, which is exactly what is
+ * drawn in each case.
  */
 
 /** Six people, and «+N» must never render — see the note above. */
 const DISC_CAP = 12;
+
+/**
+ * The summaries to draw, with the like guaranteed to be the first of them.
+ *
+ * The server sends only emoji somebody has used, so an untouched card arrives
+ * with an empty array; the heart is synthesised at zero rather than being
+ * special-cased in the JSX, which keeps one code path for "a chip" and means
+ * the optimistic toggle, the disc group and the accessible name all work on it
+ * unchanged.
+ */
+function withLike(summaries: readonly ReactionSummary[]): ReactionSummary[] {
+  const like = summaries.find((item) => item.emoji === LIKE_EMOJI);
+  const rest = summaries.filter((item) => item.emoji !== LIKE_EMOJI);
+  return [like ?? { emoji: LIKE_EMOJI, count: 0, reacted: false, userIds: [] }, ...rest];
+}
 
 export function ReactionBar(props: {
   target: EntityRef;
   reactions: readonly ReactionSummary[];
   /** Passed in where the card already holds one; fetched otherwise. */
   roster?: Roster;
+  /**
+   * A comment's foot has no `☺+` (§D7.8a): the post's full foot line under
+   * every message would be 44px of chrome per row, and five messages is 220px
+   * of controls under five lines of text. The picker lives in the row's `⋯`
+   * sheet instead.
+   */
+  picker?: boolean;
   className?: string;
 }) {
   const fallbackRoster = useRoster();
@@ -67,20 +112,42 @@ export function ReactionBar(props: {
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const mayReact = can('kudos:give');
+  const showPicker = (props.picker ?? true) && mayReact;
 
   const react = (emoji: string): void => {
     setPickerOpen(false);
     toggle.mutate(emoji);
   };
 
+  /*
+    A reader who may not react sees only what somebody has actually done. The
+    empty heart is a *control*, and §D7.7d is explicit that a guest gets static
+    text rather than a dead one — so on that path there is nothing to draw for
+    an emoji nobody has used, and the foot row can collapse entirely (§D7.8a).
+  */
+  const chips = mayReact ? withLike(summaries) : summaries;
+
   return (
     <div className={cn('flex flex-wrap items-center gap-1', props.className)}>
-      {summaries.map((summary) => {
+      {chips.map((summary) => {
         const members = reactorMembers(summary, roster);
-        const label = reactorLabel(summary, (id) => roster.byId.get(id)?.displayName);
+        const isLike = summary.emoji === LIKE_EMOJI;
+        const label =
+          isLike && summary.userIds.length === 0
+            ? WALL_RU.reactions.like
+            : reactorLabel(summary, (id) => roster.byId.get(id)?.displayName);
         const face = (
           <>
-            <span aria-hidden className="text-base leading-none">
+            <span
+              aria-hidden
+              className={cn(
+                'text-base leading-none',
+                // The outline heart. Nobody has used it, so it is an offer
+                // rather than a statement — and «outline» here is a weight, not
+                // a different glyph: one emoji, one meaning.
+                isLike && summary.userIds.length === 0 && 'opacity-45 grayscale',
+              )}
+            >
               {summary.emoji}
             </span>
             {members.length > 0 ? (
@@ -96,7 +163,7 @@ export function ReactionBar(props: {
               key={summary.emoji}
               role="img"
               aria-label={label}
-              className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-transparent px-2.5"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-full border border-transparent px-2.5"
             >
               {face}
             </span>
@@ -115,7 +182,12 @@ export function ReactionBar(props: {
             className={cn(
               // Every chip carries a border, transparent when unreacted, so
               // toggling one does not shift the row it sits in by 2px.
-              'inline-flex min-h-11 items-center gap-1.5 rounded-full border px-2.5',
+              // `min-w-11` as well as `min-h-11`, and it is not symmetry for its own
+              // sake: a chip nobody has reacted to is one emoji wide, and an emoji
+              // is not reliably 24px. Measured at 320px, the empty heart came out
+              // **43.97px** — under §F1's floor by a rounding error, which is
+              // exactly the kind of miss that only a real engine reports.
+              'inline-flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-full border px-2.5',
               'text-[13px] leading-[18px] font-medium transition-colors',
               'touch-manipulation no-callout',
               summary.reacted
@@ -128,7 +200,7 @@ export function ReactionBar(props: {
         );
       })}
 
-      {mayReact ? (
+      {showPicker ? (
         <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
           <PopoverTrigger asChild>
             <Button

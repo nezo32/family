@@ -267,11 +267,22 @@ export const postResponseSchema = z.object({
   commentCount: z.number().int().min(0),
   reactions: z.array(reactionSummarySchema).default([]),
   /**
-   * Photo, video and audio, in draw order. Always sent by the server (an empty
-   * array when there is none); optional in the type for the same reason
-   * `attachmentIds` is — see `postWritableFields`.
+   * Photo, video and audio, in draw order.
+   *
+   * `.default([])` rather than `.optional()`, and the change is deliberate.
+   * The server has always sent this field — an empty array when there is
+   * none — so `optional()` was never describing the wire. What it was
+   * protecting was the PWA's optimistic `const draft: PostResponse = {…}`,
+   * which did not set it. That draft now sets `attachments: []`, which is the
+   * truth about a post being written, and in exchange every card can read
+   * `post.attachments` without a `?? []` guarding a case the server cannot
+   * produce.
+   *
+   * Promoted **together with** `commentResponseSchema.attachments` below. One
+   * without the other leaves the thread paying a cost the card no longer pays,
+   * and a reader would have to look up which of the two was which.
    */
-  attachments: z.array(mediaAttachmentSchema).optional(),
+  attachments: z.array(mediaAttachmentSchema).default([]),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
 });
@@ -308,8 +319,11 @@ export const commentResponseSchema = z.object({
   authorId: idSchema,
   body: z.string(),
   reactions: z.array(reactionSummarySchema).default([]),
-  /** Same shape and same rules as a post's — a thread takes photos too. */
-  attachments: z.array(mediaAttachmentSchema).optional(),
+  /**
+   * Same shape and same rules as a post's, `.default([])` included — see the
+   * note there. The two fields were promoted in one change on purpose.
+   */
+  attachments: z.array(mediaAttachmentSchema).default([]),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
 });
@@ -327,6 +341,25 @@ export type CommentListResponse = z.infer<typeof commentListResponseSchema>;
 /* -------------------------------------------------------------------------- */
 /* Reactions                                                                   */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * **The like.**
+ *
+ * A like is not a second system next to reactions — it *is* this emoji's
+ * reaction row, promoted to one tap (§D7.7a, D14). Two systems would mean two
+ * states that can disagree, ❤️ drawn twice on one card, and a permanently
+ * unanswerable question about whether a heart and a ❤️ reaction from the same
+ * person are one act or two.
+ *
+ * It lives in the contract rather than in `features/wall/locale.ts` so that the
+ * client, a future digest and any future notification rule cannot drift apart
+ * on what «лайк» means. `REACTION_EMOJI[0]` on the client must equal it.
+ *
+ * Note the code points: `U+2764 U+FE0F`. The variation selector is part of the
+ * value the server stores and compares, so a bare `U+2764` would be a
+ * *different* reaction row and the promoted chip would never light up.
+ */
+export const LIKE_EMOJI = '❤️';
 
 /** A single emoji. Length is generous because one emoji can be several code points. */
 export const emojiSchema = z.string().trim().min(1).max(16);

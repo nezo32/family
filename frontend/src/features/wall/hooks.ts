@@ -313,6 +313,23 @@ export function useCreatePost(): UseMutationResult<PostResponse, Error, CreatePo
         isPinned: false,
         commentCount: 0,
         reactions: [],
+        /*
+          Empty, and it stays empty until the server answers.
+
+          The composer knows the ids it just claimed, but not the `width`,
+          `height` or `durationMs` that go with them — and those are exactly
+          what reserves the aspect box (§D7.14.2). Drawing a guessed box that
+          the real dimensions then correct is the reflow the whole reservation
+          exists to prevent, and it would happen on the reader's *own* note,
+          which is the one card they are certainly watching. So the optimistic
+          card is the words, and the photo arrives a beat later with its own
+          shape already known.
+
+          `attachments` is `.default([])` in the contract now rather than
+          `.optional()`, which is what lets this be an honest empty array
+          instead of an omitted field.
+        */
+        attachments: [],
         createdAt: now,
         updatedAt: now,
       };
@@ -524,16 +541,34 @@ interface CommentsSnapshot {
   previous: InfiniteData<CommentListResponse> | undefined;
 }
 
+/**
+ * What the composer sends: words, an attachment, or both (§D7.8b).
+ *
+ * It used to be a bare `string`. A comment may now be **media-only** — a photo
+ * with no words is a legitimate reply («вот, купила») and forcing a caption
+ * produces «вот» five hundred times — so the mutation takes the pair, and the
+ * service enforces the same *body or attachment, at least one* rule the post
+ * route does.
+ */
+export interface NewComment {
+  body: string;
+  attachmentIds: readonly string[];
+}
+
 export function useAddComment(
   ref: EntityRef,
-): UseMutationResult<CommentResponse, Error, string, CommentsSnapshot> {
+): UseMutationResult<CommentResponse, Error, NewComment, CommentsSnapshot> {
   const queryClient = useQueryClient();
   const { userId } = useCan();
   const key = wallKeys.comments(ref);
 
-  return useMutation<CommentResponse, Error, string, CommentsSnapshot>({
-    mutationFn: (body: string) => createComment(ref, { body }),
-    onMutate: async (body) => {
+  return useMutation<CommentResponse, Error, NewComment, CommentsSnapshot>({
+    mutationFn: (input: NewComment) =>
+      createComment(ref, {
+        body: input.body,
+        ...(input.attachmentIds.length > 0 ? { attachmentIds: [...input.attachmentIds] } : {}),
+      }),
+    onMutate: async (input) => {
       await queryClient.cancelQueries({ queryKey: key });
       const previous = queryClient.getQueryData<InfiniteData<CommentListResponse>>(key);
       const now = new Date().toISOString();
@@ -542,8 +577,11 @@ export function useAddComment(
         entityType: ref.entityType,
         entityId: ref.entityId,
         authorId: userId ?? '',
-        body,
+        body: input.body,
         reactions: [],
+        // Empty for the same reason a post's optimistic draft is — the
+        // dimensions that reserve the box are the server's to state.
+        attachments: [],
         createdAt: now,
         updatedAt: now,
       };

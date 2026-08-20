@@ -17,7 +17,12 @@ import {
   useRoster,
 } from '../hooks';
 import { WALL_RU } from '../locale';
+import { MAX_PER_COMMENT } from '../media/limits';
+import { useOnline } from '../media/online';
+import { useAttachments } from '../media/use-attachments';
+import { AttachmentField } from './AttachmentField';
 import { AuthorLine } from './AuthorLine';
+import { MediaBlock } from './MediaBlock';
 
 /**
  * The discussion under one note — and the one place on Стена where a text field
@@ -82,15 +87,22 @@ function CommentList(props: { target: EntityRef }) {
   const remove = useDeleteComment(props.target);
   const [draft, setDraft] = useState('');
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const attachments = useAttachments({ max: MAX_PER_COMMENT });
+  const online = useOnline();
 
   const comments = flattenComments(query.data);
 
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     const body = draft.trim();
-    if (body.length === 0) return;
+    const attachmentIds = attachments.attachmentIds;
+    // **A photo with no words is a legitimate reply** («вот, купила»), and
+    // forcing a caption produces «вот» five hundred times (§D7.8b). The
+    // backend's rule is the same one: body or attachment, at least one.
+    if (body.length === 0 && attachmentIds.length === 0) return;
     setDraft('');
-    add.mutate(body);
+    attachments.clear();
+    add.mutate({ body, attachmentIds });
   };
 
   return (
@@ -145,11 +157,34 @@ function CommentList(props: { target: EntityRef }) {
             aria-label={WALL_RU.comments.placeholder}
             className="resize-none text-[17px] md:text-[17px]"
           />
-          <div className="flex justify-end">
+          {/*
+            §D7.8b. A 📎 **on the existing composer**, to the left of «Ответить»
+            — not a new field, not a new bar, and not a second row. The composer
+            already exists, and adding a button to a field is not the same as
+            adding a field.
+
+            Nothing else about it changes: no hold-to-record microphone, no
+            camera shutter beside the send button, no sticker tray, no GIF
+            search. A 📎, a 🎤 and a 😊 beside a text field with a send button is
+            Telegram, pixel for pixel, and the family already has Telegram.
+          */}
+          <div className="flex items-center gap-2">
+            {online ? (
+              <AttachmentField
+                attachments={attachments}
+                max={MAX_PER_COMMENT}
+                variant="compact"
+                disabled={add.isPending}
+              />
+            ) : null}
             <Button
               type="submit"
-              className="min-h-11 px-4"
-              disabled={draft.trim().length === 0 || add.isPending}
+              className="ms-auto min-h-11 px-4"
+              disabled={
+                (draft.trim().length === 0 && attachments.attachmentIds.length === 0) ||
+                attachments.uploading ||
+                add.isPending
+              }
             >
               {add.isPending ? <InlineSpinner className="mr-2" /> : null}
               {add.isPending ? WALL_RU.comments.sending : WALL_RU.comments.send}
@@ -206,13 +241,46 @@ function CommentRow(props: {
         }
       />
       {/*
-        No reaction bar on a comment: `COMMENTABLE_ENTITY_TYPES` has no `comment`
-        member, so there is no route to react to one and the service always
-        answers with an empty summary. The field exists for a future enum entry.
+        **Reactions on a comment are still not buildable, and this is the
+        blocker.** §D7.8a specifies a one-row foot under every message — the ❤️
+        chip with its reactors' discs and a `⋯` — and `commentResponseSchema`
+        has carried a `reactions` array the whole time. What is missing is the
+        route: `COMMENTABLE_ENTITY_TYPES` is
+        `post · task · event · goal · poll · kudos` and has **no `comment`
+        member**, so `wall.routes.ts`'s `COMMENT_MOUNTS` loop never mounts
+        `/comments/:id/reactions`, and `comments.service.ts` has no access
+        resolver for a comment target. Every comment therefore arrives with
+        `reactions: []` and any toggle would 404.
+
+        Closing it is three small changes — one enum entry here, one mount row
+        and one resolver case in the backend — but two of the three are in
+        `backend/**`, which this change may not touch. Drawing the chip now
+        would ship a heart that does nothing, which is worse than the absence:
+        a control that can be pressed to no effect is the exact failure §D7.7d
+        refuses for a guest.
       */}
-      <p className="text-[15px] leading-[22px] wrap-break-word whitespace-pre-wrap select-text">
-        {comment.body}
-      </p>
+      {comment.body.length > 0 ? (
+        <p className="text-[15px] leading-[22px] wrap-break-word whitespace-pre-wrap select-text">
+          {comment.body}
+        </p>
+      ) : null}
+
+      {/*
+        §D7.8b. Capped at 240px — noticeably shorter than a post's — and inset
+        by the comment's own padding rather than bled to the card edge. A
+        comment is nested inside a card, and a full-bleed photo inside a nested
+        row destroys the containment that tells the reader they are inside a
+        discussion.
+      */}
+      <MediaBlock
+        attachments={comment.attachments}
+        authorName={props.roster.nameOf(comment.authorId)}
+        tone="inset"
+        maxHeight="comment"
+        // The comment row is already inset by the thread's `ps-3` rule, so the
+        // block's own 16px would be a second inset. `twMerge` resolves it.
+        className="px-0"
+      />
     </li>
   );
 }

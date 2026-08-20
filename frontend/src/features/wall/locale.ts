@@ -1,4 +1,4 @@
-import type { PublicUser, ReactionSummary } from '@family/shared';
+import { LIKE_EMOJI, type PublicUser, type ReactionSummary } from '@family/shared';
 
 /**
  * Russian strings for Стена.
@@ -136,6 +136,123 @@ export const WALL_RU = {
     addAria: 'Добавить реакцию',
     /** Somebody reacted but the roster has not resolved their name. */
     someone: 'кто-то из своих',
+    /**
+     * The accessible name of the **always-drawn** ❤️ chip while nobody has used
+     * it (§D7.7a).
+     *
+     * Once somebody has, the name becomes `reactorLabel()`'s «❤️ — Мама, Лиза»
+     * — the emoji and the people, which is exactly what is drawn. This string
+     * covers the other case, because a screen reader given a bare «❤️» as an
+     * accessible name announces "красное сердце", which is a description of a
+     * glyph rather than of a control.
+     *
+     * There is no digit in either form and there must never be one. Not here,
+     * not in a `title`, not on hover.
+     */
+    like: 'Нравится',
+  },
+
+  /* ------------------------------- media --------------------------------- */
+  /**
+   * Вложения (§D7.14).
+   *
+   * Two rules govern everything in this block.
+   *
+   * **Every refusal names the way out.** «Снимите покороче», «Выберите из
+   * галереи», «Попробуйте другое». A refusal without a next step is where a
+   * family member stops using a feature — and on a board where the alternative
+   * is a paper note on the fridge, they stop for good.
+   *
+   * **Every number in a sentence comes from the contract**, interpolated by the
+   * caller from `MEDIA_LIMITS`. A client that says 8 MB while the server
+   * enforces 10 is the classic version of this bug and it is free to avoid.
+   */
+  media: {
+    /** The composer's attach control. Not a fourth door — it lives *inside* a composer. */
+    add: 'Добавить фото или видео',
+    addShort: 'Фото или видео',
+    /** The 📎 on the comment composer. */
+    attach: 'Прикрепить фото',
+    remove: 'Убрать',
+    retry: 'Ещё раз',
+    uploading: 'Загружаем…',
+    /**
+     * The sheet's footer while a tile is in flight. «Повесить» is disabled, and
+     * the footer says why in words rather than presenting a dead button.
+     */
+    uploadingFooter: 'Загружаем фото…',
+    uploadFailed: 'Не получилось загрузить. Попробуйте ещё раз.',
+    /** §D7.14.7 — attaching needs the network; the note itself does not. */
+    offline: 'Фото можно добавить, когда появится интернет.',
+
+    /* --- refusals, all answered before a byte moves ----------------------- */
+    /** Four is `MAX_PER_POST`: what the grid holds without a «+2» tile (§D7.14.2). */
+    tooMany: 'Больше четырёх не поместится.',
+    /** One per comment is the line between a reply and a post (§D7.8b). */
+    onlyOne: 'К одному сообщению можно приложить одно вложение.',
+    mixedKinds: 'В одной записке — либо фото, либо видео, либо запись голоса.',
+    tooHeavy: (kind: 'image' | 'video' | 'audio', limit: string): string =>
+      kind === 'image'
+        ? `Фото тяжелее ${limit}. Выберите другое или уменьшите его.`
+        : kind === 'video'
+          ? `Это видео тяжелее ${limit}. Выберите его из галереи — так оно станет легче.`
+          : `Запись тяжелее ${limit}. Выберите другую.`,
+    tooLong: (kind: 'video' | 'audio', limit: string): string =>
+      kind === 'video'
+        ? `Видео длиннее, чем ${limit}. Снимите покороче — так его посмотрят все, даже бабушка.`
+        : `Запись длиннее, чем ${limit}. Скажите главное — так её точно дослушают.`,
+    cannotOpenPhoto: 'Не получилось открыть это фото. Попробуйте другое.',
+
+    /* --- playback --------------------------------------------------------- */
+    play: 'Смотреть',
+    playAudio: 'Слушать',
+    pause: 'Пауза',
+    /** The bytes would not come. Quiet, in place of the box — never a toast. */
+    unavailable: 'Вложение не открылось',
+
+    /* --- the viewer ------------------------------------------------------- */
+    open: 'Открыть во весь экран',
+    close: 'Закрыть',
+    previous: 'Предыдущее фото',
+    next: 'Следующее фото',
+
+    /**
+     * Accessible names, built from what we know (§D7.14.8).
+     *
+     * Never left empty and never «изображение» — which is what a screen reader
+     * announces on its own anyway. `alt=""` means *decorative*, and a photo that
+     * is the content of a post is not decorative.
+     *
+     * The duration in `videoFrom` and `audioFrom` is **the one number allowed
+     * into an `aria-label` anywhere on this screen** (§D7.7b). It passes for
+     * the same reason the pill does: a clip's length is not sayable any other
+     * way, it is not attached to a person, and nothing sorts by it.
+     *
+     * There is no `alt` on the wire — see the note in `MediaBlock.tsx` — so
+     * these are the whole of the accessible layer today.
+     *
+     * ## «— Мама», not «от Мамы», and the reason is grammar
+     *
+     * §D7.14.8 writes «Фото от Мамы», «Видео от Павла». Both are genitive, and
+     * a display name is a free-text field: producing the genitive of an
+     * arbitrary Russian name needs the fleeting-vowel rule (Павел → **Павла**,
+     * not «Павела»), the velar rule (Бабушка → Бабушки, not «Бабушкы») and a
+     * judgement about indeclinables. A naive `+а` gets the family's own names
+     * wrong, and a screen reader saying «Фото от Павела» is worse than one
+     * saying nothing clever at all.
+     *
+     * So the name uses the **em-dash pattern this screen already speaks** —
+     * `reactorLabel()` produces «❤️ — Мама, Лиза» — which needs no case at all
+     * and reads consistently across the whole foot line. Deliberate deviation
+     * from the design's wording; the meaning is identical.
+     */
+    photoFrom: (author: string): string => `Фото — ${author}`,
+    photoFromNumbered: (author: string, index: number, total: number): string =>
+      `Фото ${String(index)} из ${String(total)} — ${author}`,
+    videoFrom: (author: string, duration: string | null): string =>
+      duration ? `Видео — ${author}, ${duration}` : `Видео — ${author}`,
+    audioFrom: (author: string, duration: string | null): string =>
+      duration ? `Голосовая запись — ${author}, ${duration}` : `Голосовая запись — ${author}`,
   },
 
   /* ------------------------------- kudos --------------------------------- */
@@ -235,8 +352,26 @@ export const WALL_RU = {
   },
 } as const;
 
-/** Emoji offered in the reaction picker. Deliberately short and friendly. */
-export const REACTION_EMOJI = ['❤️', '\u{1F44D}', '\u{1F389}', '\u{1F602}', '\u{1F64F}'] as const;
+/**
+ * Emoji offered in the reaction picker. Deliberately short and friendly.
+ *
+ * **The first entry is load-bearing rather than incidental:** `REACTION_EMOJI[0]`
+ * *is* the like (§D7.7a), and the contract's `LIKE_EMOJI` is the value the
+ * server, a future digest and any future notification rule agree on. The
+ * `satisfies` below is what makes a reorder fail at compile time instead of
+ * silently drawing a promoted heart that toggles a different row from the one
+ * the picker's ❤️ toggles.
+ *
+ * Note the code points: `❤️` is `U+2764 U+FE0F`. A bare `U+2764` would be a
+ * different reaction as far as the database is concerned.
+ */
+export const REACTION_EMOJI = [
+  LIKE_EMOJI,
+  '\u{1F44D}',
+  '\u{1F389}',
+  '\u{1F602}',
+  '\u{1F64F}',
+] as const satisfies readonly [typeof LIKE_EMOJI, ...string[]];
 
 /** Emoji offered when giving kudos. */
 export const KUDOS_EMOJI = ['\u{1F44F}', '❤️', '\u{1F31F}', '\u{1F917}', '\u{1F4AA}'] as const;

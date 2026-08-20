@@ -20,6 +20,7 @@ import { isoInDays } from '../api';
 import { useDeletePost, useSetPin, type Roster } from '../hooks';
 import { WALL_RU } from '../locale';
 import { AuthorLine } from './AuthorLine';
+import { MediaBlock } from './MediaBlock';
 import { ReactionBar } from './ReactionBar';
 import { CommentThread } from './CommentThread';
 
@@ -48,12 +49,24 @@ import { CommentThread } from './CommentThread';
  *   is never the only signal (§B4), so the head is legible in greyscale and to
  *   a screen reader taking the cards in order.
  *
- * **Media has no contract today** (§D7.6). `createPostSchema` is `title` /
- * `body` / `pinnedUntil` and nothing else. When an image is added, its slot is
- * between the body and the foot line: full card width, edge-to-edge below
- * `sm`, `aspect-ratio` boxed from server-supplied dimensions so nothing
- * reflows on load, `max-height: 60dvh`. Do not add it by hanging a URL off
- * `body`.
+ * ## Media
+ *
+ * The slot is between the body and the foot line (§D7.14.2): full card width,
+ * edge-to-edge below `sm`, `aspect-ratio` boxed from server-supplied
+ * dimensions so nothing reflows on load, `max-height: 60dvh`. It is
+ * `MediaBlock`'s job, not this file's — what lives here is the two decisions
+ * only the card can make:
+ *
+ * - **Which tone.** On a card with a tinted ground — the `--surface-calm` of a
+ *   system post, the `--surface-attention` wash the one head card may take —
+ *   media insets by 16px and takes radius 8 at *every* width. A full-bleed
+ *   photo on one of those runs to the screen edge and the wash stops reading as
+ *   a card at all; the wash must frame the picture.
+ * - **A note may be media with no words**, and that is a legitimate card rather
+ *   than an error (§D7.14.4). Nothing is drawn in place of the missing
+ *   text — no «без описания», no placeholder, no italic hint. An absent caption
+ *   is not an error state, and the reader is not looking at a gap: they are
+ *   looking at the photo.
  *
  * ## Gestures (§C-gestures)
  *
@@ -84,6 +97,16 @@ export function AnnouncementNote(props: {
   const [menuOpen, setMenuOpen] = useState(false);
   const isSystem = post.type === 'system';
   const coarse = useCoarsePointer();
+  /*
+    There is no `alt` on the wire, so an attachment's accessible name is built
+    from what we do know (§D7.14.8) — «Фото — Мама» — and the author's name is
+    the only part of it this card owns. Never left empty and never
+    «изображение»: `alt=""` means decorative, and a photo that is the content of
+    a post is not decorative.
+  */
+  const authorName = isSystem
+    ? WALL_RU.feed.systemAuthor
+    : props.roster.nameOf(post.authorId ?? '');
 
   const actions = usePostActions(post, {
     onPin: (pinnedUntil) => {
@@ -164,38 +187,53 @@ export function AnnouncementNote(props: {
             </h3>
           ) : null}
 
-          <p
-            className={cn(
-              'wrap-break-word text-[15px] leading-[22px] whitespace-pre-wrap',
-              /*
-               * The note is `.no-callout` so a long press opens the sheet
-               * instead of iOS's selection bubble — but the *body* is the one
-               * thing on a board note somebody genuinely wants to copy
-               * («адрес», «во сколько выезжаем»), so selection is handed back
-               * here, and only here.
-               */
-              'select-text [-webkit-touch-callout:default]',
-              !expanded && 'line-clamp-4',
-            )}
-          >
-            {post.body}
-          </p>
+          {post.body.length > 0 ? (
+            <>
+              <p
+                className={cn(
+                  'wrap-break-word text-[15px] leading-[22px] whitespace-pre-wrap',
+                  /*
+                   * The note is `.no-callout` so a long press opens the sheet
+                   * instead of iOS's selection bubble — but the *body* is the one
+                   * thing on a board note somebody genuinely wants to copy
+                   * («адрес», «во сколько выезжаем»), so selection is handed back
+                   * here, and only here.
+                   */
+                  'select-text [-webkit-touch-callout:default]',
+                  !expanded && 'line-clamp-4',
+                )}
+              >
+                {post.body}
+              </p>
 
-          {mightBeClamped(post.body) ? (
-            <button
-              type="button"
-              // 44px of target, not 25×18 of text: §F1 applies to a text link on a
-              // coarse pointer exactly as it applies to an icon button. The negative
-              // inline margin keeps the word optically aligned with the body above it.
-              className="-mx-2 -mt-2 flex min-h-11 min-w-11 items-center justify-start self-start rounded-sm px-2 text-[13px] leading-[18px] font-medium underline-offset-4 hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
-              aria-expanded={expanded}
-              onClick={() => {
-                setExpanded((value) => !value);
-              }}
-            >
-              {expanded ? WALL_RU.post.less : WALL_RU.post.more}
-            </button>
+              {mightBeClamped(post.body) ? (
+                <button
+                  type="button"
+                  // 44px of target, not 25×18 of text: §F1 applies to a text link on a
+                  // coarse pointer exactly as it applies to an icon button. The negative
+                  // inline margin keeps the word optically aligned with the body above it.
+                  className="-mx-2 -mt-2 flex min-h-11 min-w-11 items-center justify-start self-start rounded-sm px-2 text-[13px] leading-[18px] font-medium underline-offset-4 hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+                  aria-expanded={expanded}
+                  onClick={() => {
+                    setExpanded((value) => !value);
+                  }}
+                >
+                  {expanded ? WALL_RU.post.less : WALL_RU.post.more}
+                </button>
+              ) : null}
+            </>
           ) : null}
+
+          {/*
+            §D7.14.2. `-mx-4` cancels the card's own 16px inset so the photo
+            bleeds to the screen edge below `sm`; on a tinted card the `inset`
+            tone keeps the wash as a frame instead.
+          */}
+          <MediaBlock
+            attachments={post.attachments}
+            authorName={authorName}
+            tone={isSystem || props.tone === 'attention' ? 'inset' : 'plain'}
+          />
 
           {/* One 44px line of chrome per note, not two (§A3). */}
           <CommentThread
