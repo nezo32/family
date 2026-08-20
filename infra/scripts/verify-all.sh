@@ -17,11 +17,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 TEST_DB="${TEST_DATABASE_URL:-postgres://family:family@127.0.0.1:5432/family_test}"
-API_PORT="${API_PORT:-3100}"
+API_PORT="${API_PORT:-3102}"
 TEST_S3="${TEST_S3_ENDPOINT:-http://127.0.0.1:9000}"
 S3_KEY="${TEST_S3_ACCESS_KEY_ID:-family}"
 S3_SECRET="${TEST_S3_SECRET_ACCESS_KEY:-familysecret}"
-WEB_PORT=5173   # not negotiable: the backend's CORS allow-list holds only this origin
+WEB_PORT="${WEB_PORT:-5175}"
 
 PASS=0
 FAIL=0
@@ -71,24 +71,41 @@ step "frontend: tests"      bash -c 'cd frontend && npx vitest run'
 step "frontend: production build" bash -c 'cd frontend && npx vite build >/dev/null'
 
 # ------------------------------------------------------------------ e2e ----
-printf '\n\033[1;36m── starting the stack for e2e\033[0m\n'
-(cd backend && BACKEND_PORT="$API_PORT" npx tsx --env-file-if-exists=.env src/main.ts \
-  >/tmp/verify-api.log 2>&1) &
-API_PID=$!
-(cd frontend && npx vite preview --port "$WEB_PORT" --strictPort \
-  >/tmp/verify-web.log 2>&1) &
-WEB_PID=$!
+#
+# `localhost` and `127.0.0.1` are different origins to CORS, and the backend
+# builds its allow-list from APP_PUBLIC_URL — so both halves use `localhost`.
+# RATE_LIMIT_FACTOR keeps a ~90-context suite from tripping the refresh limit;
+# it is forced to 1 in production regardless.
+printf '\n\033[1;36m── stack for e2e\033[0m\n'
 
-for _ in $(seq 1 60); do
-  api_up=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$API_PORT/health" 2>/dev/null)
-  web_up=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$WEB_PORT/" 2>/dev/null)
-  [[ "$api_up" == "200" && "$web_up" == "200" ]] && break
-done
+api_up=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$API_PORT/health" 2>/dev/null)
+web_up=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$WEB_PORT/" 2>/dev/null)
+
+if [[ "$api_up" == "200" && "$web_up" == "200" ]]; then
+  echo "   reusing the stack already on :$API_PORT and :$WEB_PORT"
+else
+  echo "   starting api on :$API_PORT and preview on :$WEB_PORT"
+  (cd backend && BACKEND_PORT="$API_PORT" APP_PUBLIC_URL="http://localhost:$WEB_PORT" \
+    RATE_LIMIT_FACTOR=100 S3_ENDPOINT="$TEST_S3" S3_ACCESS_KEY_ID="$S3_KEY" \
+    S3_SECRET_ACCESS_KEY="$S3_SECRET" S3_BUCKET=family-media \
+    npx tsx --env-file-if-exists=.env src/main.ts >/tmp/verify-api.log 2>&1) &
+  API_PID=$!
+  (cd frontend && VITE_API_PROXY_TARGET="http://localhost:$API_PORT" \
+    npx vite preview --port "$WEB_PORT" --strictPort >/tmp/verify-web.log 2>&1) &
+  WEB_PID=$!
+
+  for _ in $(seq 1 60); do
+    api_up=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$API_PORT/health" 2>/dev/null)
+    web_up=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$WEB_PORT/" 2>/dev/null)
+    [[ "$api_up" == "200" && "$web_up" == "200" ]] && break
+    sleep 1
+  done
+fi
 echo "   api=$api_up web=$web_up"
 
 if [[ "$api_up" == "200" && "$web_up" == "200" ]]; then
   step "e2e: whole app (smoke + deep)" bash -c \
-    "cd frontend && E2E_BASE_URL=http://127.0.0.1:$WEB_PORT E2E_API_URL=http://127.0.0.1:$API_PORT \
+    "cd frontend && E2E_BASE_URL=http://localhost:$WEB_PORT E2E_API_URL=http://localhost:$WEB_PORT \
      npx playwright test --reporter=line"
 else
   echo "   could not start the stack; see /tmp/verify-api.log and /tmp/verify-web.log"
