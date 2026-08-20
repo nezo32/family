@@ -402,36 +402,28 @@
 /**
  * Where the bottom of the screen is, for the app's fixed bottom chrome.
  *
- * `bottom: 0` means "the bottom of the layout viewport", and on an installed
- * iOS app that is neither the bottom of the screen nor the bottom of what the
- * user can see. Two custom properties, published by
- * `app/layout/viewport-insets.ts`, say where it really is:
+ * **There is no custom property for this any more, on purpose.** For one day
+ * this file carried `bottom-viewport` and `bottom-above-keyboard`, two
+ * `@utility` rules built on `--viewport-shortfall` and `--viewport-keyboard`
+ * published from JavaScript, on the theory that `bottom: 0` cannot be trusted
+ * on an installed iOS app. Both were reverted; `app/layout/BottomTabBar.tsx`
+ * records what they cost. The short version:
  *
- *   --viewport-keyboard   how much of the layout viewport's bottom the software
- *                         keyboard is covering (WebKit shrinks only the *visual*
- *                         viewport, so `bottom: 0` is behind the keyboard)
- *   --viewport-shortfall  how far the bottom of the layout viewport is *above*
- *                         the bottom of the display, which WebKit can leave it
- *                         after the keyboard in standalone (Apple 158055568)
+ *  - `--viewport-shortfall` was `peak innerHeight - current innerHeight`, and
+ *    the tab bar was pushed *down* by it. Anything that moves `innerHeight` in
+ *    standalone for a reason that is not the defect — and on iOS 26 several
+ *    things do — put the bar that far below the bottom of the screen. Measured
+ *    at iPhone 15 metrics: a 59px reading moved the bar's box from [602, 659]
+ *    to [661, 718] in a 659px viewport. That is the second bug report.
+ *  - The correction can only ever be as good as the guess, and the defect it
+ *    guessed at cannot be observed from JavaScript at all: a layout viewport
+ *    that WebKit has left short reports the short number as `innerHeight`,
+ *    which is the same number a legitimately shorter viewport reports.
  *
- * Both are **absent** on a browser that is behaving, so these compile to
- * `bottom: calc(0px)` and change nothing at all — which is the safety argument
- * for shipping them without a device to test on.
- *
- * `bottom-viewport` is for chrome that belongs on the physical bottom whatever
- * the keyboard is doing (the tab bar — a nav bar riding on top of the keyboard
- * is not what any iOS app does). `bottom-above-keyboard` is for surfaces that
- * must stay reachable while typing (every bottom sheet).
- *
- * `@utility` rather than a repeated arbitrary value: the same calc in two
- * component files is the shape that ends up corrected in only one of them.
+ * So: `bottom: 0`, everywhere, as `docs/design/DESIGN.md` §F6 has said all
+ * along, and the software keyboard is `vaul`'s problem on the surfaces `vaul`
+ * owns. If this is ever revisited, the entry price is a device to measure on.
  */
-@utility bottom-viewport {
-  bottom: calc(-1 * var(--viewport-shortfall, 0px));
-}
-@utility bottom-above-keyboard {
-  bottom: calc(var(--viewport-keyboard, 0px) - var(--viewport-shortfall, 0px));
-}
 
 /**
  * Height a page gets inside `AppShell`'s `<main>`: the viewport minus the app

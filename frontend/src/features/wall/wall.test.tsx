@@ -12,6 +12,7 @@ import { TooltipProvider } from '@/shared/ui/tooltip';
 import { AnnouncementComposer } from './components/AnnouncementComposer';
 import { BoardComposeButton, BoardComposeProvider } from './components/BoardCompose';
 import { ClearWallMenu } from './components/ClearWallMenu';
+import { KudosComposer } from './components/KudosComposer';
 import { KudosPanel } from './components/KudosPanel';
 import { PollCard } from './components/PollCard';
 import { ReactionBar } from './components/ReactionBar';
@@ -46,6 +47,8 @@ const POLL_ID = '11111111-1111-4111-8111-111111111111';
 const OPTION_A = '22222222-2222-4222-8222-222222222222';
 const OPTION_B = '33333333-3333-4333-8333-333333333333';
 const KUDOS_ID = '88888888-8888-4888-8888-888888888888';
+const PENDING_ID = '99999999-9999-4999-8999-999999999999';
+const SUSPENDED_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
 const NOW = '2026-08-19T09:00:00.000Z';
 
@@ -69,6 +72,34 @@ const ROSTER = {
     },
   ],
   pendingCount: 0,
+};
+
+/**
+ * The roster as `GET /members` actually serves it: `rejected` is subtracted at
+ * the source (identity.md §1.5), but `pending_approval` and `suspended` are
+ * not — the family and admin screens need both.
+ */
+const MIXED_ROSTER = {
+  items: [
+    ...ROSTER.items,
+    {
+      id: PENDING_ID,
+      displayName: 'Гость',
+      avatarUrl: null,
+      color: null,
+      role: 'child',
+      status: 'pending_approval',
+    },
+    {
+      id: SUSPENDED_ID,
+      displayName: 'Отстранённый',
+      avatarUrl: null,
+      color: null,
+      role: 'teen',
+      status: 'suspended',
+    },
+  ],
+  pendingCount: 1,
 };
 
 /** The permission set a `child` actually holds — checked against `ROLE_PERMISSIONS`. */
@@ -654,6 +685,54 @@ describe('«Спасибо»', () => {
     // The reaction on the card carries seven reactors' worth of `count` in the
     // payload and must draw none of it.
     expect(container.innerHTML).not.toMatch(/\b7\b/);
+  });
+
+  /**
+   * The picker is an action-target list, not a roster. `giveKudos` re-reads the
+   * recipient and answers `404` for any status but `active`, so anybody else in
+   * the list is an offer the server would refuse — and offering somebody still
+   * waiting at the door, or somebody deliberately set aside, is wrong before it
+   * is broken.
+   */
+  it('offers only active members as recipients, and never yourself', async () => {
+    const user = userEvent.setup();
+    getSpy.mockImplementation((path: string) => {
+      if (path === '/members') return Promise.resolve(MIXED_ROSTER as never);
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
+
+    renderWithProviders(<KudosComposer open onOpenChange={noop} />, ['kudos:give']);
+
+    await user.click(await screen.findByRole('button', { name: new RegExp(WALL_RU.kudos.to) }));
+
+    expect(await screen.findByRole('radio', { name: 'Лиза' })).toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Гость' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Отстранённый' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Мама' })).not.toBeInTheDocument();
+  });
+
+  /**
+   * A draft outlives the roster it was written against, so the picked id is
+   * resolved inside the candidate list rather than the whole roster: that is
+   * what stops a suspension turning a restored draft into a send that 404s.
+   */
+  it('keeps «Сказать спасибо» shut until an offered person is picked', async () => {
+    const user = userEvent.setup();
+    getSpy.mockImplementation((path: string) => {
+      if (path === '/members') return Promise.resolve(MIXED_ROSTER as never);
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
+
+    renderWithProviders(<KudosComposer open onOpenChange={noop} />, ['kudos:give']);
+
+    expect(await screen.findByRole('button', { name: WALL_RU.kudos.send })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: new RegExp(WALL_RU.kudos.to) }));
+    await user.click(await screen.findByRole('radio', { name: 'Лиза' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: WALL_RU.kudos.send })).toBeEnabled();
+    });
   });
 });
 

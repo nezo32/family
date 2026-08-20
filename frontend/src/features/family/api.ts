@@ -76,9 +76,21 @@ export type Roster = z.infer<typeof rosterSchema>;
 /* reads                                                                       */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The family roster.
+ *
+ * `GET /members` already subtracts `rejected` rows server-side — they are
+ * declined join requests, not people in the family, and the fix belongs at the
+ * source because four other features fetch this same endpoint into caches of
+ * their own. The filter here is a second lock rather than the mechanism: a
+ * client that is one deploy behind the server, or a cached response from before
+ * the change, must still not put somebody the family turned away on the «Семья»
+ * screen. It costs one pass over six rows.
+ */
 export async function fetchRoster(signal?: AbortSignal): Promise<Roster> {
   const raw = await api.get<unknown>('/members', signal ? { signal } : {});
-  return rosterSchema.parse(raw);
+  const roster = rosterSchema.parse(raw);
+  return { ...roster, items: roster.items.filter((member) => member.status !== 'rejected') };
 }
 
 /** The next few scheduled chores for one member — the detail sheet's body. */

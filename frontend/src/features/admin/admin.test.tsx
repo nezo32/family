@@ -24,6 +24,7 @@ import MembersPage from './pages/MembersPage';
 const ADMIN_ID = '11111111-1111-4111-8111-111111111111';
 const PENDING_ID = '22222222-2222-4222-8222-222222222222';
 const MEMBER_ID = '33333333-3333-4333-8333-333333333333';
+const REJECTED_ID = '44444444-4444-4444-8444-444444444444';
 
 const ADMIN_PERMISSIONS: Permission[] = [
   'member:read',
@@ -84,6 +85,22 @@ function activeMember(overrides: Record<string, unknown> = {}) {
     lastSeenAt: null,
     ...overrides,
   };
+}
+
+/** A join request that was declined — a tombstone, not a member. */
+function rejectedMember(overrides: Record<string, unknown> = {}) {
+  return activeMember({
+    id: REJECTED_ID,
+    displayName: 'nezo',
+    status: 'rejected',
+    // Both released by `rejectMember`, which is why they are null here: the
+    // wire shape the admin screen has to render is the *tombstone*.
+    email: null,
+    approvedAt: null,
+    approvedById: null,
+    rejectedReason: 'случайный вход',
+    ...overrides,
+  });
 }
 
 function json(status: number, body: unknown): Response {
@@ -247,5 +264,60 @@ describe('approval queue', () => {
     await waitFor(() => {
       expect(countCalls('/suspend')).toBe(1);
     });
+  });
+});
+
+/**
+ * Declined requests: gone from the family, still visible to the person who
+ * declined them.
+ *
+ * The owner's complaint was «впринципе не отображай таких пользователей в
+ * семье», and the roster now honours that server-side for every caller. This
+ * screen is the deliberate exception — an admin who declined somebody by
+ * accident has to be able to see what they declined, and after the rejection
+ * released the identity there is nothing else left that says who it was.
+ */
+describe('declined requests', () => {
+  it('opts into rejected rows, and only this screen does', async () => {
+    installFetch({ me: meBody(ADMIN_PERMISSIONS), members: [activeMember()] });
+    renderPage();
+
+    await screen.findByText('Петя');
+
+    // Without the opt-in the server subtracts them and the section could never
+    // be populated — the query string is the whole mechanism.
+    const roster = calls.find(
+      (call) => call.url.includes('/api/members') && !call.url.includes('/pending'),
+    );
+    expect(roster?.url).toContain('includeRejected=true');
+  });
+
+  it('lists a rejected applicant apart from the family, with no action on it', async () => {
+    installFetch({
+      me: meBody(ADMIN_PERMISSIONS),
+      members: [activeMember(), rejectedMember()],
+    });
+    renderPage();
+
+    expect(await screen.findByText('Отклонённые заявки')).toBeInTheDocument();
+    expect(screen.getByText('nezo')).toBeInTheDocument();
+    // The admin's own words for why, kept when the identity was released.
+    expect(screen.getByText('случайный вход')).toBeInTheDocument();
+
+    /*
+     * One «Приостановить» — Петя's. Suspend is a conditional update on
+     * `active`, so offering it against a rejected row would be a button whose
+     * only possible outcome is a 409.
+     */
+    expect(screen.getAllByRole('button', { name: 'Приостановить' })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Вернуть доступ' })).not.toBeInTheDocument();
+  });
+
+  it('says nothing about declined requests when there are none', async () => {
+    installFetch({ me: meBody(ADMIN_PERMISSIONS), members: [activeMember()] });
+    renderPage();
+
+    await screen.findByText('Петя');
+    expect(screen.queryByText('Отклонённые заявки')).not.toBeInTheDocument();
   });
 });

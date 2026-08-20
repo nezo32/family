@@ -10,7 +10,9 @@ import { Section, SectionStack } from '@/shared/ui/section';
 import { ValueRow } from '@/shared/ui/value-row';
 import { OptionList, OptionRow, PickerSheet, TextSheet } from '@/shared/ui/option-sheet';
 import { Textarea } from '@/shared/ui/textarea';
+import { cn } from '@/shared/lib/utils';
 import { isoInDays } from '../api';
+import { composerNoteClass } from '../composer-field';
 import { useCreatePost } from '../hooks';
 import { WALL_RU } from '../locale';
 
@@ -138,9 +140,11 @@ export function AnnouncementComposer(props: {
           <SectionStack className="gap-6 pt-2">
             <Section surface="card">
               {/*
-                The note itself, and nothing above it. `text-[17px]` on every
-                surface: below 16 iOS zooms the viewport on focus and never
-                zooms back (§F2).
+                The note itself, and nothing above it. This `div` is the row:
+                it owns the ground (the `Section`), the radius and the 16/12
+                inset — the same `px-4 py-3` the «Заголовок» row below uses — and
+                `composerNoteClass` is what stops the field drawing a second box
+                inside it (§D7.6, and the note on that constant).
               */}
               <div className="w-full max-w-row-measure px-4 py-3">
                 <Textarea
@@ -149,7 +153,7 @@ export function AnnouncementComposer(props: {
                   maxLength={8000}
                   aria-label={WALL_RU.post.fieldBody}
                   placeholder={WALL_RU.post.fieldBodyPlaceholder}
-                  className="min-h-32 resize-none border-0 bg-transparent px-0 text-[17px] leading-6 shadow-none focus-visible:ring-0 md:text-[17px]"
+                  className={cn(composerNoteClass, 'min-h-32')}
                   {...form.register('body')}
                 />
               </div>

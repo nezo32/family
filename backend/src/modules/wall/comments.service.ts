@@ -4,6 +4,7 @@ import {
   COMMENTABLE_ENTITY_TYPES,
   type CommentableEntityType,
   type CommentResponse,
+  type MediaAttachment,
   type ReactionListResponse,
   type ReactionSummary,
 } from '@family/shared';
@@ -15,6 +16,7 @@ import { kudos } from '../chores/chores.schema.js';
 import { eventAttendees, eventOccurrences, eventSeries } from '../events/events.schema.js';
 import { savingsGoals } from '../goals/goals.schema.js';
 import { canReadGoal } from '../goals/goals.service.js';
+import * as media from '../storage/media.service.js';
 import { taskOccurrences, taskSeries } from '../tasks/tasks.schema.js';
 import * as repo from './wall.repository.js';
 import { polls, posts, type CommentRow } from './wall.schema.js';
@@ -246,7 +248,10 @@ export async function assertCanReadEntity(
 /* Mapping                                                                     */
 /* -------------------------------------------------------------------------- */
 
-export function toCommentResponse(row: CommentRow): CommentResponse {
+export function toCommentResponse(
+  row: CommentRow,
+  attachments: MediaAttachment[] = [],
+): CommentResponse {
   return {
     id: row.id,
     entityType: assertEntityType(row.entityType),
@@ -256,9 +261,42 @@ export function toCommentResponse(row: CommentRow): CommentResponse {
     // `comment` is not in COMMENTABLE_ENTITY_TYPES, so a comment cannot itself
     // be reacted to. The field stays in the contract for a future enum entry.
     reactions: [],
+    attachments,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+/**
+ * One extra query for a whole page of comments, never one per row — the same
+ * discipline `countComments` and `loadReactions` follow.
+ */
+export async function hydrateComments(
+  exec: Executor,
+  rows: readonly CommentRow[],
+): Promise<CommentResponse[]> {
+  if (rows.length === 0) return [];
+  const attachments = await media.attachmentsForPage(
+    exec,
+    'comment',
+    rows.map((row) => row.id),
+  );
+  return rows.map((row) => toCommentResponse(row, attachments.get(row.id) ?? []));
+}
+
+/**
+ * A comment must say *something*: words, or media, or both.
+ *
+ * Enforced here rather than in the zod schema because that schema is also the
+ * PWA's form schema, and a `superRefine` there would turn a `ZodObject` into a
+ * `ZodEffects` the composer can no longer `.omit()` from.
+ */
+export function assertHasContent(body: string, attachmentIds: readonly string[] | undefined): void {
+  if (body.trim().length === 0 && (attachmentIds?.length ?? 0) === 0) {
+    throw badRequest('A comment needs a body or an attachment', {
+      body: ['Напишите что-нибудь или прикрепите фото.'],
+    });
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -288,26 +326,39 @@ export async function listCommentsFor(
   });
 
   const page = repo.toPage(rows, query.limit);
-  return { items: page.items.map(toCommentResponse), nextCursor: page.nextCursor };
+  return { items: await hydrateComments(exec, page.items), nextCursor: page.nextCursor };
 }
 
 export async function addComment(
   exec: Executor,
   auth: AuthContext,
   ref: { entityType: string; entityId: string },
-  input: { body: string },
+  input: { body: string; attachmentIds?: readonly string[] | undefined },
 ): Promise<CommentResponse> {
   const entityType = assertEntityType(ref.entityType);
   if (!auth.can('comment:create')) throw forbidden('Missing permission: comment:create');
+  assertHasContent(input.body, input.attachmentIds);
   await assertCanReadEntity(exec, { entityType, entityId: ref.entityId }, auth);
 
-  const row = await repo.insertComment(exec, {
-    entityType,
-    entityId: ref.entityId,
-    authorId: auth.userId,
-    body: input.body.trim(),
+  // One transaction: a comment whose photos failed to attach must not exist,
+  // and a photo claimed by a comment that failed to insert must stay a draft.
+  const { row, attachments } = await exec.transaction(async (tx) => {
+    const inserted = await repo.insertComment(tx, {
+      entityType,
+      entityId: ref.entityId,
+      authorId: auth.userId,
+      body: input.body.trim(),
+    });
+    const attached = await media.attachMediaTo(tx, {
+      entityType: 'comment',
+      entityId: inserted.id,
+      uploaderId: auth.userId,
+      attachmentIds: input.attachmentIds ?? [],
+    });
+    return { row: inserted, attachments: attached.map(media.toMediaAttachment) };
   });
-  return toCommentResponse(row);
+
+  return toCommentResponse(row, attachments);
 }
 
 /**
@@ -318,7 +369,7 @@ export async function editComment(
   exec: Executor,
   auth: AuthContext,
   commentId: string,
-  input: { body: string },
+  input: { body: string; attachmentIds?: readonly string[] | undefined },
 ): Promise<CommentResponse> {
   const existing = await repo.findCommentById(exec, commentId);
   if (!existing) throw notFound('Comment');
@@ -328,10 +379,33 @@ export async function editComment(
     auth,
   );
   if (existing.authorId !== auth.userId) throw forbidden('Only the author may edit a comment');
+  assertHasContent(
+    input.body,
+    input.attachmentIds ??
+      (await media.attachmentsOf(exec, 'comment', commentId)).map((item) => item.id),
+  );
 
-  const row = await repo.updateCommentBody(exec, commentId, input.body.trim());
-  if (!row) throw notFound('Comment');
-  return toCommentResponse(row);
+  const { row, removedKeys } = await exec.transaction(async (tx) => {
+    const updated = await repo.updateCommentBody(tx, commentId, input.body.trim());
+    if (!updated) throw notFound('Comment');
+    // `undefined` means "leave the media alone"; an array — even an empty one —
+    // is the whole new set.
+    const removed = input.attachmentIds
+      ? await media.reconcileAttachments(tx, {
+          entityType: 'comment',
+          entityId: commentId,
+          uploaderId: auth.userId,
+          attachmentIds: input.attachmentIds,
+        })
+      : { removedKeys: [] as readonly string[] };
+    return { row: updated, removedKeys: removed.removedKeys };
+  });
+
+  // After the commit, never inside it: a rollback that had already deleted
+  // bytes cannot be undone.
+  await media.removeAllQuietly(removedKeys);
+
+  return toCommentResponse(row, await media.attachmentsOf(exec, 'comment', commentId));
 }
 
 /** Soft delete: `comment:delete:own` for your own, `:any` for anybody's. */
@@ -354,7 +428,12 @@ export async function deleteComment(
     throw forbidden('Missing permission: comment:delete:any');
   }
 
-  await repo.softDeleteComment(exec, commentId);
+  await exec.transaction(async (tx) => {
+    await repo.softDeleteComment(tx, commentId);
+    // Soft, and the objects stay: a deleted comment is recoverable for as long
+    // as the sweep's grace period lasts (`media.service.ts`).
+    await media.detachAllFrom(tx, 'comment', commentId);
+  });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -462,9 +541,13 @@ export async function deleteCommentsFor(
   entityId: string,
 ): Promise<CommentCleanupResult> {
   const validated = assertEntityType(entityType);
-  const [commentsDeleted, reactionsDeleted] = await Promise.all([
+  const [commentIds, reactionsDeleted] = await Promise.all([
     repo.softDeleteCommentsFor(tx, validated, entityId),
     repo.deleteReactionsFor(tx, validated, entityId),
   ]);
-  return { comments: commentsDeleted, reactions: reactionsDeleted };
+  // The third polymorphic pointer nobody can cascade: the photos on the
+  // comments that just went. Same rule as the comments themselves — soft
+  // delete, objects kept until the sweep's grace period runs out.
+  await media.detachAllFromMany(tx, 'comment', commentIds);
+  return { comments: commentIds.length, reactions: reactionsDeleted };
 }

@@ -335,13 +335,17 @@ export function commentCountOf(counts: Map<string, number>, entityId: string): n
 
 /**
  * The cleanup hook's write half: soft-delete every comment on one entity.
- * Returns how many rows were affected.
+ *
+ * Returns the **ids**, not a count. The count is all the caller used to need;
+ * media changed that — a comment's photos hang off the comment's own id, and
+ * the only way to detach them in the same transaction is to know which comments
+ * were just hit.
  */
 export async function softDeleteCommentsFor(
   exec: Executor,
   entityType: string,
   entityId: string,
-): Promise<number> {
+): Promise<string[]> {
   const rows = await exec
     .update(comments)
     .set({ deletedAt: new Date(), updatedAt: new Date() })
@@ -353,7 +357,7 @@ export async function softDeleteCommentsFor(
       ),
     )
     .returning({ id: comments.id });
-  return rows.length;
+  return rows.map((row) => row.id);
 }
 
 /* -------------------------------------------------------------------------- */

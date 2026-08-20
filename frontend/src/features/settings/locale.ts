@@ -224,6 +224,32 @@ export const SETTINGS_RU = {
 
     empty: 'Пока ничего не привязано.',
     loadFailed: 'Не удалось загрузить способы входа',
+
+    /* --- coming back from the provider ------------------------------------- */
+
+    /**
+     * `GET /api/auth/:provider/callback` is a top-level navigation, so it can
+     * never answer with an API error body — it redirects back here instead, and
+     * these are the sentences that replace the JSON envelope the user used to
+     * see in their address bar.
+     *
+     * The `?oauth=replayed` case is the one that matters. The callback fired
+     * twice for one authorization, the first one did the work and the second
+     * found the state already spent; the server cannot tell that apart from a
+     * state that never existed, so it claims nothing at all. **This screen can**,
+     * because the list of linked providers is right underneath — so the copy is
+     * chosen from what the list actually says, not from what we hope happened.
+     */
+    replayedLinked: (provider: string) => `${provider} привязан`,
+    replayedLinkedText:
+      'Возвращаться сюда ещё раз не нужно — привязка уже сохранена, она в списке ниже.',
+    replayedUnknownTitle: 'Эта ссылка привязки уже использована',
+    replayedUnknownText:
+      'Ссылка на привязку действует один раз. В списке ниже — то, что привязано сейчас; если нужного способа в нём нет, начните привязку заново.',
+
+    /** Any real failure on the way back: the code carries the Russian sentence. */
+    callbackFailedTitle: (provider: string) => `Не удалось привязать ${provider}`,
+    callbackFailedTitleGeneric: 'Не удалось завершить привязку',
   },
 
   notifications: {

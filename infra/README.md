@@ -55,7 +55,7 @@ port 5432 from outside the VDI, something is wrong.
 | `docker-compose.dev.yml`          | postgres + redis only, ports published to the host          |
 | `caddy/Caddyfile`                 | edge reverse proxy, TLS, security headers, cache policy     |
 | `postgres/init/01-extensions.sql` | first-boot extensions + session defaults                    |
-| `scripts/backup.sh`               | nightly `pg_dump`, gzip, sha256, rotation                   |
+| `scripts/backup.sh`               | nightly `pg_dump` + object mirror, sha256, rotation         |
 | `scripts/restore-check.sh`        | replays the newest dump into a throwaway container          |
 | `backup-pull/`                    | **separate project** — pulls backups down to the owner's PC |
 
@@ -238,19 +238,48 @@ Notes:
 make backup          # ./infra/scripts/backup.sh
 ```
 
-Produces `backups/<db>-<UTC stamp>.sql.gz` plus a `.sha256` sidecar, refreshes
-the `latest.sql.gz` symlink, and deletes everything past the newest
-`BACKUP_KEEP` (default 14). The script refuses to keep a dump that fails
+Two artefacts, two shapes.
+
+**The database.** `backups/<db>-<UTC stamp>.sql.gz` plus a `.sha256` sidecar,
+the `latest.sql.gz` symlink refreshed, and everything past the newest
+`BACKUP_KEEP` (default 14) deleted. The script refuses to keep a dump that fails
 `gzip -t` or that contains no `CREATE TABLE`/`COPY` statements.
 
-Cron on the VDI:
+**The object store.** `backups/objects/` — an rsync mirror of the RustFS volume,
+updated in place — plus `backups/objects.manifest`, a `sha256sum -c` file
+covering every byte in it, verified against the mirror before it is published.
+One copy, not one per night, and refreshed in proportion to what changed.
+
+> It used to be a nightly `tar | gzip -9` of the whole volume, which the PC then
+> re-fetched whole every night, and which nothing rotated. Measured here on
+> 297 MB of incompressible objects — photographs and H.264 — the tar cost 17.2 s
+> and produced a **300 MB** archive; gzip gains nothing on media. Fourteen of
+> those need the bucket under ~900 MB or the 30 GB disk fills. The mirror is
+> 1.7 s cold, 0.68 s idle, and one copy. `docs/DEPLOYMENT.md` §6 has the full
+> arithmetic.
+
+`BACKUP_KEEP` is **clamped below the media sweep's grace period** (30 days,
+`DETACHED_GRACE_DAYS` in `backend/src/modules/storage/media.service.ts`). A dump
+that outlives the objects its rows point at restores to broken cards. The script
+says so in the log when it clamps.
+
+Cron on the VDI — installed by `scripts/vdi-bootstrap.sh`, which must stay in
+step with this:
 
 ```cron
-# nightly dump at 03:17
-17 3 * * * cd /srv/family && ./infra/scripts/backup.sh >> /var/log/family-backup.log 2>&1
+CRON_TZ=Europe/Moscow
+# nightly dump + object mirror at 03:17
+17 3 * * * root cd /opt/family && ./infra/scripts/backup.sh >>/var/log/family-backup.log 2>&1
 # weekly proof that the dumps are actually restorable
-41 4 * * 0 cd /srv/family && ./infra/scripts/restore-check.sh >> /var/log/family-restore-check.log 2>&1
+41 4 * * 0 root cd /opt/family && ./infra/scripts/restore-check.sh >>/var/log/family-restore-check.log 2>&1
 ```
+
+`CRON_TZ` is stated rather than inherited so that "does the backup overlap the
+media sweep?" is answerable from this file. The sweep is `20 5 * * *` in
+`backend/src/core/queue/workers.ts` — 05:20 Moscow — and it is the one scheduled
+job that deletes from the volume the backup is copying. Two hours apart, and the
+mirror takes seconds. The **hourly** unclaimed-upload reaper has no window at
+all, so `backup.sh` treats rsync's exit 24 ("files vanished") as normal.
 
 ```bash
 make restore-check   # replay the newest dump into a throwaway container
@@ -294,7 +323,9 @@ PowerShell — that path is gone.
 
 **How it schedules.** A stock `instrumentisto/rsync-ssh:alpine` (25 MB —
 Alpine plus `ssh`, `scp`, `rsync`, `sha256sum`, `crond`, `tzdata`; nothing to
-build) runs busybox `crond` with one hourly entry. The hour is not the schedule.
+build) runs busybox `crond` with one hourly entry. The `rsync` in that image is
+now load-bearing rather than incidental: it is what pulls the object mirror, and
+the server needs `apt-get install rsync` to serve it. The hour is not the schedule.
 Each tick asks whether it has been ≥ `MIN_INTERVAL_HOURS` (20) since the last
 _successful_ backup, and takes one if so and it is past `PREFERRED_HOUR` (14) —
 or unconditionally past `MAX_INTERVAL_HOURS` (26), which is the "the PC was
@@ -308,27 +339,55 @@ mean waiting an hour. All the state is files on the bind mount, so `stop`/
 > healthcheck watches for a stalled schedule (`TICK_STALE_HOURS`) so the same
 > class of failure cannot hide again.
 
-**What it fetches.** Both halves — `latest.sql.gz` and `latest-objects.tar.gz`,
-which `backup.sh` always points at the same `STAMP`. Each is checked against the
-server's own `.sha256` sidecar, then `gzip -t`, then a payload check, **before**
-it is allowed to replace the existing local file. A corrupt download is deleted
-and the previous good copy is untouched.
+**What it fetches.** Both halves, and they are fetched differently because they
+are different data.
+
+The **dump** is `scp`'d whole, checked against the server's `.sha256` sidecar,
+then `gzip -t`, then a payload check — **before** it is allowed to replace the
+existing local file. A corrupt download is deleted and the previous good copy is
+untouched.
+
+The **objects** come down as an incremental `rsync` of `backups/objects/`.
+`objects.manifest` is fetched and verified against its own sidecar first, then
+rsync moves only what changed, then **every local file** is hashed against that
+manifest. Failing files are deleted and re-fetched once; a second failure stops
+the run with a banner and leaves the previous manifest in place. That last check
+is the only bit-rot detection in the system — rsync compares size and mtime, and
+rot changes neither.
 
 **Where it lands.** `%USERPROFILE%\Backups\family` by default, overridable with
-`BACKUP_DEST`. Files are named for the weekday, so the set is bounded at seven
-database files and seven avatar files that each get overwritten once a week —
-constant disk, no cleanup, and still a week of history to fall back on if the
-newest dump turns out to be bad.
+`BACKUP_DEST`.
+
+- **Database** — seven weekday files, each overwritten once a week. Constant
+  disk, no cleanup, a week of history if the newest dump turns out to be bad.
+- **Objects** — one mirror at `family-objects/`, updated in place. Anything that
+  disappears server-side is moved to `_attic/<date>/` rather than deleted, and
+  dated sets past `ATTIC_KEEP_DAYS` (30) are removed. That is what makes
+  `rsync --delete` safe to point at photographs: a server that loses its volume
+  cannot take this PC's copy with it in one night.
+
+Objects get no weekday generations, deliberately. They are immutable and
+content-addressed — a key's bytes never change, because a replacement is a new
+key — so seven generations would be seven copies of the same photographs.
 
 **Is it alive?** `docker compose -f infra/backup-pull/docker-compose.yml ps`.
-The healthcheck reports `unhealthy` if no good backup arrived in 48 h or if the
-internal schedule stopped firing. Every tick logs its decision, including
+The healthcheck reports `unhealthy` if no good dump arrived in 48 h, if the
+object mirror has not synced in 96 h, or if the internal schedule stopped firing.
+The object clause matters on its own: a dump arriving nightly while the
+photographs quietly stopped three weeks ago would otherwise read as `healthy`. Every tick logs its decision, including
 "not due", so silence means the container is down.
 
 The one-time SSH key setup — creating it, authorising it on the server, and the
 ACL that lets `familybackup` read `/opt/family/backups` without being able to
 read `.env` — is in **docs/DEPLOYMENT.md §8**, along with the full restore
-procedure for both the database and the avatars.
+procedure for both halves.
+
+> One detail of that ACL changed with the mirror and is easy to get wrong: the
+> **default** entry is now `r-x`, not `r--`. A directory needs `+x` to be
+> entered, and with `r--` inherited the account can see `objects/` and not open
+> it — the photographs stop being backed up while the database keeps arriving.
+> The file-mode mask keeps the x off files. `backup.sh` re-applies this every
+> run so an older installation heals itself.
 
 ---
 
@@ -357,6 +416,11 @@ docker compose -f infra/docker-compose.yml --env-file .env start backend       #
 
 Step 1 is not optional. Discovering the dump is corrupt _after_ step 3 is how a
 bad afternoon becomes a bad week.
+
+That restores the database only. The object store is a separate step — the
+mirror is pushed back and copied into the RustFS volume, with a `chown` to the
+RustFS uid that the old tarball did not need. Full procedure, including how to
+rehearse it on a throwaway volume, is in **docs/DEPLOYMENT.md §8**.
 
 Redis holds only BullMQ queue state (scheduled notifications, the recurrence
 materializer). It is rebuildable and is not backed up; after a restore the

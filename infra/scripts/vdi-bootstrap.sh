@@ -101,12 +101,23 @@ log "Scheduling the nightly dump"
 cat >/etc/cron.d/family-backup <<CRON
 # Nightly Postgres dump for the family app. The home PC pulls these; nothing is
 # pushed, because that PC is behind NAT and is not always on.
+#
+# 03:17 Moscow, and the timezone is written down rather than inherited from the
+# host: the media sweep runs at 05:20 Moscow (BullMQ, workers.ts) and deletes
+# objects from the same volume the backup mirrors, so "do these two windows
+# overlap" has to be answerable without running timedatectl. 2h03m apart, and
+# the mirror takes seconds.
+#
+# This time is also written in backup.sh's header and docs/DEPLOYMENT.md §8.
+# The three disagreed once (03:30 / 03:17 / 03:17); if you change one, change
+# all three.
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
-30 3 * * * root cd $APP_DIR && ./infra/scripts/backup.sh >>/var/log/family-backup.log 2>&1
+CRON_TZ=Europe/Moscow
+17 3 * * * root cd $APP_DIR && ./infra/scripts/backup.sh >>/var/log/family-backup.log 2>&1
 CRON
 chmod 644 /etc/cron.d/family-backup
-echo "cron installed: nightly at 03:30"
+echo "cron installed: nightly at 03:17 Europe/Moscow"
 
 # --------------------------------------------------------------------------
 log "Configuring the firewall"

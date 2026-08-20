@@ -70,7 +70,7 @@ function SignIn({ next }: { next: string | null }) {
 
       <CardContent className="space-y-4">
         {callbackError ? (
-          <Alert variant="destructive">
+          <Alert {...(callbackError.variant === 'destructive' ? { variant: 'destructive' } : {})}>
             <AlertTitle>{callbackError.title}</AlertTitle>
             <AlertDescription>{callbackError.text}</AlertDescription>
           </Alert>
@@ -215,6 +215,8 @@ function isKnownProvider(value: string | null): value is keyof typeof PROVIDER_N
 interface CallbackAlert {
   title: string;
   text: string;
+  /** `default` is for outcomes that are not failures — see the replay case. */
+  variant: 'default' | 'destructive';
 }
 
 /**
@@ -223,7 +225,9 @@ interface CallbackAlert {
  * `GET /api/auth/:provider/start` redirects here when the flow dies before the
  * user ever reaches the provider — which is the only chance we get to say
  * anything at all when the provider's own failure page is a bare English line
- * on its domain, as Telegram's «Bot domain invalid» is.
+ * on its domain, as Telegram's «Bot domain invalid» is. `/callback` redirects
+ * here too, for the same reason and since the same change: a top-level
+ * navigation must never render the API's error envelope into the address bar.
  *
  * A 5xx from a *named* provider is a configuration fault, not a blip, so it
  * gets copy the user can act on instead of the generic «попробуйте через
@@ -234,14 +238,26 @@ function callbackAlertFrom(params: URLSearchParams): CallbackAlert | null {
   const code = params.get('error');
   const provider = params.get('provider');
 
+  // A duplicated callback, not a failure: the state was spent by the first one.
+  // Reaching this screen at all means no session came of it, because a signed-in
+  // visitor is redirected into the app before anything here renders.
+  if (params.get('oauth') === 'replayed') {
+    return {
+      variant: 'default',
+      title: AUTH_RU.errors.replayedTitle,
+      text: AUTH_RU.errors.replayedText,
+    };
+  }
+
   if (isKnownProvider(provider) && (code === 'SERVICE_UNAVAILABLE' || code === 'INTERNAL_ERROR')) {
     const name = PROVIDER_NAMES[provider];
     return {
+      variant: 'destructive',
       title: AUTH_RU.errors.providerUnavailableTitle(name),
       text: AUTH_RU.errors.providerUnavailableText(name),
     };
   }
 
   const text = translateErrorCode(code);
-  return text ? { title: AUTH_RU.errors.formTitle, text } : null;
+  return text ? { variant: 'destructive', title: AUTH_RU.errors.formTitle, text } : null;
 }

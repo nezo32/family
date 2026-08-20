@@ -26,6 +26,7 @@ import {
 import type { MemberRow, PendingMember } from '../api';
 import { PendingMemberCard } from '../components/PendingMemberCard';
 import { MemberAdminRow } from '../components/MemberAdminRow';
+import { RejectedRequestRow } from '../components/RejectedRequestRow';
 import { ApproveRoleSheet } from '../components/ApproveRoleSheet';
 import { RejectDialog } from '../components/RejectDialog';
 
@@ -89,7 +90,18 @@ export default function MembersPage() {
   const reactivate = useReactivateMember({ onConflict, onDone: closeAll });
 
   const pending = usePendingMembers();
-  const members = useMembers();
+  /*
+   * `includeRejected` is this screen's alone.
+   *
+   * `GET /members` subtracts rejected rows for everybody by default — they are
+   * declined join requests, not people in the family, and the roster is the
+   * one query behind every picker in the app. Moderation is the exception: an
+   * admin who declined somebody by accident has to be able to see what they
+   * declined, so this call opts back in. The server still requires
+   * `member:update:any` for the opt-in, so a stale bundle asking for it from a
+   * child's session simply gets the default list back.
+   */
+  const members = useMembers({ includeRejected: true });
   const roles = useAssignableRoles();
 
   const busy = approve.isPending || reject.isPending || suspend.isPending || reactivate.isPending;
@@ -136,7 +148,16 @@ export default function MembersPage() {
    * the only place a `pending_approval` row belongs.
    */
   const memberItems = (members.data?.items ?? []).filter(
-    (member) => member.status !== 'pending_approval',
+    (member) => member.status !== 'pending_approval' && member.status !== 'rejected',
+  );
+  /*
+   * Declined requests get their own list rather than a row among «Участники
+   * семьи» — which is the complaint that started this: «впринципе не отображай
+   * таких пользователей в семье». Here they are history an admin can look at,
+   * not members with actions attached.
+   */
+  const rejectedItems = (members.data?.items ?? []).filter(
+    (member) => member.status === 'rejected',
   );
   const selfId = me?.user.id;
 
@@ -290,6 +311,27 @@ export default function MembersPage() {
                 </ul>
               </>
             )}
+          </section>
+        ) : null}
+
+        {/* ---- declined requests -------------------------------------------- */}
+        {/* Only rendered when there is something to show: an empty «Отклонённые
+          заявки» heading on a healthy family is a permanent reminder of a list
+          that does not matter. */}
+        {canReadRoster && rejectedItems.length > 0 ? (
+          <section aria-labelledby="rejected-heading" className="min-w-0">
+            <h2
+              id="rejected-heading"
+              className="mb-2 text-base font-semibold text-muted-foreground"
+            >
+              {ADMIN_RU.rejectedTitle}
+            </h2>
+            <p className="mb-2 text-sm text-muted-foreground">{ADMIN_RU.rejectedHint}</p>
+            <ul className="flex flex-col gap-2 pb-safe">
+              {rejectedItems.map((member) => (
+                <RejectedRequestRow key={member.id} member={member} />
+              ))}
+            </ul>
           </section>
         ) : null}
       </div>

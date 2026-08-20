@@ -262,13 +262,70 @@ docker image prune -af --filter "until=720h"   # monthly
 df -h /
 ```
 
-The backup script keeps the newest `BACKUP_KEEP` dumps on the server (default
-14); a family-sized dump is a few MB gzipped, so that is negligible. Note that
-it does **not** yet rotate the `*-objects.tar.gz` avatar archives — those
-accumulate until `BACKUP_KEEP` is extended to cover them.
+**Database dumps.** The backup script keeps the newest `BACKUP_KEEP` (default
+14); a family-sized dump is a few MB gzipped, so that is negligible.
+
+**Objects.** `backups/objects/` is a mirror of the RustFS volume — **one** copy,
+refreshed in place, not one per night. Budget for it as roughly the size of the
+bucket:
+
+|                    | on the VDI               |
+| ------------------ | ------------------------ |
+| the volume itself  | _S_                      |
+| `backups/objects/` | _S_                      |
+| dumps              | a few MB × `BACKUP_KEEP` |
+
+So object storage costs 2 × _S_ on a 30 GB disk, and the ceiling is _S_ ≈ 6 GB
+before it starts to hurt. Watch `du -sh backups/objects` next to `df -h /`.
+
+> **This used to be much worse, and the fix is worth knowing about.** Until
+> recently the objects were tarred whole every night into
+> `backups/<bucket>-<stamp>.tar.gz`, and — as this section used to record —
+> those archives were **never rotated**. They are now folded into the same
+> `BACKUP_KEEP`, so any left over from that era age out on their own.
+>
+> But rotation alone would not have been enough. Measured on this VDI against a
+> 297 MB volume of incompressible objects, which is what photographs and H.264
+> are: `tar | gzip -9` took 17.2 s and produced a **300 MB** archive — gzip
+> gains nothing on media, so each night's archive is the size of the whole
+> bucket. Fourteen of those need the bucket to stay under ~900 MB or the disk
+> fills and takes the entire stack with it. A single note may carry ten
+> attachments at up to 100 MiB each, so **one post can be a gigabyte**, and
+> nothing ever shrinks: a delete keeps the bytes for 30 days and a board clear
+> touches no object at all.
+>
+> The mirror is one copy instead of fourteen, and it is updated in proportion to
+> what changed rather than rewritten: the same 297 MB took 1.7 s cold and 0.68 s
+> when nothing had changed.
+
+**`BACKUP_KEEP` must stay below the media grace period.** A dump older than the
+window in which the sweep collects detached attachments restores rows whose
+objects are already gone — broken cards, discovered during a restore.
+`backup.sh` enforces this by clamping `BACKUP_KEEP` down and saying so in the
+log; it never shortens the object side, because a dump not kept costs a night of
+history while an object collected early is gone for good.
+
+> The grace period is `DETACHED_GRACE_DAYS = 30`, **hardcoded in
+> `backend/src/modules/storage/media.service.ts`**. `docs/design/DESIGN.md`
+> specifies it as `MEDIA_ORPHAN_TTL_DAYS` in `core/config.ts`, but the backend
+> does not read that variable — so setting it in `.env` moves only the backup's
+> half of the invariant. `backup.sh` therefore uses the **smaller** of the two
+> and prints a loud warning if they disagree. When the constant is promoted into
+> config, delete `MEDIA_OBJECT_GRACE_DAYS_FALLBACK` from `backup.sh`; nothing
+> else needs to change.
 
 The real consumer of disk is old image layers after many deploys —
 `docker.yml` tags by SHA, so they accumulate.
+
+**Timing.** The backup runs at **03:17 Europe/Moscow** (`CRON_TZ` is written
+into `/etc/cron.d/family-backup`, not inherited from the host) and the media
+sweep at **05:20 Europe/Moscow** (BullMQ, `backend/src/core/queue/workers.ts`;
+the backend image ships no tzdata, so `date` inside it prints UTC, but Node
+resolves `TZ` through ICU and its local time really is Moscow — checked on the
+VDI). Two hours apart, and the mirror takes seconds, so the one job that deletes
+from the volume and the one job that copies it cannot meet. The **hourly**
+unclaimed-upload reaper has no window at all; that is handled by treating
+rsync's exit 24 (“files vanished”) as normal rather than by scheduling.
 
 ---
 
@@ -307,16 +364,35 @@ scheduled task, not a script you have to remember to run. The container is up
 whenever the machine is up, and it decides for itself when a backup is due.
 
 ```
-VDI  03:17 nightly   pg_dump | gzip | sha256   ->  /opt/family/backups
-                     tar the avatar volume     ->  latest.sql.gz, latest-objects.tar.gz
+VDI  03:17 nightly   pg_dump | gzip | sha256      ->  backups/latest.sql.gz
+     (Europe/Moscow) rsync the object volume      ->  backups/objects/
+                     sha256 every file in it      ->  backups/objects.manifest
 
-PC   container       every hour: "has it been 20h since the last good backup?"
-                     if yes:  scp both files down
-                              check sha256 against the server's sidecar
-                              check the gzip
-                              check the payload is real
-                              ONLY THEN overwrite this weekday's slot
+PC   container       every hour: "is either half due?"
+       database        scp latest.sql.gz + its .sha256
+                       check sha256, check the gzip, check the payload is real
+                       ONLY THEN overwrite this weekday's slot
+       objects         scp objects.manifest + its .sha256, check that first
+                       rsync only what changed; anything that vanished
+                         server-side moves to _attic/<date>/ rather than dying
+                       check EVERY local file against the manifest
 ```
+
+**The two halves have different shapes because they are different data.** The
+database is small, changes completely every night, and gets seven weekday
+generations. The object store is large, append-only and content-addressed — a
+key's bytes never change, because a replacement is a new key. Seven generations
+of that would be seven copies of the same photographs, and re-fetching it whole
+every night is what made media unshippable in the first place. So objects get
+one mirror, kept current, plus an attic that is the bounded rotation.
+
+> **This replaced a nightly tarball, and the numbers are why.** Measured on this
+> VDI against 297 MB of incompressible objects — which is what photographs and
+> H.264 are: `tar | gzip -9` cost 17.2 s and produced a **300 MB** archive,
+> every night, transferred whole, every night, down a domestic line. The mirror
+> costs 1.7 s cold and 0.68 s when nothing changed, and transfers only what is
+> new. See §6 for the disk arithmetic that made this urgent rather than merely
+> nice.
 
 ### Set it up — one command, plus a key
 
@@ -350,23 +426,47 @@ cat ~/.ssh/family_backup.pub | ssh root@nezo.su "cat >> /home/familybackup/.ssh/
 ssh root@nezo.su "chown familybackup:familybackup /home/familybackup/.ssh/authorized_keys && chmod 600 /home/familybackup/.ssh/authorized_keys"
 ```
 
-**3. Let `familybackup` read the dumps — and nothing else.** `/opt/family` is
+**3. Let `familybackup` read the backups — and nothing else.** `/opt/family` is
 `deploy:deploy 0750`, so without this the key authenticates and then every copy
 fails with `Permission denied`. An ACL grants exactly the backups directory
 rather than putting the account in the `deploy` group, which would also hand it
-`.env`:
+`.env`. `rsync` has to exist on the server too — it is the one package this
+design needs that a stock Ubuntu does not ship:
 
 ```bash
-ssh root@nezo.su "apt-get install -y acl"
-ssh root@nezo.su "setfacl -m u:familybackup:--x /opt/family"          # traverse, not list
-ssh root@nezo.su "setfacl -m u:familybackup:r-x /opt/family/backups"  # read the dumps
-ssh root@nezo.su "setfacl -d -m u:familybackup:r-- /opt/family/backups"  # …and future ones
+ssh root@nezo.su "apt-get install -y acl rsync"
+ssh root@nezo.su "setfacl -m u:familybackup:--x /opt/family"            # traverse, not list
+ssh root@nezo.su "setfacl -m u:familybackup:r-x /opt/family/backups"    # read the dumps
+ssh root@nezo.su "setfacl -d -m u:familybackup:r-x /opt/family/backups" # …and future ones
 ```
 
-Check it landed correctly — this should list the dumps and refuse everything else:
+> **The default is `r-x`, not `r--`, and the x matters.** It used to be `r--`,
+> which worked while `backups/` held nothing but flat `.sql.gz` files. The object
+> mirror is a directory tree, and a directory needs `+x` to be entered — with
+> `r--` inherited, `familybackup` could see `objects/` and not open it, and the
+> photographs would silently stop being backed up while the database kept
+> arriving nightly.
+>
+> The x does not leak into files. Effective ACL permissions are masked by the
+> file's group mode bits, and an object is created 0644 — mask `r--` — so the
+> account gets `r--` on every file and `r-x` only on directories. Check it with
+> `getfacl` if you want to see the mask do it.
+>
+> `backup.sh` re-applies this on `backups/objects/` every run, so an installation
+> set up before the mirror existed heals itself. It is logged when it happens.
+
+**What this account can now read, and why that is not a widening.** It can read
+the object store — which is the family's photographs. It could already read every
+byte of them, because the old design handed it a tarball of the same volume. The
+access is identical; only the door changed. It still cannot read `.env`, cannot
+list `/opt/family`, and has no route to Postgres. Verify all three:
 
 ```bash
-ssh root@nezo.su "su -s /bin/sh familybackup -c 'ls /opt/family/backups; ls /opt/family'"
+ssh root@nezo.su "su -s /bin/sh familybackup -c '
+  ls /opt/family/backups             # works
+  ls /opt/family/backups/objects     # works
+  cat /opt/family/.env               # Permission denied
+  ls /opt/family                     # Permission denied'"
 ```
 
 **4. Restart and watch it work:**
@@ -386,22 +486,46 @@ Explorer, not a Docker volume. Override it with `BACKUP_DEST` in a `.env` beside
 Backups\family\
   family-db-mon.sql.gz            the database, one file per weekday
   family-db-mon.sql.gz.sha256
-  family-objects-mon.tar.gz       the avatars, same weekday slot
-  family-objects-mon.tar.gz.sha256
   …tue, wed, thu, fri, sat, sun
+
+  family-objects\                 the object store, ONE mirror, not per-weekday
+    family-media\avatars\…            every avatar
+    family-media\media\…              every photo, video and voice note
+    .rustfs.sys\…                     what makes it a RustFS disk on restore
+  family-objects.manifest         sha256 of every file above, as pulled
+
+  _attic\2026-08-14\              what disappeared server-side, by date
   LATEST.txt                      what was pulled last, and when
   _state\status.txt               last run, last result, last success
-  _log\pull-2026-08.log           one line per decision, kept per month
 ```
 
-**New backups overwrite old ones.** The filename is the weekday, so the set is
-exactly seven database files and seven avatar files, each replaced once a week.
-Disk use is constant; there is no cleanup to remember.
+**Rotation, and what "new backups overwrite old ones" means for each half.**
 
-Seven rather than one is deliberate. With a single overwritten file, the moment
-a dump arrives truncated — or the database was already corrupt when it was
-taken — the last good copy is gone and the backup has destroyed the thing it
-exists to protect. Set `GENERATIONS=1` if you truly want exactly one file.
+- **Database** — seven weekday files, each replaced once a week. Constant disk,
+  a week of history, nothing to clean up.
+- **Objects** — one mirror, updated in place. Its size tracks the bucket's, so
+  it does not grow except when the family adds photographs. Anything the server
+  no longer has is **moved into `_attic\<date>\`, not deleted**, and dated sets
+  older than `ATTIC_KEEP_DAYS` (30) are removed. That is the bound.
+
+The attic is what makes `rsync --delete` safe to point at irreplaceable data. A
+server that loses its volume — a wipe, a bad restore, ransomware — cannot take
+this PC's copy with it in one night; it has to stay broken for a month first.
+And if more than `ATTIC_ALERT_FILES` (100) objects vanish in one run, the log
+says so in a banner, because a family does not delete four hundred photographs
+in a day.
+
+> The attic also collects RustFS's own housekeeping — `.usage-cache.bin` and
+> friends get rewritten constantly, so their superseded versions land there. A
+> few KB a night, capped by the same 30 days. If you see the attic holding
+> nothing but `.rustfs.sys` paths, nothing has been lost.
+
+> Seven weekday **dumps** rather than one is deliberate: with a single
+> overwritten file, the moment a dump arrives truncated — or the database was
+> already corrupt when it was taken — the last good copy is gone and the backup
+> has destroyed the thing it exists to protect. `GENERATIONS=1` if you truly want
+> one file. It has no effect on objects, which need no generations: their content
+> never changes under a given key.
 
 ### When it runs
 
@@ -421,15 +545,32 @@ three days — the backup happens within an hour of it next coming on, rather th
 being skipped until tomorrow. Container start counts as a wake-up too, so
 switching the machine on triggers the check immediately, not up to an hour later.
 
+**The object store is asked separately**, against `OBJECTS_MIN_INTERVAL_HOURS`
+(also 20), and a tick does something if _either_ half is due. That matters even
+when both numbers are the same: with one shared gate, a dump that stopped being
+due for any reason would take the photographs down with it, and setting the
+object interval shorter than the dump's would do nothing at all.
+
+The default is the same daily rhythm rather than the weekly one originally
+proposed. Weekly was the right answer when a run meant re-fetching the whole
+tarball; now that the transfer is incremental, the only thing a longer interval
+buys is up to a week of new photographs living nowhere but the VDI. Set it to
+`168` on a metered connection, knowing that is the trade.
+
 ### Is it working?
 
 ```bash
 docker compose -f infra/backup-pull/docker-compose.yml ps
 ```
 
-`Up … (healthy)` means a good backup arrived within the last 48 hours **and**
-the internal schedule is still firing. `(unhealthy)` says which of the two
-broke. This is the check that does not require you to read anything.
+`Up … (healthy)` means three things at once: a good dump arrived within the last
+48 hours, the object mirror synced within the last 96 (`OBJECTS_STALE_HOURS`),
+and the internal schedule is still firing. `(unhealthy)` says which one broke.
+This is the check that does not require you to read anything.
+
+The object clause is not decoration. Without it, a dump arriving nightly while
+the photographs quietly stopped three weeks ago would show `healthy` throughout —
+and the photographs are the half that cannot be retyped.
 
 ```bash
 docker compose -f infra/backup-pull/docker-compose.yml logs --tail 30
@@ -438,32 +579,61 @@ type %USERPROFILE%\Backups\family\_state\status.txt
 
 Every run logs its decision — including "not due", so silence means the
 container is not running, not that everything is fine. Failures that need you
-(a refused key, a corrupt download) are printed as a hash-bordered banner rather
-than a line you can scroll past.
+(a refused key, a corrupt download, a mirror that will not verify) are printed
+as a hash-bordered banner rather than a line you can scroll past.
 
 ### Why a separate `familybackup` user
 
-The pull account can read the dump directory and nothing else — not `.env`, not
-even a listing of `/opt/family`. If the PC is ever compromised, the key it holds
-is worth far less than a root key, and the VDI also hosts your WireGuard setup,
-which has nothing to do with this app.
+The pull account can read the backups directory and nothing else — not `.env`,
+not even a listing of `/opt/family`. If the PC is ever compromised, the key it
+holds is worth far less than a root key, and the VDI also hosts your WireGuard
+setup, which has nothing to do with this app.
 
 ### Verify it, because an unverified backup is not a backup
 
-Three things are checked on arrival, **before** the new file is allowed to
-replace last week's copy in that slot:
+**The dump.** Three things are checked on arrival, **before** the new file is
+allowed to replace last week's copy in that slot:
 
 1. the sha256 matches the sidecar the server wrote next to the dump,
 2. the gzip stream decompresses cleanly end to end,
-3. the contents are real — `CREATE TABLE`/`COPY` statements in the dump, actual
-   entries in the avatar archive.
+3. the contents are real — `CREATE TABLE`/`COPY` statements are present.
 
 If any of them fails, the download is deleted, the existing local backup is left
-exactly as it was, and the run is retried on the next tick. A corrupt fetch can
-never take out a good copy.
+exactly as it was, and the run is retried on the next tick.
 
-Beyond that, actually restore one now and then. This runs on **your PC**, on the
-file the container pulled:
+**The objects.** Stronger, because there is no single file to checksum:
+
+1. `objects.manifest` is fetched first and checked against its own `.sha256`, so
+   a truncated file list can never be read as "the mirror is missing things";
+2. rsync transfers only what changed, writing each file to a temporary name and
+   renaming it into place only when complete — an aborted transfer leaves every
+   already-good file untouched, which is a **finer**-grained guarantee than the
+   tarball's all-or-nothing;
+3. then **every local file** is hashed and compared against the manifest. Not
+   just the new ones.
+
+That third step is the one worth understanding. rsync decides what to re-send by
+size and mtime, and bit rot changes neither — so a photograph that decays on this
+PC would never be looked at again, and the corruption would sit in the backup
+until somebody tried to open it. The manifest check catches exactly that, and
+when it does, the failing files are deleted and re-fetched once. If the second
+attempt still fails, the run stops, the previous manifest stays in place, and you
+get a banner: at that point the drive holding `%USERPROFILE%\Backups` is the
+suspect, because the server checks its own copy the same way before publishing.
+
+> Verifying everything costs about two seconds per 100 MB. It is deliberately
+> not optimised down to "only what changed", because doing so would remove the
+> only bit-rot detection this system has.
+
+**On the server**, `backup.sh` does the mirror image of this: it verifies the
+mirror against the manifest it has just written, and compares every object key
+against the previous night's hashes. Objects are immutable, so a key whose
+content changed cannot have come from the application — it re-copies those files
+from the volume and reports whether that fixed it, which distinguishes "the
+mirror rotted" from "something rewrote an object in the volume".
+
+Beyond all that, actually restore one now and then. This runs on **your PC**, on
+the file the container pulled:
 
 ```bash
 ./infra/scripts/restore-check.sh "$HOME/Backups/family/family-db-thu.sql.gz"
@@ -474,7 +644,14 @@ the sha256 matches, the gzip is intact, the schema is there, the drizzle
 migration ledger survived, the extensions came back and `users` is non-empty.
 It never touches anything real.
 
-> **Pass the filename.** Run with no argument and it picks the
+For the objects, the equivalent one-liner needs no server and no container —
+the manifest is an ordinary `sha256sum -c` file:
+
+```bash
+cd "$HOME/Backups/family/family-objects" && sha256sum -c ../family-objects.manifest
+```
+
+> **Pass the filename.** Run `restore-check.sh` with no argument and it picks the
 > lexicographically last `*.sql.gz`, which for weekday slots is `wed` — not the
 > newest. `LATEST.txt` names the one that was pulled most recently.
 >
@@ -516,36 +693,90 @@ gzip -cd /tmp/family-db-thu.sql.gz | \
 docker compose -f infra/docker-compose.yml --env-file .env start backend
 ```
 
-**4. Restore the avatars too, or every member gets a broken face.**
-`users.avatar_url` points into the RustFS bucket; a database restored without it
-keeps the rows and loses the images, with no way to tell whose photo was whose.
+**4. Restore the objects too, or every face and every photograph is gone.**
+`users.avatar_url` and every media attachment point into the RustFS bucket; a
+database restored without it keeps the rows and loses the images, with no way to
+tell what was there.
+
+This is a **directory**, not a tarball — that changed when the nightly tar was
+replaced by an incremental mirror. It is pushed back up with the same `rsync`
+the pull uses, from inside the same container, so no extra tooling is needed on
+either end:
 
 ```bash
-scp -i ~/.ssh/family_backup "$HOME/Backups/family/family-objects-thu.tar.gz" root@nezo.su:/tmp/
+# from your PC — pushes the mirror to a staging directory on the server
+docker exec family-backup-pull sh -c '
+  . /etc/backup-pull.env
+  rsync -rlt --delete --no-perms --chmod=D755,F644 \
+    -e "ssh -o BatchMode=yes -o UserKnownHostsFile=/backups/_state/known_hosts -i /root/.ssh/backup_key" \
+    /backups/family-objects/ familybackup@nezo.su:/tmp/restore-objects/'
+```
 
+```bash
+# on the server
 ssh root@nezo.su
 cd /opt/family
 VOL=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' \
       "$(docker compose -f infra/docker-compose.yml --env-file .env ps -q rustfs)")
 
 docker compose -f infra/docker-compose.yml --env-file .env stop rustfs
-docker run --rm -v "$VOL:/data" -v /tmp:/backup:ro postgres:17.7-alpine \
-  sh -c 'rm -rf /data/* /data/..?* /data/.[!.]* 2>/dev/null; tar -xzf /backup/family-objects-thu.tar.gz -C /data'
+
+docker run --rm -v "$VOL:/data" -v /tmp/restore-objects:/restore:ro alpine sh -c '
+  rm -rf /data/* /data/..?* /data/.[!.]* 2>/dev/null
+  cp -a /restore/. /data/
+  mkdir -p /data/.rustfs.sys/tmp /data/.rustfs.sys/multipart
+  chown -R 10001:10001 /data
+  chmod 750 /data'
+
 docker compose -f infra/docker-compose.yml --env-file .env start rustfs
 ```
 
-The archive stores paths relative to the volume root (`./family-media/…`), so it
-extracts into any volume, not only one called `/data`. It is a plain `tar.gz` —
-`tar -tzf` lists it, no special tooling.
+Three details in that container command are load-bearing, and each was found by
+rehearsing rather than by reading:
+
+- **`chown -R 10001:10001`.** RustFS runs as uid 10001 and the mirror lives on a
+  Windows filesystem, which does not carry unix ownership — so the restored tree
+  arrives owned by root and RustFS cannot write to it. The old tarball preserved
+  uids and hid this; the mirror cannot, so it is done explicitly. `chmod 750` on
+  the root matches what the image ships.
+- **`mkdir -p .rustfs.sys/tmp .rustfs.sys/multipart`.** Those are staging
+  directories, deliberately excluded from the mirror because RustFS implements a
+  delete by moving the object's payload into `.rustfs.sys/tmp/.trash/` — left in,
+  the backup would keep copying deleted photographs. They are recreated empty.
+- **The paths are relative to the volume root** (`family-media/…`,
+  `.rustfs.sys/…`), so this restores into any volume, whatever it is called.
+
+Then check it actually came back, rather than assuming:
+
+```bash
+docker compose -f infra/docker-compose.yml --env-file .env exec rustfs \
+  curl -fsS -o /dev/null -w 'health: %{http_code}\n' http://127.0.0.1:9000/health
+docker run --rm -v "$VOL:/data:ro" alpine \
+  sh -c 'find /data/family-media -name xl.meta | wc -l'   # object count
+```
+
+> **Rehearse this on a throwaway volume, not on production.** Every command
+> above works unchanged with `docker volume create family_restore_rehearsal` in
+> place of `$VOL` and a scratch `rustfs/rustfs:1.0.0-rc.2` container pointed at
+> it. That is how this procedure was last proven: the mirror was pushed back, a
+> fresh RustFS booted on it and answered `health: 200`, and an avatar fetched
+> back out through the S3 API was byte-identical to the live one.
 
 **5. Redis is not backed up and does not need to be.** It holds only BullMQ
 queue state; the nightly job re-materializes the rolling recurrence window after
 a restore.
 
+**6. If you only need one photograph back**, do not restore anything. The mirror
+is an ordinary directory tree — the object is at
+`family-objects\family-media\<key>\xl.meta`, and for anything larger than a few
+KB the payload is the `part.1` file in the directory beside it. Copy it out and
+be done.
+
 ### What is and is not covered
 
 Covered: the entire Postgres database — every task, event, goal, list, message
-and account — and the avatar objects.
+and account — and every object in the bucket: avatars, photographs, video and
+voice notes.
 
 **Not covered:** the `.env` file. It lives only on the server, it is the one
 thing that is not in git, and losing `COOKIE_SECRET` invalidates every calendar

@@ -13,7 +13,6 @@ import { BottomTabBar } from './BottomTabBar';
 import { DesktopSidebar } from './DesktopSidebar';
 import { TopAppBar } from './TopAppBar';
 import { PageSlotsContext, usePageSlotsHost } from './page-slots';
-import { useViewportInsets } from './viewport-insets';
 import { SHELL_CONTAINER, SHELL_GRID, SHELL_GUTTER, SHELL_SIDE } from './measures';
 
 /**
@@ -71,14 +70,6 @@ export function AppShell() {
    * until somebody happened to open the shopping list.
    */
   useShoppingSync();
-
-  /**
-   * Publishes where the bottom of the screen actually is while — and after —
-   * the software keyboard is up on iOS. A strict no-op on every browser that
-   * is behaving; see `viewport-insets.ts` for the two WebKit defects it
-   * measures around and why both corrections are absent by default.
-   */
-  useViewportInsets();
 
   // Times and dates are rendered in the family timezone, not the device one (D2).
   useEffect(() => {

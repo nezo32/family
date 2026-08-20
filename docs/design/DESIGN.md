@@ -1,7 +1,10 @@
 # Design specification — «Наша семья»
 
-Status: **binding for frontend work.** Read with `docs/DECISIONS.md` (D5, D7),
-`docs/architecture/frontend.md` and `docs/research/ios-pwa-push.md` §8–§9.
+Status: **binding for frontend work.** Read with `docs/DECISIONS.md`
+(D5, D7, **D13–D15**), `docs/architecture/frontend.md` and
+`docs/research/ios-pwa-push.md` §8–§12. §D7.14 additionally carries iOS media
+claims verified from WebKit source on **2026‑08‑20**; re-verify before trusting
+them in a year.
 
 This document is the design direction and the implementable spec. It does not
 contain application code. Where it names a file, that is the file to change.
@@ -856,22 +859,22 @@ stream a stream:**
 - author, time, content, reactions and comments inline on every card, in that
   order, at the same coordinates on every card type;
 - a persistent, obvious way to add something, at the top of the stream;
-- media given the full width of the card, edge to edge on a phone;
+- media given the full width of the card, edge to edge on a phone (§D7.14);
 - paged loading that continues as you scroll.
 
 **Refused, because they are the scoreboard this project spent the day removing,
 or because they are engineering for a goal a family does not share:**
 
-| Convention                                 | Why not                                                                                                                              |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Like counts                                | Six people. A «3» under Мама's note beside a «1» under Лизы's is a comparison, and in a feed those two cards are adjacent. See D7.7. |
-| Follower counts, «в сети», last-seen       | There are six of them and they live together.                                                                                        |
-| Algorithmic or "recommended" ordering      | The clock is a rule a nine-year-old can hold in their head. An algorithm is a thing the app does to you.                             |
-| Stories                                    | A 24-hour expiry is an urgency mechanic. Pins already expire, by a date somebody chose.                                              |
-| Infinite scroll                            | Bounded instead (D7.9). Infinite scroll is engineered to keep you there; nothing in a family noticeboard wants that.                 |
-| An unread count on the «Стена» tab         | A number that rises until you clear it is the purest form of the obligation the board existed to prevent. **Never add one.**         |
-| Typing indicators, read receipts, presence | Chat furniture. Their absence is what keeps «ок» out of the stream.                                                                  |
-| Share / repost                             | There is one audience and everybody is already in it.                                                                                |
+| Convention                                 | Why not                                                                                                                                                                                                                                                                 |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Like **counts** — the digit, not the like  | The like itself is built, as one tap (D7.7a). What is refused is the numeral: six people, and a «3» under Мама's note beside a «1» under Лизы's is a comparison, and in a feed those two cards are adjacent. The faces say it better and they say **who** (D7.7b, D14). |
+| Follower counts, «в сети», last-seen       | There are six of them and they live together.                                                                                                                                                                                                                           |
+| Algorithmic or "recommended" ordering      | The clock is a rule a nine-year-old can hold in their head. An algorithm is a thing the app does to you.                                                                                                                                                                |
+| Stories                                    | A 24-hour expiry is an urgency mechanic. Pins already expire, by a date somebody chose.                                                                                                                                                                                 |
+| Infinite scroll                            | Bounded instead (D7.9). Infinite scroll is engineered to keep you there; nothing in a family noticeboard wants that.                                                                                                                                                    |
+| An unread count on the «Стена» tab         | A number that rises until you clear it is the purest form of the obligation the board existed to prevent. **Never add one.**                                                                                                                                            |
+| Typing indicators, read receipts, presence | Chat furniture. Their absence is what keeps «ок» out of the stream.                                                                                                                                                                                                     |
+| Share / repost                             | There is one audience and everybody is already in it.                                                                                                                                                                                                                   |
 
 > **Rule.** Any number rendered on Стена must be the **only** way to say the
 > thing it says. A count of replies on a thread you are about to open passes —
@@ -1059,11 +1062,15 @@ is what `CommentThread` already renders. Two stacked rows of chrome per card is
 - The body keeps `select-text` and `-webkit-touch-callout: default` while the
   card as a whole is `.no-callout` — the address and the time are the things
   people actually copy, and the long-press belongs to the action sheet.
-- **Media has no contract today.** `createPostSchema` is `title` / `body` /
-  `pinnedUntil` and nothing else. When an image is added, its slot is here: full
-  card width (edge-to-edge below `sm`), `aspect-ratio` boxed from
-  server-supplied dimensions so nothing reflows on load, `max-height: 60dvh`,
-  radius 0 below `sm` and 8 above. Do not add it by hanging a URL off `body`.
+- **The media slot is here**, between the body and the foot line, and it is now
+  specified in full: §D7.14. Full card width (edge-to-edge below `sm`),
+  `aspect-ratio` boxed from server-supplied dimensions so nothing reflows on
+  load, `max-height: 60dvh`, radius 0 below `sm` and 8 above. Never a URL hung
+  off `body`: `attachmentIds` on the way in, an `attachments` array on the way
+  out (§D7.14.10).
+- **A card may have media and no text.** `body` stops being required when an
+  attachment is present, and nothing is drawn in place of the missing sentence —
+  no «без описания», no placeholder. §D7.14.4 draws it.
 
 ##### Системный пост
 
@@ -1136,78 +1143,277 @@ produces twenty near-identical muted lines and the announcement about Sunday sit
 below all of them. That is exactly the burial the board's ordering prevented, and
 the digest is what replaces it.
 
-#### D7.7 Reactions — faces, never digits
+#### D7.7 Лайк и реакции — one control, and no digit on it
 
-This is the decision the hard constraint is most likely to be lost through, so it
-is made explicitly rather than inherited.
+The owner asked for likes:
 
-On a board a per-note count was defensible: it belonged to a note rather than to
-a person, and notes were grouped by kind. **In a feed that argument weakens**,
-and it weakens because of this very redesign: cards by different authors are now
-adjacent, in one column, with the count at a fixed position on every card. «❤️ 3»
-under Мама's note sitting 120px above «❤️ 1» under Лизы's is a comparison the
-reader performs without any effort at all, and the child reading the smaller
-number learns the same wrong thing D5 removed the points to prevent.
+> «ставить лайки на посты и сообщения в обсуждениях»
 
-The alternative is not "no signal". With six people in the family the useful fact
-was never the quantity — it is **who**.
+and named the two products a like comes from:
 
-> **Rule.** A reaction renders as its emoji plus the **discs of the people who
-> used it**. No digit anywhere: not on the chip, not in a tooltip, not in a
-> `title`, not in an `aria-label`.
+> «мы делаем чтото типо Instagram или даже более похожее Threads»
+
+Both of those draw a like as a **number under a photo**. This project spent the
+whole of 20 August removing every accumulating per-person number in the app —
+points, streaks, kudos totals, the weekly load bar, the `fairness` object on the
+dashboard, the digest's «Вы закрыли N дел» — on the owner's own instruction that
+_«the family members will compete for points thats not good»_. So the request
+and the constraint meet here, and this section resolves it explicitly rather
+than letting an implementer settle it by picking a component.
+
+Two questions, in order, because the second only makes sense after the first.
+
+##### D7.7a Is a like a different thing from the emoji reaction? No — it is the ❤️ reaction, promoted to one tap.
+
+Read literally, the owner's sentences name the two separately: «добавлять
+реакции на сообщения в обсуждениях» in one clause, «ставить лайки на посты и
+сообщения» in the next. The natural reading of that is not "build two systems" —
+it is "I want the one-tap heart _and_ the other faces", which is exactly how
+Instagram, Threads, VK and Telegram all feel from the outside: a heart you hit
+without thinking, and a menu for everything else.
+
+Building it as two systems is the mistake available here. It means two rows of
+state, two endpoints, two optimistic patches that can disagree, a card where ❤️
+appears twice — once as _the_ like and once inside the picker — and the
+permanent question of whether a heart and a ❤️ reaction from the same person are
+one act or two. Nobody in this family would ever be able to say which.
+
+The opposite failure is just as available. Leaving the picker as the only door
+makes a like cost **two taps and a popover**, and a like that costs a popover is
+not a like. The previous pass made that worse than it sounds: it specified that
+a chip with nobody on it is **not drawn at all**, so on a fresh card the only
+thing on the foot line is `☺+`. There is no heart on screen to press.
+
+> **Rule.** A like **is** the ❤️ reaction. One `reactions` row, one idempotent
+> toggle endpoint, one optimistic patch — nothing new in the schema, nothing new
+> in the contract, no second table and no `likes` count column. What changes is
+> the **drawing**: the ❤️ chip is rendered on every card and every comment
+> **whether or not anybody has used it** — an outline heart, `aria-pressed="false"`,
+> 44px, one tap. Every other emoji still appears only once somebody has used it.
 
 ```
-❤️ (М)(Л)   👍 (П)   ☺+
+♡   ☺+                                            Обсудить      ← nobody yet
+❤️ (М)(Л)   👍 (П)   ☺+                     Обсуждение · 3      ← after
 ```
 
-- Each chip is a 44px toggle: the emoji, then that emoji's reactors in roster
-  order — `MemberDiscGroup` at `size="sm"` with **`max` set to the family size, so
-  «+N» never renders**. Six people is the bound that makes this work: the worst
-  case is five emoji with one disc each, ≈260px, one line at 358px. This design
-  does not generalise past a household, and it does not have to. Deciding which
-  social conventions are cargo _is_ noticing which ones only exist because the
-  audience is unbounded.
-- The accessible name is exactly what is drawn: «❤️ — Мама, Лиза». `aria-pressed`
-  carries whether the reader is one of them.
-- Nobody yet: the chip does not exist. Only the `☺+` picker is drawn, keeping its
-  «Добавить реакцию» label.
-- Reacting needs `kudos:give`. A reader without it (a `guest`) gets the chips and
-  discs as **static text, not disabled buttons** — a control that can be focused
-  and pressed to no effect is worse than no control.
-- The toggle stays optimistic with rollback; the endpoint is idempotent and
-  answers with the fresh summary, so an offline double-tap converges rather than
-  oscillating.
+- The heart is the **first** chip, always, at the same x on every card. That
+  fixed position is what makes it a control you learn once. It is also, in the
+  next subsection, exactly what would make a digit dangerous.
+- `☺+` keeps its «Добавить реакцию» label and its popover, and the popover still
+  contains ❤️ with `aria-pressed` set. The promoted chip is a **shortcut, not an
+  exclusion**: a member who reaches for the picker must not find the heart
+  missing from it and conclude the app has two kinds of heart.
+- `REACTION_EMOJI` already leads with ❤️ in `features/wall/locale.ts`. That order
+  becomes load-bearing rather than incidental: `REACTION_EMOJI[0]` **is** the
+  like. Export it as `LIKE_EMOJI` from `@family/shared` so the client, a future
+  digest and any future notification rule cannot drift apart on what «лайк»
+  means.
+- **Double-tap-the-photo-to-like is not added.** §G1 requires every gesture to
+  have a visible twin; the twin here is a heart that is now permanently on
+  screen, so the gesture buys nothing. And a double-tap on a photo already means
+  "zoom" on every operating system in this family.
 
-**Contract gap.** `reactionSummarySchema` carries `emoji` / `count` / `reacted`
-and no reactor ids. Until it carries `userIds`, the chip renders **the emoji
-alone**, filled when the reader reacted — and still no digit. `reactorLabel()` in
-`features/wall/locale.ts` is the single function that changes when the ids
-arrive; its own doc comment already says so.
+##### D7.7b Does a like show a number? No — and the number is not withheld, it is drawn as faces.
 
-`wall.test.tsx` asserts that a rendered subtree contains no per-person digit.
-Extend that assertion to the reaction row. It is the thing that stops this
-creeping back in a year, and a screen-reader-only regression is exactly how it
-crept back last time — a load bar reading «40 % (своя доля 33 %)» aloud while
-drawing no numbers at all.
+The previous pass's argument still holds, and the feed strengthened it rather
+than weakening it: cards by different authors are now adjacent, in one column,
+with the foot line at a fixed position on every card. «❤️ 3» under Мама's note
+sitting 120px above «❤️ 1» under Лизы's is a comparison the reader performs for
+free, and the child reading the smaller number learns the thing D5 removed the
+points to prevent. A like count is not a per-person total — but on Стена every
+card has exactly one author whose face sits ~100px above the number, so in
+practice it is read as one.
 
-#### D7.8 Comments
+That argument is inherited. Here is the one that actually settles it, and it is
+why this is not a refusal of what the owner asked for:
 
-Unchanged in kind, deliberately: comments are the one place on Стена where a text
-field is allowed to exist, and it appears only inside a thread somebody opened.
-Closed is the default, and closed is what the feed looks like.
+> **In a family of six, faces are not _less_ information than a count. They are
+> strictly more, at the same width.** «❤️ (М)(Л)» says _two_ — the reader can see
+> two discs — and it also says _which two_. The digit adds exactly one property
+> to the drawing: it puts a comparable quantity at a fixed x-coordinate on every
+> card in a single column. That property is the entire harm, and it is the only
+> thing the digit contributes.
 
+So the like the owner asked for gets built. One tap, a heart, where Instagram
+puts it, optimistic and instant, and it tells you who. The count is not hidden
+behind a tap or a tooltip — it is on the card, rendered as people. What is not
+drawn is the numeral.
+
+> **Rule.** No digit on a like or a reaction, anywhere: not on the chip, not
+> beside it, not in a `title`, not in an `aria-label`, not in the accessible
+> name, not on hover, not in the weekly digest, not in a push. `MemberDiscGroup`
+> renders with `max` set to the family size so «+N» never appears — the same
+> trick, for the same reason, as the four-attachment cap in §D7.14.
+
+**This clarifies the scoreboard rule for a new surface. It does not narrow it.**
+D5 forbids _a number attached to a person that goes up when they do something_.
+A like count is a per-object quantity that never totals, so a purely literal
+reading of D5 would have permitted it. It is refused anyway, on the adjacency
+argument above — a **separate** argument, already recorded in D13 for reactions,
+which likes now inherit unchanged. `DECISIONS.md` **D14** says exactly that, in
+those words, because the next reader must not conclude that some previously
+legal class of number has just been outlawed, and must equally not conclude that
+a fresh coat of paint on a number makes it legal.
+
+**Consequence of getting it wrong.** The digit arrives looking like a two-line
+change to one component — and it is one. `reactionSummarySchema.count` is
+already on the wire (it is `userIds.length`, kept for the OpenAPI surface and
+for consumers that are not this screen). Rendering it is a single JSX
+expression. That is precisely why this rule is written at the level of the drawn
+pixel rather than at the level of the contract: the contract cannot stop it, and
+a code review six months from now will not remember why it should.
+
+##### D7.7c The one thing that is the owner's to decide, and what it costs either way
+
+This is a design call made on a design argument, and it is honest to say that
+the owner named two products where the number is visible. If they look at the
+built screen and say _«а где цифры?»_, that is not a bug report to argue with —
+it is the answer to a question this document could not answer on their behalf.
+
+So the question is posed once, with both consequences priced.
+
+| Option                             | What the family sees                      | What it costs to change afterwards                                                                                                                                                                | If the choice was wrong                                                                                               |
+| ---------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| **A — faces. This spec. Ship it.** | `❤️ (М)(Л)` — who, and therefore how many | **One component.** `count` is already on the wire; drawing it is a JSX expression in `ReactionBar.tsx` plus one deleted assertion in `wall.test.tsx`.                                             | The owner waits a day and gets digits.                                                                                |
+| **B — digits.**                    | `❤️ 3` at a fixed position on every card  | **Not one component.** D5's argument has to be narrowed in writing, `wall.test.tsx`'s no-digit assertion deleted, and the boundary that has held all day redrawn from scratch by whoever is next. | The family has the comparison, and the guard that was catching this class of regression is gone rather than adjusted. |
+
+The asymmetry is the whole reason A is the default: **pick the option whose
+reversal is cheap**, ship it, and let the owner judge a real screen — a far
+better input than a paragraph in a design document. If they choose B, D14 names
+exactly which lines move, and names the five invariants that survive B
+regardless:
+
+1. no per-person totals, anywhere, under any heading;
+2. no ordering or ranking by likes, and no «самое популярное»;
+3. no like count in the weekly digest or in any notification;
+4. no like count on a tab, a badge or the app icon;
+5. no likes on a **person** — only on a post or a comment.
+
+##### D7.7d Mechanics
+
+- **Permission.** Liking and reacting need `kudos:give`. A reader without it (a
+  `guest`) gets the heart and the discs as **static text, not disabled buttons** —
+  a control that can be focused and pressed to no effect is worse than no
+  control. Unchanged.
+- **Optimism.** The toggle stays optimistic with rollback; the endpoint is
+  idempotent and answers with the fresh summary, so an offline double-tap
+  converges rather than oscillating. What changes is the load: a heart at a fixed
+  position is tapped far more often than a picker is opened. D12's rule that
+  **the change feed never invalidates while a mutation is in flight** is what
+  stops a like flickering off and back on; it was written for the shopping tick,
+  and this is now its second-heaviest user.
+- **A like raises no notification. Ever.** Not a push, not a Telegram message,
+  not an in-app inbox row. Six people, a one-tap control, and
+  `docs/architecture/notifications.md` already names notification flood as the
+  thing that kills these apps. A **comment** notifies the note's author; a like
+  does not. This is the rule most likely to be added later by accident, because
+  every social product has it.
+- **Live sync.** A like is a write under the `wall` prefix, which `ROUTE_DOMAINS`
+  already covers. No new domain, no new mapping, nothing to change in D12.
+- **The test.** `wall.test.tsx` already asserts that a rendered wall subtree
+  contains no per-person digit. Extend it to the always-drawn heart, the comment
+  foot line (§D7.8), and every `aria-label` and `title` in the subtree rather
+  than only its visible text — a screen-reader-only regression is exactly how
+  this crept back last time, when a load bar read «40 % (своя доля 33 %)» aloud
+  while drawing no numbers at all.
+
+#### D7.8 Обсуждения — the thread, and the two things the owner added to it
+
+The owner asked for two changes inside a discussion:
+
+> «в обсуждениях должна быть возможность делать то же самое + добавлять реакции
+> на сообщения в обсуждениях»
+
+— the same media as on a post, and reactions on individual messages. Both are
+built. Everything the thread already refused stays refused, and the reason is
+that both additions push in the same direction: **towards a messenger**, which is
+the one thing this screen exists not to be.
+
+**What does not change, and now matters more.**
+
+- Comments are the one place on Стена where a text field is allowed to exist,
+  and it appears only inside a thread somebody deliberately opened. Closed is the
+  default, and closed is what the feed looks like.
 - Foot-line toggle: «Обсудить» when empty, «Обсуждение · 3» when not. **This
   count survives the D7.2 rule** because it is the only way to say the thing: it
   describes the object you are about to open, it is not attached to a person, and
   nothing sorts by it. Without it every card looks identical and a live
   conversation is invisible.
-- **No inline "last comment" preview**, though VK and Instagram both have one. It
-  is the convention that most turns a feed into a chat: the preview _is_ a reply,
-  a visible reply invites a reply, and now the stream is a conversation with a
-  scroll bar. The thread is one tap away and that is enough.
-- Comments fetch only when a thread opens, so a feed page of fifteen cards fires
-  one request and not fifteen.
-- No typing indicator, no read receipt, no threads of threads.
+- **No inline "last comment" preview**, though VK, Instagram and Threads all
+  have one. It is the convention that most turns a feed into a chat: the preview
+  _is_ a reply, a visible reply invites a reply, and now the stream is a
+  conversation with a scroll bar. The thread is one tap away and that is enough.
+  A media attachment makes this worse, not better — a thumbnail preview under
+  every card is a second feed inside the first one.
+- Comments fetch only when a thread opens, so a page of fifteen cards fires one
+  request and not fifteen.
+- No typing indicator, no read receipt, no presence, no threads of threads.
+
+##### D7.8a Reactions and the like on a message
+
+`reactions` is already polymorphic and `commentResponseSchema` already carries a
+`reactions` array, so the data has been there the whole time. What was missing
+was the drawing, and the drawing is the hard part: a comment is a **row inside a
+card**, and the post's foot line — heart, up to four more chips, a picker, and a
+thread toggle — is 44px of chrome that would land under every message. Five
+messages in a thread is 220px of controls under 5 lines of text.
+
+> **Rule.** A comment's foot is **one 44px row with two things on it**: the ❤️
+> chip with its reactors' discs, and a `⋯`. Any other emoji somebody has used
+> appears on the same row, after the heart. There is **no `☺+` picker on a
+> comment** — the picker lives inside the `⋯` sheet.
+
+```
+(Л) Лиза · 12 минут назад
+    и я тоже так думаю
+    ❤️ (М)                                                    ⋯
+```
+
+- `⋯` opens the comment's `ActionSheet`: «Поставить реакцию» (which opens the
+  same emoji picker the post uses), «Удалить» where the reader holds
+  `comment:delete:own` / `comment:delete:any`. **Long-press opens the identical
+  sheet**, built from one list, so the two doors cannot drift (§G5).
+- This is what keeps §G1 intact. The picker is reachable by a **visible** control
+  and by a gesture, never by the gesture alone.
+- The foot row is drawn only when the reader may react **or** somebody already
+  has. A guest reading a thread of plain messages sees no control row at all,
+  and a thread of five messages stays five rows tall.
+- Same no-digit rule as §D7.7b. Same test.
+
+##### D7.8b Media in a thread — one, and one only
+
+A post may carry four photos (§D7.14). A comment may carry **one** attachment of
+any kind, and this is not a resource limit — it is the line between a reply and
+a post.
+
+> **Rule.** One attachment per comment. Its rendered box is capped at **240px
+> tall** — noticeably shorter than a post's — and it is inset by the comment's
+> left padding rather than bled to the card edge. A comment is nested inside a
+> card, and a full-bleed photo inside a nested row destroys the containment that
+> tells the reader they are inside a discussion.
+
+- The attach control is a single 📎 button on the **existing** comment composer,
+  to the left of «Отправить», 44px. It is not a new field, not a new bar, and not
+  a second row: the composer already exists, and adding a button to a field is
+  not the same as adding a field.
+- Once one file is attached the 📎 button is replaced by the thumbnail tile with
+  its ✕, so there is never a control offering a second attachment that would then
+  be refused.
+- A comment may be **media-only** — a photo with no words is a legitimate reply
+  («вот, купила») and forcing a caption produces «вот» five hundred times.
+  `createCommentSchema.body` therefore relaxes to allow empty **when an
+  attachment is present**, and not otherwise.
+- **Nothing else about the composer changes.** No voice-message-hold-to-record
+  button, no camera shutter beside the send button, no sticker tray, no GIF
+  search. Each of those is a messenger affordance that would arrive looking like
+  a natural completion of this feature.
+
+**Consequence of getting it wrong.** A 📎, a 🎤 and a 😊 beside a text field with
+a send button is Telegram, pixel for pixel. The family has Telegram. What
+protects this screen is not the absence of media — the owner asked for media —
+it is that the field exists only inside a thread somebody opened, that there is
+exactly one attachment, and that the compose door on the feed itself still
+cannot receive a character.
 
 #### D7.9 Ordering, pagination, and the fact that the feed ends
 
@@ -1291,18 +1497,22 @@ the row survives, and it never destroys somebody's «спасибо, что за
 
 **What clears and what stays.**
 
-| Object                      | After a clear                                                                                                                            |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Announcements, system posts | Gone from the feed. Rows intact.                                                                                                         |
-| Activity lines              | Gone from the feed. Rows intact — `/activity` is still the family's own log and other modules read it.                                   |
-| Comments, reactions         | Untouched, still attached to their post. They were never separately visible; they leave with the card that carried them.                 |
-| Kudos                       | Gone from the feed. The «Спасибо» roster chip is a 30-day window and is **not** reset — a clear tidies the wall, it does not un-thank.   |
-| Live pins                   | **Cleared.** Pinning means "keep this up"; clearing means "take everything down". A pin that survived would make the clear look broken.  |
-| **Open polls**              | **Stay.** They are not "what happened", they are what is still being asked, and a clear must not silently cancel an unanswered question. |
+| Object                      | After a clear                                                                                                                                                                                                                                    |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Announcements, system posts | Gone from the feed. Rows intact.                                                                                                                                                                                                                 |
+| Activity lines              | Gone from the feed. Rows intact — `/activity` is still the family's own log and other modules read it.                                                                                                                                           |
+| Comments, reactions         | Untouched, still attached to their post. They were never separately visible; they leave with the card that carried them.                                                                                                                         |
+| Kudos                       | Gone from the feed. The «Спасибо» roster chip is a 30-day window and is **not** reset — a clear tidies the wall, it does not un-thank.                                                                                                           |
+| Live pins                   | **Cleared.** Pinning means "keep this up"; clearing means "take everything down". A pin that survived would make the clear look broken.                                                                                                          |
+| **Open polls**              | **Stay.** They are not "what happened", they are what is still being asked, and a clear must not silently cancel an unanswered question.                                                                                                         |
+| **Attachments**             | **Every object stays in the bucket, untouched.** Not deleted, not marked, not swept later. The rows are intact, so the photographs are simply not fetched — and undo brings them all back because nothing ever went looking for them (§D7.14.9). |
 
-That last row is the interesting one, and it is the board's principle surviving
+The last two rows are the interesting ones, and it is the board's principle surviving
 inside the feed: **a clear collapses the wall to exactly what still needs
-answering.**
+answering, and it destroys nothing.** The attachments row is where that second
+half stops being a slogan: a horizon that quietly deleted objects would be a
+delete wearing a horizon's name, and the first person to discover it would
+discover it by losing a photograph.
 
 **Who may.** `settings:manage` — admin and owner. Not a new permission: the
 horizon lives on the singleton `family_settings` row (D1), so the permission that
@@ -1369,7 +1579,19 @@ shouted over by page four.
 still works: creating a post is optimistic, so the card appears immediately and
 rolls back with a toast if the write never lands. `['changes']` is already the one
 query that pauses while offline (D12), so the pill never appears against stale
-data.
+data. **Media is the exception and says so**: the attach control is disabled with
+«Фото можно добавить, когда появится интернет», because an attachment is bytes on
+a server rather than an intent that can be replayed, and there is deliberately no
+outbox for it (§D7.14.7). Posting without media still works. Already-loaded media
+stays visible from the HTTP cache; media that was never fetched draws its
+reserved box in the attachment's `dominantColor` and nothing else — never a
+broken-image glyph, and never a retry button that cannot succeed.
+
+**Media that fails to load while online** — a 404 from a reaped object, a 503
+from unconfigured storage — collapses its box to nothing and leaves the card
+otherwise intact. A note whose photo has gone is still a note; a card that
+becomes an error report because one attachment is missing is worse than a card
+with one less picture.
 
 **Empty.**
 
@@ -1386,42 +1608,1192 @@ data.
 **Permissions** go through `useCan()`, never a role comparison (D4). Verified
 against `ROLE_PERMISSIONS` rather than assumed:
 
-| Role          | The compose row offers | On a card                                                                                 |
-| ------------- | ---------------------- | ----------------------------------------------------------------------------------------- |
-| `guest`       | not rendered           | reads; reactions and discs as **static text**; no thread composer; no `⋯`                 |
-| `child`       | Объявление · Спасибо   | may react, comment and vote; `⋯` only on their own post, and only «Снять с доски»; no pin |
-| `teen`        | + Опрос                | + «Завершить» on their own poll                                                           |
-| `adult`       | all three              | + pin (день / 3 дня / неделю), + delete any post, + delete any comment                    |
-| `admin/owner` | all three              | + the app bar's «Очистить доску»                                                          |
+| Role          | The compose row offers | On a card                                                                                       | Media                                                            |
+| ------------- | ---------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `guest`       | not rendered           | reads; the heart and the discs as **static text**; no thread composer; no `⋯`                   | **sees none.** «Фото — только для семьи» in place of the box     |
+| `child`       | Объявление · Спасибо   | may like, react, comment and vote; `⋯` only on their own post, and only «Снять с доски»; no pin | may attach and may view, on posts and in threads                 |
+| `teen`        | + Опрос                | + «Завершить» on their own poll                                                                 | same                                                             |
+| `adult`       | all three              | + pin (день / 3 дня / неделю), + delete any post, + delete any comment                          | same, and deleting a note removes its media from every screen    |
+| `admin/owner` | all three              | + the app bar's «Очистить доску»                                                                | same; a clear hides media and **destroys none of it** (§D7.14.9) |
 
 A `child` holds `post:create`, `comment:create`, `kudos:give` and `poll:vote` but
 **not** `poll:create`, `poll:close` or `post:pin` — so their door offers two kinds
 of note and not three, their polls carry no «Завершить», and a pinned note
-somebody else wrote carries no `⋯` at all.
+somebody else wrote carries no `⋯` at all. A child may attach photos, video and
+voice exactly as an adult may: `post:create` is what carries the right to attach
+(§D7.14.1), and a board where the ten-year-old can write but cannot show you
+what they drew is a board that has quietly told them their notes count less.
 
-#### D7.13 Contract gaps this spec depends on
+**The `guest` row is a deliberate narrowing, and it is the one line in this
+table that changes what an existing role means.** A guest reads the wall today,
+and that was scoped when the wall was text. Photographs of children are the most
+sensitive content this app will ever hold, so media gets its own permission,
+`media:read`, granted to `child` and above and not to `guest` — reasoning and
+consequences in §D7.14.10, and the owner's confirmation is asked for in
+§D7.14.11 item 5.
 
-Four, all small, all the implementer's to raise before building the card that
-needs them. None is a reason to delay the rest of the screen.
+#### D7.13 Contract gaps — what closed, and what this pass opens
 
-1. **Polls are not feed items.** `feedItemSchema` in `wall.routes.ts` is
-   `post | activity`; polls are fetched separately by `usePolls`. The feed needs
-   `kind: 'poll'` in that union so a closed poll can take its chronological place.
-   Until then, open polls come from `usePolls('open')` into the head — which works
-   today — and closed polls exist only in «Что решили». That interim is workable,
-   and it is the reason «Что решили» is not optional.
-2. **`pollResponseSchema` carries no `commentCount`.** The common foot line needs
-   it. Until it lands, the poll card's toggle reads «Обсудить» unconditionally,
-   which understates a thread rather than inventing a number.
-3. **Kudos are not feed items either.** Same union, `kind: 'kudos'`, carrying the
-   existing `kudosResponseSchema` plus the recipient's display name. Until then
-   there is no Спасибо card and the roster panel is the only surface — which is
-   today's behaviour, so nothing regresses.
-4. **`reactionSummarySchema` has no `userIds`** (D7.7). Its interim is specified
-   in place and never renders a digit, so the hard constraint holds either way.
+The previous pass named four gaps. **All four have since closed** in
+`packages/shared/src/contracts/wall.ts`, and this section is rewritten rather
+than deleted so a reader arriving from D13 can see which interim behaviours are
+now dead code rather than live spec:
+
+| Gap named in the previous pass                 | Now                                                                                                          |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Polls are not feed items                       | **Closed.** `wallFeedItemSchema` is a four-way union: `post` · `activity` · `poll` · `kudos`.                |
+| `pollResponseSchema` carries no `commentCount` | **Closed.** It does, and the poll card's foot line is the common one.                                        |
+| Kudos are not feed items                       | **Closed.** `kudosFeedItemSchema` carries `toDisplayName`, so the «Спасибо» card can name the recipient.     |
+| `reactionSummarySchema` has no `userIds`       | **Closed.** The chip draws the discs. **The interim that drew the emoji alone is gone — do not restore it.** |
 
 **Desktop**: feed at 720; side column (≥ lg only) = «Что решили» · «Спасибо».
 **Empty**: the compose row and one line — never a button that would 403.
+
+This pass opens a new set, all in §D7.14.10, and they are of a different kind:
+the four above were fields missing from schemas that already existed, and these
+are a table, a permission and a route that do not exist yet. They are named
+there rather than here because they belong with the design that needs them.
+
+One is worth repeating in this list because it is the only change to an
+**existing** contract that can break a caller:
+
+> `createPostSchema.body` stops being `nonEmptyString(8000)` and becomes a
+> trimmed, defaulted string constrained by a `superRefine` — **body or
+> attachment, at least one**. A post with neither must still answer 400. Do not
+> implement this as `body: optional()`: that quietly permits an empty note, and
+> an empty note is a card with an author line, a foot line and nothing between
+> them.
+
+---
+
+#### D7.14 Вложения — фото, видео, аудио
+
+**What the user came for:** «должна быть возможность добавлять фото видео аудио
+к посту, мы делаем чтото типо Instagram или даже более похожее Threads».
+
+§D7.6 spec'd a media slot "with rules" and then deferred it, because no pipeline
+existed. One exists now — the avatar path in `backend/src/modules/storage/**`
+validates by magic bytes, serves through an authenticated route with ETag/304,
+and is backed up nightly. **This section extends that pipeline. It does not
+reinvent it**, and the two places where it cannot be extended (HTTP Range, and a
+two-phase upload) are called out where they occur, with the reason.
+
+Everything below is designed as a **family noticeboard would need it**, not as
+Instagram would. The difference is concrete and it shows up in five places: the
+attachment cap is set by what a grid holds rather than by what a server can
+take; nothing autoplays; nothing is cropped to a square; a video is fetched only
+when somebody asks for it; and the objects outlive every deletion the UI offers,
+because §D7.11 made clearing a **horizon** and a horizon must never be able to
+destroy a photograph.
+
+---
+
+##### D7.14.1 Media is not a fourth door
+
+The compose menu offers three kinds of note: Объявление · Опрос · Спасибо. The
+single most available mistake in this whole section is adding «Фото» as a fourth.
+
+> **Rule.** Media is a **property of a note**, never a kind of note. There is no
+> «Фото» in the compose menu, no camera glyph on the compose row, no camera in
+> the app bar, and no attach control anywhere on Стена except **inside a composer
+> the reader deliberately opened**. Attaching is reached from inside «Объявление»
+> and from inside an open thread, and from nowhere else.
+
+Why this is the line: a camera button on the feed surface is a one-tap path from
+"reading the wall" to "posting a picture", with no note attached and nothing
+said. That is a photo-sharing app, and D9 explicitly rejected «photo gallery» as
+a feature. A photo _under_ «В субботу едем к бабушке» is a noticeboard. A photo
+on its own, posted because a button was there, is the other product.
+
+A post **may** end up with media and no text (§D7.14.4) — that is a legitimate
+outcome of opening «Объявление» and deciding the picture says it. It is not a
+door of its own.
+
+**Кому что можно.** Attaching needs no new permission and deliberately gets
+none: the right to attach travels with the right to write, so
+`POST /api/media` is guarded `requireAny('post:create', 'comment:create')`.
+A permission that must always be granted alongside another permission is a
+permission somebody will forget to grant. **Reading** media is different, and it
+is the one place a new permission is justified — see §D7.14.10.
+
+---
+
+##### D7.14.2 Layout — what a card with media looks like
+
+Media sits **after** the body, never before it. Instagram puts the picture first
+because the picture is the post; here the sentence is the news («В субботу едем
+к бабушке») and the photo is the evidence for it. Threads makes the same choice
+and it is the right one for a board. §D7.6 already drew it this way; this is the
+reason.
+
+**The box.**
+
+- Full card width, **edge to edge below `sm`** (the feed surface is full-bleed
+  there, §D7.3), radius 0 below `sm` and 8 at `sm` and above.
+- **The box is reserved before the bytes arrive.** `aspect-ratio` is set from the
+  server-supplied `width`/`height`, so nothing reflows on load and a thumb
+  halfway down the feed does not get thrown by an image finishing. This is not
+  optional — a feed that reflows while you read it is the single most annoying
+  bug this screen can have.
+- The reserved box is painted with the attachment's `dominantColor` when it has
+  one, and `--muted` otherwise (§D7.14.8). A warm block that becomes a photo
+  reads as loading; a grey block reads as broken.
+- **`max-height: 60dvh`**, and the aspect ratio is **clamped at the tall end to
+  4:5**. Anything taller (a full-height iPhone screenshot at 9:19.5) is drawn in
+  a 4:5 box with `object-fit: cover` and the full frame is one tap away.
+
+  Why clamp only the tall end, and why 4:5: a portrait phone photo is the common
+  case, and forcing it to a square loses heads. 4:5 is the mildest clamp that
+  bounds the height — at a 358px card it is **448px**, which leaves the top of
+  the next card visible on a 390×844 phone. A panorama is short and harms
+  nothing, so the wide end is unclamped.
+
+**Several attachments — a two-column grid, and a hard cap of four.**
+
+```
+n=1    ┌──────────────────────┐      natural ratio, clamped at 4:5
+       │                      │
+       └──────────────────────┘
+
+n=2    ┌──────────┬──────────┐       two squares, 2px gutter
+       │          │          │
+       └──────────┴──────────┘
+
+n=3    ┌──────────┬──────────┐       two squares…
+       │          │          │
+       ├──────────┴──────────┤
+       │                     │       …then one full-width cell at 2:1
+       └─────────────────────┘
+
+n=4    ┌──────────┬──────────┐       2 × 2 squares
+       │          │          │
+       ├──────────┼──────────┤
+       │          │          │
+       └──────────┴──────────┘
+```
+
+At a 358px card: `n=2` is 178px tall, `n=3` is 358px, `n=4` is 358px. Every
+arrangement is under half a viewport, which is what keeps a photo post from
+owning the screen the way a 2000-character body would (§D7.6 clamps that at four
+lines for the same reason).
+
+> **Rule.** **Four attachments per post, one per comment.** Not a resource
+> limit — four is what the grid holds without a «+2» tile, and a «+2» tile is a
+> digit on a card (§D7.7b). The same trick as `MemberDiscGroup` capped at the
+> family size so «+N» never renders: **choose the bound that makes the counter
+> unnecessary.**
+
+The picker stops offering files at four and says so — «Больше четырёх не
+поместится» — rather than accepting a fifth and dropping it silently.
+
+**Mixed kinds are not allowed.**
+
+> **Rule.** A post carries **up to four photos**, **or one video**, **or one
+> audio**. Never a mixture.
+
+A video in tile 3 of a 2×2 grid is 178px wide with a play button in it, which is
+unplayable and unwatchable; an audio row inside a photo grid has no sensible
+cell. And a note that is "three photos and a voice memo" is two notes. This
+restriction removes an entire class of layout question and costs the family
+nothing they will notice.
+
+**On a tinted card the media insets.**
+
+The head's attention card and the system post draw `--surface-attention` /
+`--surface-calm` on the `<article>` itself (§D7.4, §D7.6). A full-bleed photo on
+one of those runs to the screen edge and the wash stops reading as a card at all.
+
+> **Rule.** On a card with a tinted ground, media insets by 16px on both sides
+> and takes radius 8 at **every** width, including below `sm`. The wash must
+> frame the picture.
+
+---
+
+##### D7.14.3 Съёмка и выбор — what attaching actually looks like on an installed iPhone
+
+Everything asserted here was verified against WebKit source, WebKit Bugzilla and
+MDN browser-compat-data on **20 August 2026**, by the same method
+`docs/research/ios-pwa-push.md` uses and for the same reason: this project has
+had three separate assumptions about iOS overturned by reading the source, and
+the shape of this feature depends on facts that are widely repeated and wrong.
+Sources are named inline. **Re-verify before trusting any of it in a year.**
+
+##### One control, and no `capture` attribute on it
+
+The attach control is a single `<input type="file">`. On iOS it raises WebKit's
+own three-item menu, built in `WKFileUploadPanel.mm` — **«Фотогалерея» /
+«Снять фото или видео» / «Выбрать файл»**, in that order, with the camera item
+omitted entirely on a device without one.
+
+> **Rule.** One control, `accept="image/*,video/*"`, `multiple`, **no `capture`
+> attribute**. Camera and library are already both inside the menu the OS draws;
+> a separate «Камера» button next to it would be a second door onto a room the
+> first door already opens.
+
+`capture` is genuinely supported on iOS — MDN BCD gives `safari_ios: 10`, and
+`WKFileUploadPanel.mm` short-circuits straight to `UIImagePickerController` with
+the front or rear device — which is exactly why it must **not** be set here:
+setting it **removes** the library and the Files option. It is the right
+attribute for a hypothetical "take a photo right now" flow and the wrong one for
+"add a photo to this note".
+
+(That verified support has one useful consequence worth writing down for a
+future feature: `<input capture>` uses the **system** camera UI and needs no web
+permission at all, which makes it strictly better than a `getUserMedia` camera —
+see the audio problem below.)
+
+##### Photos arrive as JPEG, and the one path where they do not
+
+This determines whether the existing magic-byte gate — JPEG, PNG, WebP, and a
+415 for everything else — survives contact with an iPhone set to «Высокая
+эффективность» (HEIC). Three paths, three different answers:
+
+| Path in the iOS menu | What your server receives                                                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Фотогалерея**      | **JPEG.** WebKit asks PHPicker for `AssetRepresentationMode.compatible`, which transcodes HEIC→JPEG and HEVC→H.264 before handing it over.        |
+| **Снять фото**       | **JPEG, always** — a camera capture has no asset URL, so WebKit re-encodes with `UIImageJPEGRepresentation(image, 0.8)` and names it `image.jpg`. |
+| **Выбрать файл**     | **The raw bytes.** No transcode step exists on this branch. Navigate to a `.heic` in Файлы and your server gets real HEIC magic bytes.            |
+
+The first row is the one people get wrong, in both directions. WebKit landed
+work in March 2024 (bug 267277) to stop transcoding when `accept` does not
+require it — but it is gated behind the internal preference
+`PhotoPickerPrefersOriginalImageFormat`, which defaults to **false** in shipping
+WebKit, so `compatible` mode wins unconditionally. Bug **270470** (still open)
+says so in as many words. **Do not design around "iOS might send HEIC from the
+gallery" — today it does not — and do not rely on that forever either**, since
+one preference flip reverses it.
+
+Consequences, all cheap:
+
+- **The server's photo whitelist does not change.** JPEG, PNG, WebP; magic
+  bytes; 415 otherwise. The existing `image.ts` is correct as written.
+- **Never put `image/heic` in `accept`.** There are consistent reports (Apple
+  Developer Forums 743049; no WebKit bug, **secondary and unverified**) that
+  listing it makes Safari hand back a _JPEG renamed `.heic`_. Listing it buys
+  nothing and risks that.
+- **A HEIC from «Выбрать файл» is handled on the client, not the server.** iOS
+  Safari decodes HEIC natively (`MIMETypeRegistry.cpp`, `HAVE(HEIC)`), so the
+  downscale-to-WebP step in `shared/media/encode.ts` simply works and the server
+  never sees it. On Android or desktop Chrome the decode fails, and the honest
+  answer there is the sentence «Не получилось открыть это фото. Попробуйте
+  другое.» — because nobody outside Apple can display that file anyway.
+- **The camera path loses EXIF** (`WKFileUploadPanel.mm` carries an open
+  `// FIXME: Should EXIF data be maintained?`). Harmless here: the image comes
+  out of the camera already upright. Keep decoding through an `<img>` rather
+  than `createImageBitmap` regardless — `avatar-image.ts` already documents why,
+  and the gallery path _does_ carry orientation.
+
+##### Video: picking is safe, recording in place is not
+
+Same menu, opposite outcome — and this is the finding that most changes what the
+server has to do.
+
+- **Фотогалерея → H.264**, because `compatible` mode transcodes on the way out.
+- **Снять видео (single capture) → passed through untouched.**
+  `_uploadItemFromMediaInfo` hands over `UIImagePickerControllerMediaURL` as-is,
+  with no export session. On a phone set to «Высокая эффективность» that is
+  **HEVC inside a QuickTime `.mov`**.
+- Chrome on Android decodes HEVC; Chrome on Windows only where there is hardware
+  support; Linux depends on VAAPI (caniuse `hevc`). So the family member who
+  films the school concert on their iPhone can produce a file that half the
+  household cannot watch, with no error message that explains why.
+
+> **Rule.** **The container is `.mov`/QuickTime on every iOS path, never `.mp4`.**
+> Sniff the `ftyp` brand; never trust the extension, and never trust
+> `Content-Type`. And the server **whitelists the video codec, not just the
+> container**: walk `moov → trak → mdia → minf → stbl → stsd` and accept only an
+> `avc1`/`avc3` sample entry (H.264). `hvc1`/`hev1` is a **rejection with an
+> instruction**, not a silent acceptance.
+
+Walking to `stsd` is roughly sixty lines on top of the `mvhd` walk the duration
+check already needs (§D7.14.6), with no dependency — the whole file is in a
+buffer, so a `moov` at the end is not a problem. It is the same doctrine as the
+magic-byte table one level deeper: **an unrecognised codec is a rejection, not a
+guess.** What the member reads:
+
+> «Это видео снято в формате, который откроется не у всех дома.
+> Выберите его из галереи — так оно перекодируется само.»
+
+That sentence is actionable precisely because picking the same clip from
+Фотогалерея really does produce H.264. It is a two-tap fix, and it is the
+difference between a rejection and a dead end.
+
+##### Audio is the hard one, and it is hard for two independent reasons
+
+**First: `accept="audio/*"` does not work on iOS.** MDN BCD's `safari_ios` note
+on `accept` is explicit, and WebKit bug **242110** is open: since r250410,
+`UTIsForMIMETypes` maps `audio/*` to `UTTypeMovie` rather than `UTTypeAudio`, so
+the menu offers the **video** recorder and the Files browser is filtered to
+movies — `.m4a` and `.mp3` are hidden. There is no file-picker path to an audio
+file on an iPhone.
+
+**Second: there is no camera/microphone permission that survives a launch.**
+`getUserMedia` in a Home Screen web app has worked since iOS 13.4 (bug 185448,
+RESOLVED FIXED), but bug **215884** — still collecting reports as recently as
+February 2026 — records that the grant does not persist: closing and reopening
+the installed app re-prompts, a grant given in Safari does not carry into the
+installed app, and one reporter sees a re-prompt after ~90 seconds.
+
+So:
+
+> **Rule.** Audio is **recorded in the app**, never picked from a file. The
+> control is a «Записать голосом» button inside the composer, which asks for the
+> microphone, records with `MediaRecorder`, and produces one attachment.
+> `accept="audio/*"` is never used anywhere.
+
+- `MediaRecorder` has shipped on iOS since 14 (BCD `safari_ios: 14`), producing
+  `audio/mp4` (AAC); Safari 18.4 added WebM/Opus, Ogg and fragmented MP4. Target
+  is therefore: **feature-detect with `MediaRecorder.isTypeSupported()` and fall
+  back to `audio/mp4`**, which is the one that works on every iPhone the family
+  could be holding.
+- **Design for the prompt, do not be surprised by it.** Tapping «Записать
+  голосом» shows a one-line explanation first — «Нужен микрофон, чтобы записать
+  голос» — and _then_ asks. A permission dialog that appears with no preceding
+  sentence is the thing family members deny by reflex, and on iOS a denial is
+  recovered only through Настройки, which nobody will find. Expect the prompt on
+  **every launch** and never treat a previous grant as remembered.
+- **This leg is the one to ship last.** See §D7.14.11 — whether `MediaRecorder`
+  actually runs inside an installed Home Screen web app is the one claim in this
+  subsection with **no primary source in either direction**, and it is a
+  ten-minute device test.
+
+##### What is impossible on iOS, so that nobody designs around it
+
+- **No Background Fetch** (BCD `safari: false`; WebKit standards-position #149
+  still "Needs position").
+- **No Background Sync** (BCD `safari: false`) — already load-bearing for
+  `features/shopping/outbox.ts`.
+- **A service worker cannot keep an upload alive.** Bug 211018 documents the
+  opposite: service-worker contexts freeze on backgrounding.
+
+There is, however, one thing that **is** possible and that this project assumed
+was not — see the correction in §D7.14.7.
+
+---
+
+##### D7.14.4 Card anatomy per kind
+
+**Фото — announcement with text and media** (the common case):
+
+```
+(М) Мама · 35 минут назад                                            ⋯
+В субботу едем к бабушке                        ← h2, display face, optional
+Выезжаем в 10:00, не проспите.                  ← body 15/22, clamp 4 + «ещё»
+┌───────────────────────────────────────────┐
+│                                           │  ← full width, ratio from server
+└───────────────────────────────────────────┘
+❤️ (М)(Л)   👍 (П)   ☺+                   Обсуждение · 3
+```
+
+**Фото — media and no text.** This is what «типо Instagram» actually looks like
+on this screen, and it is a legitimate card:
+
+```
+(М) Мама · 35 минут назад                                            ⋯
+┌───────────────────────────────────────────┐
+│                                           │
+└───────────────────────────────────────────┘
+❤️ (М)(Л)   ☺+                                       Обсудить
+```
+
+- 8px between the author line and the media, the same gap the body would have
+  taken. Nothing is drawn in place of the missing text — **no «без описания»,
+  no placeholder, no italic hint.** An absent caption is not an error state.
+- `createPostSchema` therefore stops requiring a body. See §D7.14.10: the rule is
+  **body or attachment, at least one**, expressed as a `superRefine`, never as
+  `body: optional()` — a post with neither is still a bug and must still 400.
+
+**Text and no media** is exactly today's card, unchanged.
+
+**Видео:**
+
+```
+(П) Павел · час назад                                                ⋯
+Лиза наконец поехала без страховки
+┌───────────────────────────────────────────┐
+│                    ▶                      │  ← poster frame, 56px filled play
+│  0:42                                     │  ← duration pill, bottom-left
+└───────────────────────────────────────────┘
+❤️ (М)   ☺+                                          Обсудить
+```
+
+- The still is a **separate poster object**, not a frame decoded out of the
+  video. It is ~30 KB; the video is up to 40 MB. This is what makes
+  `preload="none"` possible and it is the single biggest data decision in this
+  section — fifteen cards of `preload="metadata"` is fifteen range requests
+  against the VDI before anybody has asked to watch anything.
+- The **duration pill** («0:42», `meta` 13/500, `tabular-nums`, on a 60 % black
+  scrim, bottom-left, 8px inset) is a number on a card, and it passes D7.2's
+  rule cleanly: a clip's length is not sayable any other way, it is not attached
+  to a person, nothing sorts by it, and it is precisely the fact that decides
+  whether you tap now or later. State this in the review, because it will be
+  challenged.
+- **No progress bar, no view count, no «просмотров».** Views are the purest form
+  of the thing D5 removed and there is no version of them that is safe here.
+
+**Аудио — a row, not a box:**
+
+```
+(Б) Бабушка · вчера                                                  ⋯
+┌───────────────────────────────────────────┐
+│ ( ▶ )  ──────────────────────────  1:12   │  ← 56px row, --secondary ground
+└───────────────────────────────────────────┘
+❤️ (М)(Л)   ☺+                                       Обсудить
+```
+
+- Audio has no picture, so a 4:5 box of nothing would be absurd. It renders as a
+  **56px row** with a 44px circular play/pause, a hairline progress line that
+  fills as it plays, and the remaining time at the right in `tabular-nums`.
+  Inset 16px at every width and radius 8 — a row is a row, not a bleed.
+- Distinguishable at a glance from a video precisely **because it is a different
+  shape**, not because of an icon. Colour is never the only signal (§B4), and
+  neither is a glyph.
+- **No waveform.** Drawing one needs either a server-side decoder (a dependency
+  this backend deliberately does not have — see `avatar-image.ts`) or 40 numbers
+  computed at record time and carried in a column. The second is cheap and would
+  look good; it is **deferred**, named here so nobody reaches for a waveform
+  library, and revisited only if the family actually uses voice notes.
+
+---
+
+##### D7.14.5 Playback
+
+> **Rule. Nothing on Стена ever plays by itself.** No autoplay, not even muted,
+> not on Wi-Fi, not when the card is centred in the viewport, not "just the
+> first one".
+
+A feed that starts moving while a grandmother scrolls it is the feature that
+makes the app feel like something happening _to_ her. It also burns cellular
+data, and it would be **inconsistent across the family's own phones** — which is
+the argument that settles it rather than merely supporting it.
+
+Muted autoplay _is_ permitted by WebKit (the 2016 video-policies post, still the
+governing rule). But `HTMLMediaElement.cpp` adds
+`RequireUserGestureForVideoDueToLowPowerMode` whenever the page reports Low
+Power Mode, and the check is `element->isVideo()` with **no muted exemption** —
+so a phone on 18 % battery shows a still while the identical card on a phone on
+80 % plays, and there is no explanation the family could ever be given for that.
+There is a matching restriction for thermal mitigation. One rule, everywhere, no
+conditions, is the only version that is explicable.
+(WebKit source, verified 2026‑08‑20.)
+
+- **Photos: tap opens a full-screen viewer.** Pinch-zoom, swipe between the
+  post's attachments, `Esc`/back/swipe-down to close, the description (§D7.14.8)
+  as a caption at the foot, safe-area insets on all four sides, and the
+  **uncropped** original — which is what makes the 4:5 clamp in the feed
+  acceptable. The viewer is a route-less overlay: opening it must not push a
+  history entry that the iOS back-swipe then eats (§G3).
+- **Video: tap plays inline, in place.** **`playsinline` is not optional** —
+  `MediaElementSession::requiresFullscreenForVideoPlayback()` still returns true
+  without it on iPhone (iPad exempt), so the clip takes over the whole screen the
+  moment it starts. Native controls from the first play, `preload="none"` until
+  then. It does **not** open a lightbox — a video that jumps into a modal loses
+  the reader's scroll position, and on iOS regaining it is not reliable.
+- **`preload="none"` is belt and braces, not the mechanism.** iOS sets
+  `MediaDataLoadsAutomatically` to false platform-wide, so it does not pre-buffer
+  media without interaction anyway. The attribute is there for every other
+  browser in the house, and the **poster object** is what actually keeps fifteen
+  cards from costing fifteen range requests.
+- **Audio: tap plays inline in its row.** iOS requires a user gesture for audio
+  playback unconditionally (`RequiresUserGestureForAudioPlayback` defaults true
+  on `IOS_FAMILY`), so there is no version of this that could have autoplayed
+  even if we wanted it to.
+- **Exactly one media element plays at a time, app-wide.** Starting a second
+  pauses the first. Without this, scrolling past a playing clip leaves sound
+  coming out of a card nobody can see, which on a phone is genuinely alarming.
+- **A playing element pauses when it leaves the viewport** (`IntersectionObserver`,
+  threshold 0). Same reason; this is the automatic half of the rule above.
+- `prefers-reduced-motion` changes nothing here, because nothing moves until
+  somebody asks it to. That is the point.
+
+---
+
+##### D7.14.6 Limits — the numbers
+
+Two things set these, and neither is "what an upload endpoint can handle".
+
+1. **The VDI has 14 GB free** (`docs/DEPLOYMENT.md` §6), of which ~1.5 GB is
+   images plus the database plus fourteen retained dumps plus accumulating
+   Docker layers.
+2. **The nightly backup tars the whole object volume** into
+   `latest-objects.tar.gz` and a container on the owner's PC **pulls it over a
+   domestic connection every night** (§8). Today that tarball is six avatars.
+   This section is about to make it the largest file in the system. See the
+   flagged consequence at the end of this subsection — it is the most important
+   operational finding in this document.
+
+| Kind      | Accepted container → codec                                   | Max bytes, server-enforced | Max duration | What the client does first                                           |
+| --------- | ------------------------------------------------------------ | -------------------------- | ------------ | -------------------------------------------------------------------- |
+| **Фото**  | JPEG · PNG · WebP                                            | **8 MB**                   | —            | decode → downscale long edge to **2048** → WebP quality ladder       |
+| **Видео** | QuickTime/MP4 (`ftyp`) **with an `avc1`/`avc3` video track** | **40 MB**                  | **60 s**     | read duration and size from a blob URL, refuse locally before upload |
+| **Аудио** | MP4/M4A (`ftyp` + `mp4a`), WebM/Opus                         | **8 MB**                   | **180 s**    | recorded in-app (§D7.14.3); duration is known exactly                |
+| Poster    | JPEG · WebP, generated by the client                         | **512 KB**                 | —            | one frame at t=0.1 s onto a canvas                                   |
+
+Per post: **4 photos**, or **1 video**, or **1 audio**. Per comment: **1** of
+anything.
+
+**Where each limit is really enforced, stated honestly:**
+
+- **Bytes are enforced by the server, always**, both by `@fastify/multipart`'s
+  `fileSize` (so we never hold more than the limit in memory) and by a check on
+  the assembled buffer (so a direct service call is still bounded). Exactly the
+  belt-and-braces the avatar route already runs, for exactly the same reason.
+- **The container is enforced by magic bytes**, never by `Content-Type` and
+  never by the filename. This is the security boundary and it is the part of
+  `image.ts` that generalises unchanged (§D7.14.10). **Note that every video
+  from an iPhone is QuickTime, not MP4** (§D7.14.3): sniff the `ftyp` brand, and
+  never branch on the extension.
+- **The video codec is enforced too, and this is new.** Sniffing gives the
+  container, not what is inside it — an `ftyp` box says nothing about H.264
+  versus HEVC, and an iPhone recording in place produces HEVC that half the
+  household cannot play (§D7.14.3). So the same box walk that reads duration
+  continues to `moov → trak → mdia → minf → stbl → stsd` and reads the sample
+  entry fourcc: **`avc1`/`avc3` accepted, everything else rejected with an
+  instruction.** Roughly sixty lines beyond the duration walk, no dependency,
+  and it converts an unwatchable card into a two-tap fix.
+- **Duration is enforced where we can parse it, advisory where we cannot.** The
+  `moov/mvhd` box carries `duration` and `timescale`; the file is already in a
+  buffer, so a `moov` at the end is not a problem. For WebM and Ogg there is no
+  comparably cheap read and the byte cap is the only enforcement. **Write this
+  in the code comment**: a client that lies about `durationMs` gets a wrong
+  duration pill, not a way past the byte cap.
+- **The client checks everything first**, from a blob URL, before a single byte
+  goes up: `File.size`, and `duration` after `loadedmetadata`. The difference
+  between checking first and checking last is the difference between "we said no
+  instantly" and "we spent three minutes of your tethered connection and then
+  said no". The client cannot usefully check the **codec** — an iPhone decodes
+  HEVC perfectly well, so a local probe would pass exactly where the family's
+  other devices will fail. That check has to be the server's.
+
+**Why 2048px and not the original.** The avatar path already establishes this
+and the reasoning transfers verbatim: a phone photo is 4000×3000 and 6 MB; the
+widest place it is ever drawn in this app is a 720px column at 2× (§C2), so
+2048 is already generous. A 2048px WebP at the quality ladder lands around
+250–500 KB. **The server therefore needs no image library at all** — no `sharp`,
+no native build, no CVE surface from a C decoder parsing a stranger's file — and
+the backend's entire image handling stays a magic-byte check and a byte count.
+That property is worth protecting; it is why the photo cap is 8 MB rather than
+25 MB even though the client normally sends 400 KB.
+
+**Why video is not re-encoded client-side, and why the 40 MB cap is less cruel
+than it looks.** Sixty seconds of iPhone 1080p is roughly 50 MB at «Высокая
+эффективность» and roughly 100 MB at «Наиболее совместимые», so a naive reading
+says the cap rejects clips the family considers short. It mostly does not,
+because of the finding in §D7.14.3: picking a clip from **Фотогалерея** makes
+PHPicker hand over the `compatible` representation, which is already transcoded.
+The path that produces a 100 MB HEVC `.mov` is «Снять видео» — and that path is
+the one the codec check rejects anyway, with a sentence telling the member to
+pick it from the gallery instead. The two rules reinforce each other: the file
+that is too big is usually the same file that is in the wrong codec, and the fix
+for both is the same two taps.
+
+Whether that holds for the clips this family actually shoots is an empirical
+question, not a settled one, and §D7.14.11 names the half-day experiment.
+
+**What the member sees when they exceed a limit.** Never a byte count they did
+not choose, and never an English error. Every row except the codec one is
+checked on the client before upload, so it arrives instantly:
+
+| Situation                     | Where checked | Russian                                                                                                               |
+| ----------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Video longer than 60 s        | client        | «Видео длиннее минуты. Снимите покороче — так его посмотрят все, даже бабушка.»                                       |
+| Video within 60 s but > 40 MB | client        | «Это видео слишком тяжёлое. Выберите его из галереи — так оно станет легче.»                                          |
+| Video is not H.264            | **server**    | «Это видео снято в формате, который откроется не у всех дома. Выберите его из галереи — так оно перекодируется само.» |
+| Audio longer than 180 s       | client        | «Запись длиннее трёх минут. Скажите главное — так её точно дослушают.»                                                |
+| Microphone denied             | client        | «Без доступа к микрофону записать не получится. Разрешить можно в настройках телефона.»                               |
+| Photo that will not decode    | client        | «Не получилось открыть это фото. Попробуйте другое.»                                                                  |
+| Fifth attachment              | client        | «Больше четырёх не поместится.»                                                                                       |
+| Mixed kinds                   | client        | «В одной записке — либо фото, либо видео, либо запись голоса.»                                                        |
+| Storage unconfigured (503)    | server        | «Вложения сейчас недоступны. Записку можно повесить без них.»                                                         |
+
+The numbers in those strings come from `GET /api/media/limits`, not from a
+constant in the frontend. A client that hardcodes 8 MB while the server enforces
+6 is the classic version of this bug, and it is free to avoid: the same config
+value produces the guard and the sentence.
+
+Two of these deserve their own note. The codec message is the only refusal that
+arrives **after** the upload — it costs the member a wait, and it is worth it,
+because the alternative is a card that nobody can tell them is broken. And every
+one of these is a **refusal with an instruction**: «Снимите покороче»,
+«Выберите из галереи», «Разрешить в настройках». A refusal without a next step
+is where a family member stops using a feature.
+
+> **Flag for the owner and for whoever owns `infra/`.** The nightly backup
+> currently tars the entire object volume and pulls the whole tarball to a home
+> PC every night. With media that becomes a multi-gigabyte nightly transfer of
+> data that has not changed, and `docs/DEPLOYMENT.md` §6 already records that the
+> object archives are **not** rotated by `BACKUP_KEEP`. **This must be fixed
+> before media ships, not after**, and the fix is not this document's to write.
+> The shape of it: pull objects incrementally (rsync or `--newer-than`) on a
+> weekly cadence and keep the nightly for the SQL dump, which is a few MB
+> gzipped. Media is also the one class of data in this app that is genuinely
+> irreplaceable — a task can be retyped, a photograph of a child cannot — so the
+> answer is a better backup, never a smaller one.
+
+---
+
+##### D7.14.7 Upload — a two-phase write, and why
+
+The obvious design is to send the note and its files in one multipart request.
+It is wrong here for three independent reasons, and the third is the one that
+turns out to matter most.
+
+1. A post with four photos is one 2 MB request that either wholly succeeds or
+   wholly fails. One flaky photo loses the typed text.
+2. Nothing can upload until the member has finished typing, so the whole wait
+   lands after they tap «Повесить» — the moment they most expect the app to be
+   finished.
+3. **iOS destroys backgrounded PWAs.** `docs/research/ios-pwa-push.md` §12: a
+   backgrounded web app comes back as a **cold start at `start_url`**, with React
+   state, in-memory caches and unsaved input gone. §F9 already requires drafts to
+   be persisted on `visibilitychange → hidden`, and a `File` handle cannot be
+   persisted. So the request that was going to carry both the note and the
+   photos is exactly the thing that does not survive being interrupted.
+
+**A correction to what this project assumed, verified 20 August 2026.** The
+natural assumption — and the one this section was first drafted on — is that
+backgrounding kills an upload in flight. **It does not, and WebKit does this on
+purpose.** `NetworkProcessProxy::setWebProcessHasUploads()` takes an
+`UnboundedNetworking` RunningBoard assertion on the UI, Network and WebContent
+processes for the duration, which is the same class of assertion that lets a
+native app finish a transfer while backgrounded — and unlike the plain
+`Background` assertion, it is not the one that times out after 30 seconds.
+
+The trigger is narrow and it dictates how we write the request.
+`ResourceRequestBase::hasUpload()` returns true only when the body contains an
+`EncodedFileData` or `EncodedBlobData` element:
+
+> **Rule.** Send the `File` or `Blob` **object itself**, inside a `FormData`.
+> Never a base64 string, never an `ArrayBuffer`, never a JSON body with the
+> bytes inlined. Those get **no** background assertion, and the difference is
+> invisible in every desktop test you will run.
+
+What is still true, and is why the two-phase design survives the correction
+intact: **the bytes may well land, but the page waiting for the response may
+not.** A cold start takes the React state that was going to receive the
+attachment id. It is also unverified whether the assertion survives a screen
+lock as well as an app switch, and whether the promise resolution is delivered
+after a resume at all (§D7.14.11). Designing for "the upload dies" and designing
+for "the upload lands but nothing is left to catch it" produce the **same**
+answer here — which is a good sign, and it means this section did not need
+rewriting when the assumption was overturned.
+
+> **Rule.** Upload is **two phases**. `POST /api/media` takes one file, validates
+> it, writes the object, and returns a **`mediaAttachment` with an id** — a row
+> that is not yet attached to anything, owned by the uploader, with
+> `expires_at = now() + 24 h`. `POST /api/wall/posts` (or a comment) then carries
+> `attachmentIds`, and **claims** them inside the same transaction that writes
+> the note: entity pointer set, `expires_at` cleared.
+
+That shape pays for itself three times:
+
+- **Upload starts the moment a file is picked**, while the sheet is still open
+  and the member is still typing. By the time they have written a sentence the
+  bytes are up.
+- **A failure is per-file and retryable in place**, without touching the text.
+- **The cold-start problem becomes small.** The draft that §F9 persists is
+  `{ title, body, attachmentIds }` — three strings and a few uuids, which fit in
+  `sessionStorage` trivially. A member who is interrupted by a phone call and
+  comes back to a cold start finds their sheet with their **already-uploaded
+  photos still on it**, and loses only whatever was still in flight. The 24-hour
+  unclaimed window is exactly what makes that work, and it is why the window is
+  a day rather than an hour.
+
+**The outbox question, answered: no.** `features/shopping/outbox.ts` is a
+durable IndexedDB queue and it exists for a specific reason — the shop basement
+has no signal, and «отметить молоко купленным» is worthless twenty minutes
+later. Media fails every part of that test:
+
+- an outbox stores **intent**, and the intent here is several megabytes of
+  bytes, which is a different kind of object;
+- there is **no Background Sync and no Background Fetch in WebKit** — BCD gives
+  `safari: false` for both, and WebKit's standards position on Background Fetch
+  is still "Needs position" (verified 2026‑08‑20) — so the queue would flush only
+  when the member reopens the app, at which point picking the photo again is two
+  taps;
+- **a service worker cannot help either**: bug 211018 documents service-worker
+  contexts freezing on backgrounding, which is the opposite of what a durable
+  queue would need;
+- the queued bytes would sit under the 7-day script-writable-storage cap and
+  whole-origin LRU eviction (research §10), so the "durable" queue would be the
+  least durable thing in the feature;
+- and the correction above removes the last reason to want one: WebKit already
+  keeps a `File`-bodied upload alive across an app switch, which is most of what
+  an outbox would have been for;
+- a photo posted twenty minutes later is exactly as good as one posted now,
+  which is the property the shopping tick does not have.
+
+**What we build instead is the cheap half:** persist the draft _text_ and the
+_completed_ attachment ids, and let the server's 24-hour unclaimed window be the
+durability. That is the whole answer, it is a few lines, and it degrades to "pick
+the photo again" rather than to a silent loss.
+
+**Progress, and the trap in it.** `fetch()` reports **download** progress and not
+upload progress, and streaming request bodies (`duplex: 'half'`) are not
+available in Safari. So the upload call is an **`XMLHttpRequest`** with
+`upload.onprogress`, deliberately, and that is the one place in the app that is
+not `fetch`. It must carry the same `Authorization` header and go through the
+same single-flight refresh as `shared/api/refresh.ts` — an XHR that quietly
+invents its own auth path is how a token-rotation bug is born (D3). Write it as
+a thin adapter over the existing client's token accessor, not as a second API
+layer.
+
+**Failure states, per tile.** Every attachment in the composer is a 72px tile:
+
+| State        | Tile                                                                                                                |
+| ------------ | ------------------------------------------------------------------------------------------------------------------- |
+| uploading    | thumbnail at 60 % opacity, determinate ring, ✕ cancels                                                              |
+| done         | thumbnail, ✕ removes (and calls `DELETE /api/media/:id`, which only works while unclaimed)                          |
+| failed       | thumbnail with a `--destructive` hairline, a **↻** and the Russian reason on one line; ↻ retries **this file only** |
+| too big/long | never becomes a tile — refused at pick time with the sentence from §D7.14.6                                         |
+
+- **«Повесить» is disabled while any tile is uploading**, and the sheet's footer
+  says why in words — «Загружаем фото…» — rather than presenting a dead button
+  with no explanation. It is **not** disabled by a failed tile: a member may post
+  the note without the photo that would not go, and that is usually what they
+  want at that point.
+- **Offline**: the 📎 / «Добавить фото» control is disabled with «Фото можно
+  добавить, когда появится интернет». Posting without media still works
+  optimistically (§D7.12), because the note is the thing that matters.
+
+---
+
+##### D7.14.8 Description, and what a screen reader hears
+
+Every attachment carries an optional **`alt`** — «описание», up to 200
+characters — offered as one quiet row under each tile in the composer:
+«Описание для тех, кто не видит».
+
+- **Optional, deliberately.** A required description on a family board means
+  nobody posts, or everybody types «фото». An optional one gets written when it
+  matters, which is exactly when somebody is describing something for a specific
+  person.
+- When it is absent the accessible name is **built from what we know**, never
+  left empty and never «изображение» (which is what a screen reader announces
+  anyway): «Фото от Мамы», «Видео от Павла, 42 секунды», «Голосовая запись,
+  1 минута 12 секунд». Empty `alt=""` means decorative, and a photo that is the
+  content of a post is not decorative.
+- The duration in that name is the same number the pill draws, for the same
+  reason it passes D7.2 — and it is the **only** number allowed into an
+  `aria-label` anywhere on this screen (§D7.7b).
+- **`dominantColor`** — one `#rrggbb`, computed by the client from the canvas it
+  is already using to downscale, sent as a form field, stored in one nullable
+  column. It costs three lines and it is what makes the reserved box read as
+  loading rather than as broken. Explicitly **not** BlurHash or ThumbHash: those
+  are a dependency and a decode step for a difference nobody in this family will
+  name.
+
+---
+
+##### D7.14.9 Lifecycle — nothing is orphaned, nothing is collected early
+
+This is the subsection to get right, because both failure modes are silent. An
+orphan is a bucket that grows forever on a 14 GB disk. A premature collection is
+a photograph that is gone, and this app has no answer for that.
+
+The governing fact is §D7.11: **clearing the board is a horizon, not a delete.**
+`family_settings.wall_cleared_at` moves and the feed stops returning older rows.
+Nothing is deleted — not a post, not a comment, not a reaction, not a kudos. It
+follows immediately that:
+
+> **Rule.** A clear touches **no object in the bucket**, ever. Not a delete, not
+> a lifecycle rule, not a "tidy up objects older than the horizon" job. The rows
+> are intact, so the attachments are simply not fetched. Undo puts the previous
+> horizon back and the photographs are still there because nothing ever went
+> looking for them.
+
+The full lifecycle, with the only two places an object is ever removed:
+
+| Stage                 | `entity_type` | `expires_at`  | Object                                                       |
+| --------------------- | ------------- | ------------- | ------------------------------------------------------------ |
+| **Uploaded**          | `null`        | `now() + 24h` | present                                                      |
+| **Claimed**           | set           | `null`        | present, permanently                                         |
+| **Board cleared**     | set           | `null`        | **present, untouched** — the row is hidden, not deleted      |
+| **Note soft-deleted** | set           | `null`        | present; unreachable, because the route resolves via the row |
+| **Reaped**            | —             | —             | removed                                                      |
+
+**Reaper 1 — unclaimed uploads.** A member picks three photos, uploads them, then
+closes the sheet without posting. Those three rows are never claimed. A job
+(BullMQ, hourly) deletes rows where `expires_at < now()` and removes their
+objects. This is the **only** collector that runs on a short clock, and it can
+only ever touch a row that was never attached to anything.
+
+**Reaper 2 — attachments of long-deleted notes.** A post is soft-deleted
+(`deleted_at`), and §G4's 6-second undo may put it straight back. A job (daily)
+removes objects whose owning post or comment has been soft-deleted for more than
+**`MEDIA_ORPHAN_TTL_DAYS`, default 30**, then deletes the row.
+
+> **Constraint, and it is not obvious: `MEDIA_ORPHAN_TTL_DAYS` must exceed
+> `BACKUP_KEEP`.** The nightly dump retains 14 database snapshots. If an object
+> is collected on day 7 while a dump from day 10 still references its row, then
+> restoring that dump produces a post pointing at an object that no longer
+> exists — a broken picture with no way to fix it, discovered during a restore,
+> which is the worst possible moment. 30 > 14 with margin. If `BACKUP_KEEP` is
+> ever raised, this must be raised with it, and the boot assertion that checks
+> it belongs next to the config.
+
+**Ordering of writes, copied from `storage.service.ts` and for the same reason.**
+The avatar path establishes: validate, then write the object, then change the
+database, then delete the old object after the commit. Every other ordering
+loses data rather than leaking it. Media inherits it exactly:
+
+1. validate bytes (magic bytes, size, duration) — the only security gate;
+2. `put()` the object;
+3. insert the `media_objects` row;
+4. later, claim it inside the note's transaction.
+
+A crash between 2 and 3 leaks one object with no row — which Reaper 1 cannot see
+(there is no row) and which is therefore the one genuine leak in the design.
+It costs a few hundred kilobytes and it is the right trade: the alternative,
+writing the row first, produces a row pointing at nothing, which is a broken
+image on somebody's card. A monthly `ListObjectsV2` reconciliation against the
+table would close it and is **not** worth building at six users; note it here so
+the next person does not rediscover the hole and assume it was missed.
+
+**Removing an attachment from a note that already exists: you cannot.**
+
+> **Rule.** Attachments are **immutable once claimed**. There is no "edit the
+> photos on this note". To change them, delete the note (`post:delete:own` /
+> `post:delete:any`, with its 6-second undo) and write it again.
+
+This matches what the screen already does — there is no post-edit flow on Стена
+today, and the body is equally immutable — and it removes a whole family of
+questions about partial claims, re-claims and half-edited posts. It is worth
+revisiting only if the family actually asks; flagged rather than defended.
+
+**Moderation.** An adult with `post:delete:any` deleting a child's photo removes
+the card immediately; the object survives for 30 days but is **unreachable**,
+because the delivery route resolves the object through the row and the row is
+soft-deleted. That is a real deletion from every user's point of view. A
+hard-delete-now path is deliberately not offered: it would be the one
+irreversible destructive operation on this screen, and §D7.11 already refused
+that shape once for the same reason.
+
+---
+
+##### D7.14.10 Contract, schema and route changes
+
+Precise enough to build from. Two agents will split this; the boundary is the
+`media_objects` table, which **storage owns** — the wall service claims through
+`storage.service.ts`, never through `storage.repository.ts` (D8: a module never
+imports another module's repository).
+
+**New table — `backend/src/modules/storage/media.schema.ts`**
+
+```
+media_kind  pgEnum ('image' | 'video' | 'audio')
+
+media_objects
+  id             uuid pk defaultRandom
+  kind           media_kind      notNull
+  contentType    text            notNull   -- from magic bytes, never the client
+  objectKey      text            notNull   -- 'media/<yyyy>/<mm>/<id>/<random>.<ext>'
+  posterKey      text                      -- video only; null otherwise
+  byteSize       integer         notNull
+  width          integer                   -- null for audio
+  height         integer                   -- null for audio
+  durationMs     integer                   -- null for image
+  dominantColor  text                      -- '#rrggbb', client-computed, nullable
+  alt            text                      -- <= 200 chars, nullable
+  uploadedById   uuid            notNull -> users.id  onDelete: 'restrict'
+  entityType     text                      -- null while unclaimed; 'post' | 'comment'
+  entityId       uuid                      -- null while unclaimed
+  sortOrder      integer         notNull default 0
+  expiresAt      timestamptz               -- null once claimed
+  createdAt      timestamptz     notNull defaultNow
+
+  index media_entity_idx      on (entityType, entityId, sortOrder) where entityType is not null
+  index media_unclaimed_idx   on (expiresAt)                        where expiresAt is not null
+  index media_uploader_idx    on (uploadedById)
+```
+
+- **A new migration, never a regenerated baseline** (CONVENTIONS rule 8). This
+  one has already cost a production deploy once.
+- `entityType`/`entityId` is polymorphic, matching `comments` and `reactions` —
+  same trade-off, same file-header warning, and the service layer owns the
+  integrity. `entityType` is deliberately **not** the full
+  `COMMENTABLE_ENTITY_TYPES` set: only `post` and `comment` may carry media.
+  Kudos and polls may not (see below), and a task or an event carrying a photo is
+  a different feature nobody has asked for.
+- **`objectKey` is a real column here**, unlike the avatar path, which
+  deliberately derives its key from the stored URL to avoid a second source of
+  truth. The reason for the difference is worth writing in the file: an avatar
+  has a URL to derive from, and media has an **id**; and the key carries a
+  `yyyy/mm` prefix so the reapers and any future bucket audit can work by prefix
+  rather than by scanning every object.
+
+**Why kudos and polls take no attachments.** A «спасибо» is one sentence
+addressed to one person — the warmest thing the app renders, and a photograph
+attached to it turns it into an announcement with a recipient. A poll is a
+question and a set of options. Both are shapes, not containers. If the owner
+asks, the change is one entry in the entity-type whitelist plus a card layout —
+but do not do it because it is easy.
+
+**New contract file — `packages/shared/src/contracts/media.ts`**
+
+```
+MEDIA_KINDS = ['image', 'video', 'audio'] as const
+mediaKindSchema = z.enum(MEDIA_KINDS)
+
+mediaAttachmentSchema = z.object({
+  id, kind, contentType, byteSize,
+  width: z.number().int().positive().nullable(),
+  height: z.number().int().positive().nullable(),
+  durationMs: z.number().int().nonnegative().nullable(),
+  dominantColor: z.string().regex(/^#[0-9a-f]{6}$/).nullable(),
+  alt: z.string().max(200).nullable(),
+  url: z.string(),          // '/api/media/<id>'
+  posterUrl: z.string().nullable(),
+})
+
+mediaLimitsSchema = z.object({
+  maxPerPost, maxPerComment,
+  image: { maxBytes, contentTypes: string[] },
+  video: { maxBytes, maxDurationMs, contentTypes: string[] },
+  audio: { maxBytes, maxDurationMs, contentTypes: string[] },
+})
+```
+
+**Changes to `packages/shared/src/contracts/wall.ts`**
+
+```
+createPostSchema
+  + attachmentIds: z.array(idSchema).max(4).default([])
+  ~ body: z.string().trim().max(8000).default('')        // was nonEmptyString(8000)
+  + .superRefine(...)  ->  body.length > 0 || attachmentIds.length > 0
+                           else issue on `body`, code BAD_REQUEST
+
+postResponseSchema
+  + attachments: z.array(mediaAttachmentSchema).default([])
+
+createCommentSchema
+  + attachmentIds: z.array(idSchema).max(1).default([])
+  ~ body: z.string().trim().max(4000).default('')
+  + same superRefine
+
+commentResponseSchema
+  + attachments: z.array(mediaAttachmentSchema).default([])
+```
+
+`updatePostSchema` gains **nothing** — attachments are immutable (§D7.14.9).
+
+Also export `LIKE_EMOJI = '❤️'` from the wall contract (§D7.7a), so client,
+digest and any future notification rule agree on what a like is.
+
+**Permission catalog — `packages/shared/src/domain/roles.ts`**
+
+One new permission, and only one:
+
+```
++ 'media:read'
+```
+
+granted to `child`, `teen`, `adult`, `admin`, `owner`. **Not to `guest`.**
+
+The reasoning, because this is a real change to what a role means. `guest`
+currently holds `member:read` and `event:read` and reads the wall, and that was
+scoped when the wall was **text**. Photographs of children are the most
+sensitive content this app will ever hold, and `guest` is by construction the
+role handed to whoever is least inside the family — a babysitter, a relative
+passing through, an account somebody made and forgot. Adding media without
+touching the role would silently widen what "read the wall" means, and it is not
+recoverable if it turns out to be wrong.
+
+- A reader without `media:read` sees, in place of the media box, one quiet
+  `body` line on `--muted` ground: «Фото — только для семьи». Not a lock icon,
+  not a blur, and **not a blurred version of the actual image** — a blur is a
+  client-side effect over bytes that were already sent.
+- The delivery route enforces it server-side with `notFoundOnDeny`, so a guest
+  requesting an object id gets a **404**, exactly as D4 requires: a 403 confirms
+  the object exists.
+- Attaching needs **no** new permission —
+  `requireAny('post:create', 'comment:create')` (§D7.14.1).
+
+**Config — `backend/src/core/config.ts`**
+
+```
+MEDIA_IMAGE_MAX_BYTES        default 8_388_608     (8 MB)
+MEDIA_VIDEO_MAX_BYTES        default 41_943_040    (40 MB)
+MEDIA_VIDEO_MAX_SECONDS      default 60
+MEDIA_AUDIO_MAX_BYTES        default 8_388_608     (8 MB)
+MEDIA_AUDIO_MAX_SECONDS      default 180
+MEDIA_POSTER_MAX_BYTES       default 524_288       (512 KB)
+MEDIA_MAX_PER_POST           default 4
+MEDIA_MAX_PER_COMMENT        default 1
+MEDIA_UNCLAIMED_TTL_HOURS    default 24
+MEDIA_ORPHAN_TTL_DAYS        default 30            -- must exceed BACKUP_KEEP
+```
+
+They hang off the existing `config.storage` object, next to `avatarMaxBytes`,
+under the same `storage.enabled` flag — an instance with no RustFS configured
+answers **503** on upload and renders no attach control, and its calendar still
+works. Same shape as `oauth` and `push`, for the same stated reason.
+
+**Routes — `backend/src/modules/storage/media.routes.ts`**
+
+| Method   | Path                    | Guard                                                     | Notes                                                                                                                                                    |
+| -------- | ----------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST`   | `/api/media`            | `requireAny('post:create','comment:create')`              | multipart: `file` (required) + `poster` (optional image) + fields `alt`, `dominantColor`, `durationMs`, `width`, `height`. → `201 mediaAttachmentSchema` |
+| `DELETE` | `/api/media/:id`        | same, **and** caller is `uploadedById`, **and** unclaimed | the ✕ on a composer tile. `409` on a claimed row — deleting a posted attachment is a post delete                                                         |
+| `GET`    | `/api/media/:id`        | `member:read` + `media:read`, `notFoundOnDeny`            | streams; **Range-capable** (below)                                                                                                                       |
+| `GET`    | `/api/media/:id/poster` | same                                                      | streams the poster                                                                                                                                       |
+| `GET`    | `/api/media/limits`     | any authenticated                                         | the numbers the client's guards and sentences are built from                                                                                             |
+
+**Five things about these routes that will otherwise be got wrong.**
+
+1. **HTTP Range is mandatory, and the avatar precedent does not cover it.**
+   `<video>` and `<audio>` in Safari open a resource with a `Range` request and
+   will refuse to play something that answers `200` where a `206` was asked for.
+   So `GET /api/media/:id` must read `Range`, pass it through to
+   `GetObjectCommand({ Range })`, and answer `206` with `Content-Range` and
+   `Accept-Ranges: bytes`. `s3.adapter.ts`'s `get()` grows an optional `range`
+   and its result grows `contentRange`. **This is the single most likely cause of
+   "the video plays in Chrome and not on the iPhone", and it produces no error
+   message at all** — the element simply never starts.
+2. **A second, separately-scoped `@fastify/multipart` registration.** The avatar
+   route registers it inside its own plugin with `fileSize: avatarMaxBytes` and
+   `files: 1`, precisely so no other endpoint accepts multipart. Media needs
+   `files: 2` and a 40 MB `fileSize`. It must be its **own** encapsulated
+   registration — raising the avatar route's limit to cover video would let
+   somebody push 40 MB at a route that wants 2 MB.
+3. **Memory.** `part.toBuffer()` on a 40 MB video means 40 MB resident per
+   concurrent upload; six family members at once is ~240 MB on a 6.8 GB VDI.
+   Acceptable, and it is the reason the cap is 40 and not 200. Streaming
+   straight to S3 would need `@aws-sdk/lib-storage`, which is **not installed** —
+   do not add it (CONVENTIONS rule 1); if concurrency ever becomes a real
+   problem, that is the fix and the lead adds the dependency.
+4. **The same response headers as the avatar route**, and for the same reasons:
+   `Cache-Control: private, max-age=31536000, immutable` (safe because a media id
+   is immutable and its object never changes), `X-Content-Type-Options: nosniff`,
+   `Content-Security-Policy: default-src 'none'; sandbox`, `Vary: authorization`,
+   ETag with `If-None-Match` → 304. The `nosniff` header is not decoration: it is
+   what forbids a browser from second-guessing our sniffed `Content-Type`.
+5. **`Content-Type` comes from the magic bytes, never from the request**, exactly
+   as `image.ts` already documents. `image.ts` generalises into `media.ts` with
+   the container table extended — `ftyp` at offset 4 with the brand at 8..12 for
+   QuickTime/MP4/M4A, `1A 45 DF A3` for Matroska/WebM, `OggS` for Ogg — and **an
+   unrecognised header stays a rejection, never a guess**. Two things to write
+   into that file's header comment so the next reader does not have to
+   rediscover them:
+
+   - **Sniffing identifies the container, not the codec.** That closes the
+     stored-XSS hole, which is what the check is for. It does not promise the
+     clip will play anywhere, which is why `media.ts` also walks
+     `moov → trak → mdia → minf → stbl → stsd` and whitelists `avc1`/`avc3`
+     (§D7.14.6). The `mvhd` duration walk is on the way there, so it is one
+     traversal, not two.
+   - **Every video from an iPhone is QuickTime, never MP4** (§D7.14.3), so the
+     brand table must contain `qt  ` and the extension must never be consulted.
+
+**Live sync (D12) — `ROUTE_DOMAINS` gains one row, and it maps to nothing.**
+
+```
+| /api/media | (none) |
+```
+
+An upload changes nothing any screen draws — it stages an object that no card
+references yet. Bumping `wall` for it would make every open phone in the house
+refetch the feed each time somebody picks a photo, which is exactly the
+"invalidate on a write nobody can see" waste D12 was written to avoid. The
+**claim** happens inside `POST /api/wall/posts`, which already bumps `wall`, so
+the card and its photo appear together in one invalidation.
+
+This row is **explicit, not a fallthrough**: `sync.md` §8.1's coverage test fails
+the build on a write route with no mapping, which is the correct behaviour and
+the reason to write the row down rather than let it default.
+
+**Frontend files**
+
+| File                                                   | What                                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shared/ui/media-grid.tsx` _(new)_                     | §D7.14.2 — the 1/2/3/4 layouts, ratio clamp, `dominantColor` ground, the tinted-card inset variant                                                                                                                                                                                 |
+| `shared/ui/media-player.tsx` _(new)_                   | §D7.14.5 — the single-element-at-a-time registry, `playsinline`, `preload="none"`, pause-on-exit-viewport, the audio row                                                                                                                                                           |
+| `shared/ui/media-viewer.tsx` _(new)_                   | the full-screen photo viewer: pinch-zoom, swipe between attachments, no history entry (§G3), `pt-safe`/`pb-safe`                                                                                                                                                                   |
+| `shared/media/pick.ts` _(new)_                         | one file input, `accept="image/*,video/*"`, `multiple`, **no `capture`**, **never `audio/*`** (§D7.14.3); local size/duration guards; the Russian refusals                                                                                                                         |
+| `shared/media/record.ts` _(new)_                       | `getUserMedia` + `MediaRecorder`, `isTypeSupported` with an `audio/mp4` fallback, the explain-then-prompt flow, and the assumption that the grant is **never** remembered across launches                                                                                          |
+| `shared/media/encode.ts` _(new)_                       | the photo downscale + WebP quality ladder + `dominantColor` + poster extraction. **Generalise `features/settings/avatar-image.ts`** — do not write a second one                                                                                                                    |
+| `shared/media/upload.ts` _(new)_                       | the XHR with `upload.onprogress`, over the existing token accessor                                                                                                                                                                                                                 |
+| `features/wall/components/AttachmentField.tsx` _(new)_ | the tile strip in the composer: states, retry, ✕, the «описание» row                                                                                                                                                                                                               |
+| `features/wall/components/ReactionBar.tsx`             | **The ❤️ chip is always drawn**, outline when nobody has used it — that chip **is** the like (§D7.7a). Other emoji appear only once used. Still no digit anywhere, `aria-label` included. `userIds` has landed, so `reactorLabel()` names people; the emoji-alone interim is gone. |
+| `features/wall/components/CommentThread.tsx`           | per-comment foot row (❤️ + `⋯` sheet), 📎 on the composer, one attachment (§D7.8)                                                                                                                                                                                                  |
+| `features/wall/components/AnnouncementComposer.tsx`    | `AttachmentField`; «Повесить» disabled while uploading; draft now `{title, body, attachmentIds}`                                                                                                                                                                                   |
+| `features/wall/components/AnnouncementNote.tsx`        | the media slot, the no-text card, the `media:read` substitute line                                                                                                                                                                                                                 |
+| `features/wall/locale.ts`                              | every string in §D7.14.6 and §D7.14.8                                                                                                                                                                                                                                              |
+
+---
+
+##### D7.14.11 What is not settled, and the experiment that settles it
+
+Five, named rather than papered over, each with the experiment that closes it.
+None blocks starting; the second one decides whether audio ships at all.
+
+**1. Whether `MediaRecorder` actually runs inside an installed Home Screen web
+app.** This is the load-bearing one, because §D7.14.3 established that
+`accept="audio/*"` is broken on iOS (WebKit bug 242110, open), so an in-app
+recorder is the **only** path to a voice note on an iPhone. `MediaRecorder` has
+shipped on iOS since 14 and `getUserMedia` has worked in standalone since 13.4
+(bug 185448, RESOLVED FIXED) — but I found **no primary source in either
+direction** for the two of them together in a standalone Home Screen app, and
+this project has been wrong about exactly that shape of claim three times.
+
+> **Experiment.** On the real installed PWA: tap a record button, confirm the
+> permission prompt appears, confirm a blob comes back, and read its `mimeType`.
+> Ten minutes with Web Inspector over USB — the method that overturned three
+> assumptions in the push research.
+>
+> **If it fails**, audio does not degrade to "pick a file", because there is no
+> file picker for audio on iOS. It degrades to **not shipping audio**. In that
+> case ship photo and video, say so plainly, and do not leave a record button
+> that works on Android and not on the iPhones.
+
+**2. Video sizes and codecs from the clips this family actually shoots.** The
+mechanism is now settled (§D7.14.3): Фотогалерея transcodes to H.264, «Снять
+видео» does not and yields HEVC in a `.mov` on a High-Efficiency phone. What is
+**not** settled is whether the 40 MB cap and the 60-second cap are generous or
+cruel for real clips, and whether Chrome demuxes HEVC inside a **QuickTime**
+container specifically — caniuse tracks the codec, not the container, and no
+primary source covers that pairing.
+
+> **Experiment.** Record a 20-second clip on an iPhone at each of the two
+> Камера → Форматы settings. Note both file sizes. Upload both through both
+> menu paths (Фотогалерея and Снять видео) and open the card in (a) Safari on
+> iOS, (b) Chrome on Android, (c) Chrome on Windows. Half a day, and it settles
+> the caps, the codec whitelist, and whether the rejection sentence's advice
+> ("pick it from the gallery") actually works.
+
+**3. Whether the `UnboundedNetworking` assertion survives a screen lock**, how
+long it lasts under memory pressure, and whether the JS promise resolves after a
+resume or is simply dropped. The assertion itself is verified from WebKit source
+(§D7.14.7); its lifetime under those three conditions is not, and no source
+covers it.
+
+> **Experiment.** Start a 30 MB upload on the installed PWA, then (a) switch
+> apps, (b) lock the screen, (c) leave it locked five minutes. Watch the server
+> log for the completed `POST /api/media`, and the client for whether it ever
+> learns. **If the promise is dropped**, the fix is already half-built: the
+> attachment exists server-side with a 24-hour claim window, so the composer can
+> reconcile on resume by asking for the caller's unclaimed uploads. That would
+> need one extra route (`GET /api/media/unclaimed`) and is not worth building
+> before the experiment says so.
+
+**4. The size of the object volume after a month of real use**, which decides
+whether an explicit family-wide quota and a "what is taking up space" settings
+screen need building. Building one now is speculative; discovering the disk is
+full is not recoverable in a hurry.
+
+> **Experiment.** None needed — instrument it. Report the bucket's total size
+> through the existing health endpoint, look at it after four weeks, and build
+> the quota UI only if the curve says so. **Trigger, written down now: at 50 %
+> of the media budget, build it.**
+
+**5. Whether `guest` should see media at all** is a decision, not an experiment,
+and §D7.14.10 takes the cautious side by default (`media:read`, not granted to
+`guest`). It is listed here because it is the one item on this list the owner
+should actively confirm rather than discover: if the family's `guest` accounts
+turn out to be grandparents rather than babysitters, the permission is one line
+in `ROLE_PERMISSIONS` and the default was simply wrong in a recoverable
+direction. The reverse — discovering after the fact that photographs of children
+were readable by the loosest role in the system — is not recoverable at all.
 
 ---
 
@@ -1951,18 +3323,21 @@ Named against the real tree.
 
 ### New — `src/shared/ui/`
 
-| File                    | What                                                                                                                                                                                                             |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `responsive-dialog.tsx` | `Dialog` on `(pointer: fine)`, vaul `Drawer` on coarse. Props: `size: 'full' \| 'tall' \| 'auto'`, `title`, `description`, `primaryAction`, `onOpenChange`. The single highest-leverage change in this document. |
-| `form-sheet.tsx`        | The create/edit container (§F3). Fixed `pt-safe` header with Отмена / title / primary; scrolling body; `pb-safe`. Unsaved-input guard + `sessionStorage` draft on `visibilitychange`.                            |
-| `value-row.tsx`         | The 56px row: optional leading icon, label, value (or «—»), trailing chevron/switch/action. **Caps its content at 720px** (§C2). Used by settings, forms, detail screens.                                        |
-| `section.tsx`           | `label` (12/600 uppercase) + optional right-hand link + hairline-separated children on one L1 surface. Replaces per-widget `Card`.                                                                               |
-| `swipe-row.tsx`         | §G4. Props: `action: { label, icon, tone, onCommit }`, `undoLabel`. Handles the 32px dead zone, the axis lock, the two stops, the toast.                                                                         |
-| `segmented-control.tsx` | Promote `features/tasks/components/SegmentedControl.tsx` to shared. Max 3 options, single row, never wraps, 44px.                                                                                                |
-| `day-rail.tsx`          | §C3. Renders the 56px rail cell (time / day marker / member tick).                                                                                                                                               |
-| `member-disc.tsx`       | 24/32/64px, ramp colour by `sortOrder % 5`, initial. Wraps `UserAvatar`.                                                                                                                                         |
-| `pull-to-refresh.tsx`   | §G6. Wraps `AppShell`'s main.                                                                                                                                                                                    |
-| `use-coarse-pointer.ts` | `matchMedia('(pointer: coarse)')` hook, live.                                                                                                                                                                    |
+| File                    | What                                                                                                                                                                                                                                           |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `responsive-dialog.tsx` | `Dialog` on `(pointer: fine)`, vaul `Drawer` on coarse. Props: `size: 'full' \| 'tall' \| 'auto'`, `title`, `description`, `primaryAction`, `onOpenChange`. The single highest-leverage change in this document.                               |
+| `form-sheet.tsx`        | The create/edit container (§F3). Fixed `pt-safe` header with Отмена / title / primary; scrolling body; `pb-safe`. Unsaved-input guard + `sessionStorage` draft on `visibilitychange`.                                                          |
+| `value-row.tsx`         | The 56px row: optional leading icon, label, value (or «—»), trailing chevron/switch/action. **Caps its content at 720px** (§C2). Used by settings, forms, detail screens.                                                                      |
+| `section.tsx`           | `label` (12/600 uppercase) + optional right-hand link + hairline-separated children on one L1 surface. Replaces per-widget `Card`.                                                                                                             |
+| `swipe-row.tsx`         | §G4. Props: `action: { label, icon, tone, onCommit }`, `undoLabel`. Handles the 32px dead zone, the axis lock, the two stops, the toast.                                                                                                       |
+| `segmented-control.tsx` | Promote `features/tasks/components/SegmentedControl.tsx` to shared. Max 3 options, single row, never wraps, 44px.                                                                                                                              |
+| `day-rail.tsx`          | §C3. Renders the 56px rail cell (time / day marker / member tick).                                                                                                                                                                             |
+| `member-disc.tsx`       | 24/32/64px, ramp colour by `sortOrder % 5`, initial. Wraps `UserAvatar`.                                                                                                                                                                       |
+| `pull-to-refresh.tsx`   | §G6. Wraps `AppShell`'s main.                                                                                                                                                                                                                  |
+| `use-coarse-pointer.ts` | `matchMedia('(pointer: coarse)')` hook, live.                                                                                                                                                                                                  |
+| `media-grid.tsx`        | §D7.14.2. The 1/2/3/4 layouts, the 4:5 tall-end ratio clamp, `max-height: 60dvh`, the `dominantColor` reserved box, and an `inset` variant for tinted cards. Never renders a «+N» tile — the cap is four precisely so it does not have to.     |
+| `media-player.tsx`      | §D7.14.5. `playsinline` (mandatory on iPhone), `preload="none"`, the poster/play/duration overlay for video, the 56px row for audio, and a module-level registry so **exactly one element plays app-wide**, pausing on exit from the viewport. |
+| `media-viewer.tsx`      | The full-screen photo viewer: pinch-zoom, swipe between a post's attachments, the description as a caption, `pt-safe`/`pb-safe`, and **no history entry** so the iOS back-swipe is not eaten (§G3).                                            |
 
 ### Change — `src/shared/ui/`
 
@@ -1995,30 +3370,34 @@ Named against the real tree.
 
 ### Change — features
 
-| File                                                | Change                                                                                                                                                                                                                                                                                              |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `features/shopping/pages/ListPage.tsx`              | The sticky offset fix (§D6). Composer top-of-list at `≥ md`.                                                                                                                                                                                                                                        |
-| `features/shopping/components/QuickAddBar.tsx`      | Opaque; ≤ 3 rows; suggestions above the field; hint inline.                                                                                                                                                                                                                                         |
-| `features/shopping/components/FrequentStrip.tsx`    | Edge fade + a `›` affordance; currently the last chip is clipped mid-word at 390px.                                                                                                                                                                                                                 |
-| `features/shopping/components/ItemRow.tsx`          | Wrap in `SwipeRow` (куплено). 56/68px.                                                                                                                                                                                                                                                              |
-| `features/today/components/WidgetCard.tsx`          | **Delete.** Replaced by `Section`.                                                                                                                                                                                                                                                                  |
-| `features/today/pages/TodayPage.tsx`                | The band model (§C2/D1). One attention block, one «все ›» per section.                                                                                                                                                                                                                              |
-| `features/today/components/LoadWidget.tsx`          | Delete with points.                                                                                                                                                                                                                                                                                 |
-| `features/tasks/components/TaskCard.tsx`            | 56px row, member disc, member tick. Remove the coloured footer band. Wrap in `SwipeRow`.                                                                                                                                                                                                            |
-| `features/tasks/components/TaskFilters.tsx`         | Segmented `Мои/Все` + one «Фильтры · N» row → sheet on phone; side-column panel on desktop.                                                                                                                                                                                                         |
-| `features/tasks/components/TaskForm.tsx`            | Rebuild per §F3–F5. Remove Баллы.                                                                                                                                                                                                                                                                   |
-| `features/calendar/components/EventFormDialog.tsx`  | Rebuild per §F3–F5.                                                                                                                                                                                                                                                                                 |
-| `features/calendar/pages/CalendarPage.tsx`          | Month into the app-bar title; remove `SubscribePanel` from the page.                                                                                                                                                                                                                                |
-| `features/calendar/components/AgendaList.tsx`       | Adopt `DayRail`.                                                                                                                                                                                                                                                                                    |
-| `features/goals/components/GoalCard.tsx`            | Row, one indicator, no floating «Пополнить».                                                                                                                                                                                                                                                        |
-| `features/goals/components/ProgressRing.tsx`        | Detail screen only.                                                                                                                                                                                                                                                                                 |
-| `features/settings/components/PreferenceMatrix.tsx` | Become an actual matrix (§D8a).                                                                                                                                                                                                                                                                     |
-| `features/family/components/WeekLoadBar.tsx`        | Remove points; `choreCount` only.                                                                                                                                                                                                                                                                   |
-| `features/wall/components/AnnouncementComposer.tsx` | Stays a `FormSheet` behind `BoardCompose`, the one door for all three kinds of note. Its trigger moves from the app-bar `⊕` to the feed's **compose row** below `md` (§D7.5). Стена's panels own no state and the screen mounts one tree at every width; `useTwoColumn` is not used there any more. |
-| `features/wall/components/WallStream.tsx`           | Becomes the feed (§D7.4–D7.9): compose row, floating head with no section headers, bounded auto-load, a visible end, the «Новое на стене» pill. `Section` is used once, for the whole surface — never once per group.                                                                               |
-| `features/wall/components/ActivityRow.tsx`          | Consecutive activity items coalesce into **one** digest card, 3 lines + «и ещё N» expanding in place (§D7.6).                                                                                                                                                                                       |
-| `features/wall/components/ReactionBar.tsx`          | **Remove the digit.** Emoji chip + the reactors' discs; interim is the emoji alone until `reactionSummarySchema` carries `userIds` (§D7.7). `reactorLabel()` in `locale.ts` changes with it.                                                                                                        |
-| `features/wall/pages/WallPage.tsx`                  | App-bar `⋯` → «Очистить доску» for `settings:manage` (§D7.11). `SideColumn` children wrapped `hidden lg:block`.                                                                                                                                                                                     |
+| File                                                   | Change                                                                                                                                                                                                                                                                                              |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `features/shopping/pages/ListPage.tsx`                 | The sticky offset fix (§D6). Composer top-of-list at `≥ md`.                                                                                                                                                                                                                                        |
+| `features/shopping/components/QuickAddBar.tsx`         | Opaque; ≤ 3 rows; suggestions above the field; hint inline.                                                                                                                                                                                                                                         |
+| `features/shopping/components/FrequentStrip.tsx`       | Edge fade + a `›` affordance; currently the last chip is clipped mid-word at 390px.                                                                                                                                                                                                                 |
+| `features/shopping/components/ItemRow.tsx`             | Wrap in `SwipeRow` (куплено). 56/68px.                                                                                                                                                                                                                                                              |
+| `features/today/components/WidgetCard.tsx`             | **Delete.** Replaced by `Section`.                                                                                                                                                                                                                                                                  |
+| `features/today/pages/TodayPage.tsx`                   | The band model (§C2/D1). One attention block, one «все ›» per section.                                                                                                                                                                                                                              |
+| `features/today/components/LoadWidget.tsx`             | Delete with points.                                                                                                                                                                                                                                                                                 |
+| `features/tasks/components/TaskCard.tsx`               | 56px row, member disc, member tick. Remove the coloured footer band. Wrap in `SwipeRow`.                                                                                                                                                                                                            |
+| `features/tasks/components/TaskFilters.tsx`            | Segmented `Мои/Все` + one «Фильтры · N» row → sheet on phone; side-column panel on desktop.                                                                                                                                                                                                         |
+| `features/tasks/components/TaskForm.tsx`               | Rebuild per §F3–F5. Remove Баллы.                                                                                                                                                                                                                                                                   |
+| `features/calendar/components/EventFormDialog.tsx`     | Rebuild per §F3–F5.                                                                                                                                                                                                                                                                                 |
+| `features/calendar/pages/CalendarPage.tsx`             | Month into the app-bar title; remove `SubscribePanel` from the page.                                                                                                                                                                                                                                |
+| `features/calendar/components/AgendaList.tsx`          | Adopt `DayRail`.                                                                                                                                                                                                                                                                                    |
+| `features/goals/components/GoalCard.tsx`               | Row, one indicator, no floating «Пополнить».                                                                                                                                                                                                                                                        |
+| `features/goals/components/ProgressRing.tsx`           | Detail screen only.                                                                                                                                                                                                                                                                                 |
+| `features/settings/components/PreferenceMatrix.tsx`    | Become an actual matrix (§D8a).                                                                                                                                                                                                                                                                     |
+| `features/family/components/WeekLoadBar.tsx`           | Remove points; `choreCount` only.                                                                                                                                                                                                                                                                   |
+| `features/wall/components/AnnouncementComposer.tsx`    | Stays a `FormSheet` behind `BoardCompose`, the one door for all three kinds of note. Its trigger moves from the app-bar `⊕` to the feed's **compose row** below `md` (§D7.5). Стена's panels own no state and the screen mounts one tree at every width; `useTwoColumn` is not used there any more. |
+| `features/wall/components/WallStream.tsx`              | Becomes the feed (§D7.4–D7.9): compose row, floating head with no section headers, bounded auto-load, a visible end, the «Новое на стене» pill. `Section` is used once, for the whole surface — never once per group.                                                                               |
+| `features/wall/components/ActivityRow.tsx`             | Consecutive activity items coalesce into **one** digest card, 3 lines + «и ещё N» expanding in place (§D7.6).                                                                                                                                                                                       |
+| `features/wall/components/ReactionBar.tsx`             | **Remove the digit.** Emoji chip + the reactors' discs; interim is the emoji alone until `reactionSummarySchema` carries `userIds` (§D7.7). `reactorLabel()` in `locale.ts` changes with it.                                                                                                        |
+| `features/wall/pages/WallPage.tsx`                     | App-bar `⋯` → «Очистить доску» for `settings:manage` (§D7.11). `SideColumn` children wrapped `hidden lg:block`.                                                                                                                                                                                     |
+| `features/wall/components/CommentThread.tsx`           | One 44px foot row per comment: ❤️ + `⋯` action sheet («Поставить реакцию», «Удалить»), long-press opening the same sheet. A 📎 on the existing composer, **one** attachment, 240px cap, inset not bled (§D7.8).                                                                                     |
+| `features/wall/components/AttachmentField.tsx` _(new)_ | The composer's tile strip: pick → upload-on-pick → per-tile progress / retry / ✕, the «описание» row, and the local size, duration, count and mixed-kind refusals (§D7.14.6–7).                                                                                                                     |
+| `features/wall/components/VoiceRecorder.tsx` _(new)_   | «Записать голосом» — explain-then-prompt, `MediaRecorder` with an `audio/mp4` fallback, and no assumption that a previous grant survived the launch (§D7.14.3). **Ship last**; §D7.14.11 item 1 decides whether it ships at all.                                                                    |
+| `shared/media/{pick,encode,record,upload}.ts` _(new)_  | The four seams. `encode.ts` **generalises `features/settings/avatar-image.ts`** — do not write a second decode-and-downscale ladder.                                                                                                                                                                |
 
 ---
 
@@ -2069,6 +3448,22 @@ Non-negotiable. From D7 and `docs/research/ios-pwa-push.md` §9.
 13. **Colour is never the only signal** (§B4).
 14. **All user-facing text is Russian, «вы», from `features/<domain>/locale.ts`.**
     Never a server `message` (D7).
+15. **No media element ever plays without a tap**, and `playsinline` is on every
+    `<video>`. Both verified from WebKit source on 2026‑08‑20 (§D7.14.5): without
+    `playsinline` an iPhone takes the whole screen the moment playback starts,
+    and Low Power Mode blocks video autoplay **including muted**, so an autoplay
+    design behaves differently on two phones in the same room for a reason
+    nobody can explain. **Exactly one media element plays app-wide**, and it
+    pauses when it leaves the viewport.
+16. **Send a `File` or `Blob` object on any upload — never base64, never an
+    `ArrayBuffer`.** WebKit takes the `UnboundedNetworking` process assertion
+    that lets an upload survive an app switch **only** when the request body
+    contains file or blob data (§D7.14.7). The difference is invisible on a
+    desktop and decides whether a photo survives a phone call.
+17. **Never trust a media file's extension or its `Content-Type`.** Every video
+    from an iPhone is QuickTime, not MP4, whatever it is called (§D7.14.3). The
+    container comes from magic bytes and the codec from the `stsd` box; an
+    unrecognised value is a rejection, never a guess.
 
 ---
 
@@ -2088,4 +3483,21 @@ Not a schedule — a dependency order.
 5. Screen-by-screen: Сегодня → Задачи → Покупки → Календарь → Копилки → Стена →
    Семья → Настройки/Уведомления.
 6. Gestures (§C-gestures) — after the rows they attach to are final.
-7. Typography: ship `Onest` last. Everything above works without it.
+7. **Likes** (§D7.7). One always-drawn ❤️ chip on posts and comments, and the
+   comment foot row. It depends on nothing above and it is the smallest thing
+   the owner asked for, so it can land alongside Стена or before it.
+8. **Media** (§D7.14), in this order and not another, because each step is
+   useful on its own and each later step can be abandoned without stranding the
+   earlier ones:
+
+   a. the **backup fix** in `infra/` (§D7.14.6) — this is first, not last: it is
+   the only step whose absence is unrecoverable;
+   b. the storage backend — `media_objects`, `media.ts`, the upload and
+   **Range-capable** delivery routes, `media:read`, the two reapers;
+   c. **photos on posts** — the grid, the viewer, the composer tile strip;
+   d. **photos in threads** (§D7.8b);
+   e. **video**, once §D7.14.11 item 2 has been run on a real iPhone;
+   f. **voice**, last, and only if §D7.14.11 item 1 says it works in an
+   installed Home Screen app.
+
+9. Typography: ship `Onest` last. Everything above works without it.

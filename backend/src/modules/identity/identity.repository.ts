@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm';
 
 import type { AuthProvider, Role, UserStatus } from '@family/shared';
 
@@ -137,12 +137,25 @@ export async function transitionUserStatus(
 export interface MemberFilter {
   status?: UserStatus;
   role?: Role;
+  /**
+   * Statuses the caller must never be shown, whatever else they asked for.
+   *
+   * Deliberately a subtraction rather than an allow-list: `listUsers` with no
+   * filter used to be a bare `SELECT * FROM users`, and every "pick a person"
+   * surface in the app is ultimately fed by it. A subtraction fails safe — a
+   * status added to the enum later is included until somebody decides it should
+   * not be, which is visible, rather than silently dropped from every roster.
+   */
+  excludeStatuses?: readonly UserStatus[];
 }
 
 export async function listUsers(x: Executor, filter: MemberFilter = {}): Promise<UserRow[]> {
   const conditions = [
     filter.status ? eq(users.status, filter.status) : undefined,
     filter.role ? eq(users.role, filter.role) : undefined,
+    filter.excludeStatuses && filter.excludeStatuses.length > 0
+      ? notInArray(users.status, [...filter.excludeStatuses])
+      : undefined,
   ].filter((c) => c !== undefined);
 
   const query = x.select().from(users);
@@ -237,6 +250,34 @@ export async function deleteIdentity(
     .where(and(eq(userIdentities.userId, userId), eq(userIdentities.provider, provider)))
     .returning();
   return row;
+}
+
+/** What a released identity looked like, for the audit trail that outlives it. */
+export interface ReleasedIdentity {
+  provider: AuthProvider;
+  providerUserId: string;
+  providerUsername: string | null;
+  providerEmail: string | null;
+  providerDisplayName: string | null;
+}
+
+/**
+ * Drops **every** `user_identities` row of one user and reports what was there.
+ *
+ * The rows carry the only copy of `(provider, provider_user_id)`, which is the
+ * unique key a provider account is bound by — so deleting them is what hands
+ * that account back to the world, and returning them is what lets the caller
+ * write down who it belonged to before it went. Nothing else in the app deletes
+ * more than one identity at a time; `deleteIdentity` is the per-provider unlink.
+ */
+export async function releaseIdentities(x: Executor, userId: string): Promise<ReleasedIdentity[]> {
+  return x.delete(userIdentities).where(eq(userIdentities.userId, userId)).returning({
+    provider: userIdentities.provider,
+    providerUserId: userIdentities.providerUserId,
+    providerUsername: userIdentities.providerUsername,
+    providerEmail: userIdentities.providerEmail,
+    providerDisplayName: userIdentities.providerDisplayName,
+  });
 }
 
 /**

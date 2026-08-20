@@ -12,6 +12,7 @@ import {
   type LoginRequest,
   type MeResponse,
   type MemberListItem,
+  type MemberListQuery,
   type Permission,
   type PublicUser,
   type RegisterRequest,
@@ -688,20 +689,51 @@ export interface MemberListResult {
   pendingCount: number;
 }
 
+/** Not a member state — see `memberListQuerySchema`. Subtracted by default. */
+const NOT_A_FAMILY_MEMBER: readonly UserStatus[] = ['rejected'];
+
+/**
+ * Turns the query into a repository filter, deciding who may see a rejected row.
+ *
+ * Pure and exported so the rule is testable without a database: the roster is
+ * the single query behind every member picker in the app (the tasks, calendar,
+ * wall and goals features each fetch `GET /members` for their own cache), so a
+ * mistake here is a mistake on every screen at once.
+ *
+ * Two ways to opt in, both admin-only: `includeRejected=true` for the
+ * moderation screen's mixed list, and an explicit `status=rejected` for the
+ * narrow query. A non-admin asking for either gets the subtraction anyway,
+ * which for `status=rejected` means an empty list rather than a 403 — D4's
+ * "outside your read scope does not exist".
+ */
+export function memberListFilter(query: MemberListQuery, isAdmin: boolean): MemberFilter {
+  const optedIn = query.includeRejected === true || query.status === 'rejected';
+
+  return {
+    ...(query.status ? { status: query.status } : {}),
+    ...(query.role ? { role: query.role } : {}),
+    ...(isAdmin && optedIn ? {} : { excludeStatuses: NOT_A_FAMILY_MEMBER }),
+  };
+}
+
 /**
  * `GET /members`.
  *
  * Two serializers, chosen by the caller's permissions rather than by the client:
  * an admin sees moderation state, everybody else sees the public projection. A
  * child must not learn another member's email from the roster.
+ *
+ * Rejected applicants are **not in the family** and are subtracted by default —
+ * see `memberListFilter`. `pendingCount` is unaffected: it counts the approval
+ * queue, which is a different surface.
  */
 export async function listMembers(
   db: Db,
   auth: AuthContext,
-  filter: MemberFilter = {},
+  query: MemberListQuery = {},
 ): Promise<MemberListResult> {
   const isAdmin = auth.can('member:update:any');
-  const rows = await repo.listUsers(db, filter);
+  const rows = await repo.listUsers(db, memberListFilter(query, isAdmin));
 
   if (!isAdmin) {
     return { items: rows.map(toPublicUser), pendingCount: 0 };
@@ -850,6 +882,74 @@ export async function approveMember(
   return member;
 }
 
+/**
+ * Everything a rejected applicant could have signed in with, taken back.
+ *
+ * ## Why this exists
+ *
+ * The owner signed in from the wrong account by accident, declined the join
+ * request it raised, and then could not link that Telegram account to their
+ * real profile — ever. `UNIQUE (provider, provider_user_id)` had bound the
+ * Telegram subject to a row that no human would ever use again, and there is no
+ * un-reject transition to free it. The same shape holds for a Google or a
+ * password signup through `users.email`: `users_email_lower_uq` and the
+ * `ALREADY_EXISTS` check in `register` both keep the address, and
+ * `decideLinkOutcome`'s `email_belongs_to_existing_user` branch turns a second
+ * attempt into `IDENTITY_ALREADY_LINKED`. A declined request must not cost the
+ * person their identity.
+ *
+ * ## What is released, and what is deliberately kept
+ *
+ * Released — every credential-shaped key, so the provider account is free the
+ * instant the transaction commits:
+ *  - all `user_identities` rows (the `(provider, provider_user_id)` binding),
+ *  - `email` / `emailVerified` (the partial unique index and the registration
+ *    collision check),
+ *  - `passwordHash` (a `password` identity row without it is not a login).
+ *
+ * Kept — the row itself, `displayName`, `rejectedReason`, `createdAt`. **The
+ * rejected row is the record that somebody asked to join and was told no**, and
+ * an admin who declined by accident has to be able to see what they declined.
+ * Deleting the user would take that with it, cascade into `refresh_tokens` and
+ * any `notification_intents` pointing at them, and — the part that decides it —
+ * a `users` table that a spree of rejections could empty is a `users` table
+ * where `isBootstrapSignup`'s "first user wins" branch comes back to life. A
+ * tombstone cannot do that: the row still counts.
+ *
+ * The identities are not merely dropped either; they are written into the
+ * `member:reject` audit entry first, so «кто это вообще был» survives the
+ * release. `audit_log.target_id` is a loose pointer, not a foreign key, so it
+ * keeps pointing at the tombstone.
+ *
+ * Idempotent, and safe for the same person twice: their second signup is a new
+ * `users` row (the subject no longer resolves to the first), so a second
+ * rejection releases a different row and collides with nothing.
+ */
+async function releaseSignInIdentities(
+  x: Executor,
+  user: UserRow,
+): Promise<Record<string, unknown>> {
+  const identities = await repo.releaseIdentities(x, user.id);
+
+  await repo.updateUser(x, user.id, {
+    email: null,
+    emailVerified: false,
+    passwordHash: null,
+  });
+
+  return {
+    identities: identities.map((i) => ({
+      provider: i.provider,
+      providerUserId: i.providerUserId,
+      providerUsername: i.providerUsername,
+      providerEmail: i.providerEmail,
+      providerDisplayName: i.providerDisplayName,
+    })),
+    email: user.email,
+    hadPassword: user.passwordHash !== null,
+  };
+}
+
 export async function rejectMember(
   db: Db,
   auth: AuthContext,
@@ -872,17 +972,24 @@ export async function rejectMember(
     // the one place that guarantees the invariant "not active ⇒ no live family".
     await revokeAllForUser(tx, targetId, 'status_change');
 
+    // `rejected` is the row as it was *before* the release, so it still carries
+    // the email the audit entry has to record.
+    const released = await releaseSignInIdentities(tx, rejected);
+
     await repo.writeAudit(tx, {
       actorId: auth.userId,
       action: 'member:reject',
       targetType: 'user',
       targetId,
-      metadata: { reason: reason ?? null },
+      metadata: { reason: reason ?? null, released },
       ip: ctx.ip,
       userAgent: ctx.userAgent,
     });
 
-    return toMemberListItem(rejected);
+    // The response must show the tombstone, not the pre-release row — an admin
+    // screen that still printed the freed address would be lying about it.
+    const tombstone = (await repo.findUserById(tx, targetId)) ?? rejected;
+    return toMemberListItem(tombstone);
   });
 }
 

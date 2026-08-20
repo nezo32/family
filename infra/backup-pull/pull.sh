@@ -2,9 +2,21 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Family App — backup pull (runs INSIDE the container, on the owner's PC).
 #
-#   ssh probe -> scp latest.sql.gz + latest-objects.tar.gz (+ .sha256 sidecars)
-#   -> verify checksum -> verify gzip -> verify payload -> THEN overwrite the
-#   weekday slot -> record the success marker.
+# Two halves, two shapes, for two different kinds of data:
+#
+#   database  ssh probe -> scp latest.sql.gz (+ .sha256) -> verify checksum ->
+#             verify gzip -> verify payload -> THEN overwrite the weekday slot.
+#
+#   objects   scp objects.manifest (+ .sha256) -> rsync the mirror incrementally,
+#             deletions moved into a dated attic rather than erased -> verify
+#             EVERY local file against the manifest -> record the marker.
+#
+# The database is small, changes completely every night and benefits from seven
+# weekday generations. The object store is large, append-only and named by
+# content hash — seven generations of it would be seven copies of the same
+# bytes, and re-fetching it whole every night was the thing that made media
+# unshippable. One mirror plus a bounded attic is the equivalent guarantee at a
+# fraction of the transfer.
 #
 # The PC pulls; the server never pushes. The PC is behind NAT with no inbound
 # port and no stable address, so a server-side `scp` would fail more often than
@@ -47,13 +59,44 @@ STALE_HOURS="${STALE_HOURS:-48}"
 TICK_STALE_HOURS="${TICK_STALE_HOURS:-3}"
 PREFIX="${PREFIX:-family}"
 
+# ── objects ─────────────────────────────────────────────────────────────────
+# The object store is pulled incrementally into ONE mirror, not into weekday
+# slots. Objects are immutable and named by content hash, so seven generations
+# of them would be seven copies of almost exactly the same bytes — the history
+# a weekday slot buys for a dump buys nothing here. What replaces it is the
+# attic: anything that disappears from the server is moved aside under a dated
+# directory rather than deleted, and those directories are pruned by age. That
+# is the bounded rotation, and it is the thing that survives the server losing
+# its volume.
+#
+# OBJECTS_MIN_INTERVAL_HOURS is a separate cadence from the dump's, because the
+# two change at completely different rates. It defaults to the same ~daily
+# rhythm rather than the weekly one the design pass suggested: weekly was the
+# right answer when a run meant re-transferring the whole tarball, and once the
+# transfer is incremental the only thing a longer interval buys is up to a week
+# of new photographs living nowhere but the VDI. Set it to 168 on a metered
+# link, knowing that is the trade.
+OBJECTS_MIN_INTERVAL_HOURS="${OBJECTS_MIN_INTERVAL_HOURS:-20}"
+OBJECTS_STALE_HOURS="${OBJECTS_STALE_HOURS:-96}"
+ATTIC_KEEP_DAYS="${ATTIC_KEEP_DAYS:-30}"
+# rsync deletions above this count get a banner. Not a refusal — the attic
+# already means nothing is lost — but a family does not delete four hundred
+# photographs in a day, and if the number is large the owner should hear about
+# it the same evening rather than the next time they go looking.
+ATTIC_ALERT_FILES="${ATTIC_ALERT_FILES:-100}"
+
 STATE_DIR="${DEST}/_state"
 LOG_DIR="${DEST}/_log"
 MARKER="${STATE_DIR}/last-success"
+OBJ_MARKER="${STATE_DIR}/last-success-objects"
 TICK="${STATE_DIR}/last-tick"
 STATUS="${STATE_DIR}/status.txt"
 KNOWN_HOSTS="${STATE_DIR}/known_hosts"
 LOCK="${STATE_DIR}/.lock"
+
+OBJ_MIRROR="${DEST}/${PREFIX}-objects"
+OBJ_MANIFEST="${DEST}/${PREFIX}-objects.manifest"
+ATTIC="${DEST}/_attic"
 
 mkdir -p "${STATE_DIR}" "${LOG_DIR}"
 
@@ -121,16 +164,35 @@ if [ "${1:-}" = "--health" ]; then
   fi
 
   h="$(age_of "${MARKER}")"
-  if [ "${h}" -le "${STALE_HOURS}" ]; then
-    echo "ok: last successful backup ${h}h ago (stale after ${STALE_HOURS}h)"
-    exit 0
-  fi
   if [ "${h}" -ge 99999 ]; then
     echo "UNHEALTHY: no successful backup has ever completed"
-  else
-    echo "UNHEALTHY: last successful backup was ${h}h ago (stale after ${STALE_HOURS}h)"
+    exit 1
   fi
-  exit 1
+  if [ "${h}" -gt "${STALE_HOURS}" ]; then
+    echo "UNHEALTHY: last successful backup was ${h}h ago (stale after ${STALE_HOURS}h)"
+    exit 1
+  fi
+
+  # The objects half gets its own staleness, because it has its own cadence and
+  # because it is the half that cannot be retyped. A dump arriving nightly while
+  # the photographs quietly stopped three weeks ago is exactly the failure this
+  # whole rework exists to prevent, and without this line `ps` would say
+  # `healthy` throughout.
+  #
+  # Only complained about once objects have EVER been pulled. A deployment with
+  # no storage configured has no mirror and is not broken.
+  o="$(age_of "${OBJ_MARKER}")"
+  if [ "${o}" -lt 99999 ] && [ "${o}" -gt "${OBJECTS_STALE_HOURS}" ]; then
+    echo "UNHEALTHY: the database is current (${h}h) but objects last synced ${o}h ago (stale after ${OBJECTS_STALE_HOURS}h)"
+    exit 1
+  fi
+
+  if [ "${o}" -ge 99999 ]; then
+    echo "ok: last successful backup ${h}h ago (stale after ${STALE_HOURS}h); no objects on the server"
+  else
+    echo "ok: last successful backup ${h}h ago, objects ${o}h ago"
+  fi
+  exit 0
 fi
 
 # `case`, not `[ ... ] && FORCE=1`: under `set -e` an AND-OR list whose last
@@ -162,6 +224,8 @@ fi
 # a dump is truncated — or the database was already corrupt when it was taken —
 # the last good copy is gone and the backup has destroyed the thing it exists
 # to protect. Set GENERATIONS=1 if you truly want exactly one file.
+#
+# This governs the DUMP only. Objects have no slot: see sync_objects.
 slot_name() {
   if [ "${GENERATIONS}" -le 1 ]; then
     echo latest
@@ -221,12 +285,47 @@ write_status() {
     else
       echo "last success : never"
     fi
+    if [ -f "${OBJ_MARKER}" ]; then
+      echo "objects sync : $(date -d "@$(cat "${OBJ_MARKER}")" '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || cat "${OBJ_MARKER}") ($(age_of "${OBJ_MARKER}")h ago)"
+    else
+      echo "objects sync : never"
+    fi
     echo "server       : ${SERVER_USER}@${SERVER_HOST}:${REMOTE_DIR}"
-    echo "slot today   : ${SLOT}"
+    echo "slot today   : ${SLOT}  (database only — objects are one mirror)"
   } >"${STATUS}" 2>/dev/null || true
 }
 
-if [ "${FORCE}" -eq 0 ] && ! is_due; then
+# ── two cadences, one tick ──────────────────────────────────────────────────
+# The dump and the object store are asked separately, because they change at
+# completely different rates and because one gate for both would quietly make
+# the looser of the two the only one that mattered.
+#
+# Getting this wrong is easy and silent: leaving the objects behind `is_due`
+# means that if OBJECTS_MIN_INTERVAL_HOURS is ever set shorter than the dump's
+# interval it does nothing at all, and — worse — a dump that has stopped being
+# due for any reason takes the photographs down with it. They are gated apart,
+# and the tick does something if EITHER is due.
+DUMP_DUE=0
+OBJ_DUE=0
+if [ "${FORCE}" -eq 1 ]; then
+  DUMP_DUE=1
+  OBJ_DUE=1
+else
+  if is_due; then DUMP_DUE=1; fi
+  OBJ_AGE="$(age_of "${OBJ_MARKER}")"
+  if [ "${OBJ_AGE}" -ge "${OBJECTS_MIN_INTERVAL_HOURS}" ]; then
+    OBJ_DUE=1
+    if [ "${OBJ_AGE}" -ge 99999 ]; then
+      info "objects: due — never synced"
+    else
+      info "objects: due — last sync ${OBJ_AGE}h ago, interval is ${OBJECTS_MIN_INTERVAL_HOURS}h"
+    fi
+  else
+    info "objects: not due — last sync ${OBJ_AGE}h ago, interval is ${OBJECTS_MIN_INTERVAL_HOURS}h"
+  fi
+fi
+
+if [ "${DUMP_DUE}" -eq 0 ] && [ "${OBJ_DUE}" -eq 0 ]; then
   write_status "skipped (not due)"
   exit 0
 fi
@@ -363,38 +462,377 @@ fetch() {
   return 0
 }
 
+# One pass of "does the local mirror match the manifest". Returns 0 on a clean
+# match; on failure it leaves the failing lines in ${STATE_DIR}/objects.verify.
+#
+# Two passes on purpose: `-s` is the cheap silent form that answers yes/no, and
+# only a "no" pays for the per-file output. On a mirror of twenty thousand
+# objects the difference is twenty thousand lines of «OK» in the log every
+# night versus none.
+#
+# `-s`, not `--quiet`: this is busybox sha256sum, where `-s` is the silent form
+# and `--quiet` is a GNU spelling that does not exist here. Worth checking
+# rather than assuming — an unrecognised option would have failed this on every
+# single run, which reads exactly like a corrupt mirror.
+verify_mirror() {
+  _man="$1"
+  if ( cd "${OBJ_MIRROR}" && sha256sum -cs "${_man}" ); then
+    return 0
+  fi
+  ( cd "${OBJ_MIRROR}" && sha256sum -c "${_man}" 2>&1 | grep -v ': OK$' )     >"${STATE_DIR}/objects.verify" 2>&1 || true
+  return 1
+}
+
+# ── sync the object store ───────────────────────────────────────────────────
+# The database is not the whole of the durable state: `users.avatar_url` and
+# every media attachment on Стена point into the RustFS bucket, and a database
+# restored without it gives every member a broken face and every note a grey
+# rectangle, with no way to tell what was there. It is also the only data here
+# that cannot be retyped.
+#
+# It does NOT come down as a tarball any more. backup.sh publishes
+# `backups/objects/` — a mirror of the volume — plus `objects.manifest`, a
+# `sha256sum -c` file covering every byte in it. This fetches the manifest,
+# rsyncs the tree, and then verifies its own local copy against the manifest.
+# The verification is what preserves the property the tarball path had: nothing
+# is called good until it has been checked, and nothing that fails a check is
+# allowed to stand as this month's backup.
+#
+# Where it differs, and deliberately: rsync verifies and replaces PER FILE.
+# Every transfer lands on a temporary name and is renamed into place only when
+# it is complete, so an aborted pull leaves every already-good file exactly as
+# it was — the guarantee is finer-grained than the tarball's, not coarser.
+# What it cannot do on its own is notice bad bytes, which is what the manifest
+# is for.
+sync_objects() {
+  # Is the server offering a mirror at all?
+  # shellcheck disable=SC2086
+  if ! ssh ${SSH_OPTS} "${REMOTE}" "test -f '${REMOTE_DIR}/objects.manifest' && test -d '${REMOTE_DIR}/objects'" 2>/dev/null; then
+    return 2   # no mirror — the caller decides whether that is legacy or empty
+  fi
+
+  # rsync has to exist on BOTH ends; it is the one thing this design needs that
+  # a stock Ubuntu does not have. Saying so precisely is worth a lot more than
+  # an obscure "protocol version mismatch" at 03:00.
+  # shellcheck disable=SC2086
+  if ! ssh ${SSH_OPTS} "${REMOTE}" "command -v rsync >/dev/null" 2>/dev/null; then
+    error "objects: the server has a mirror but no rsync binary"
+    banner \
+      "THE SERVER CANNOT SERVE THE OBJECT MIRROR" \
+      "" \
+      "${REMOTE} has backups/objects/ but no rsync. Photographs and video are" \
+      "NOT being backed up to this PC. The database still is." \
+      "" \
+      "Fix it once, on the server:" \
+      "" \
+      "  ssh root@${SERVER_HOST} 'apt-get install -y rsync'"
+    return 1
+  fi
+
+  # The interval decision was made once, up top, alongside the dump's. Coming
+  # here not-due means the dump was due and this is not: nothing to do, and
+  # emphatically not a failure.
+  if [ "${OBJ_DUE}" -eq 0 ]; then
+    return 0
+  fi
+
+  mkdir -p "${OBJ_MIRROR}" "${ATTIC}"
+
+  # ── the manifest, before the data ──────────────────────────────────────────
+  # Fetched first and verified against its own sidecar, so a truncated manifest
+  # cannot later be read as "the mirror is missing files".
+  _mtmp="${STATE_DIR}/objects.manifest.new"
+  _mtmp_sc="${_mtmp}.sha256"
+  rm -f "${_mtmp}" "${_mtmp_sc}"
+
+  # shellcheck disable=SC2086
+  if ! scp ${SSH_OPTS} "${REMOTE}:${REMOTE_DIR}/objects.manifest" "${_mtmp}" 2>/dev/null; then
+    warn "objects: could not fetch the manifest — keeping the previous mirror, retrying next run"
+    return 1
+  fi
+  # shellcheck disable=SC2086
+  if ! scp ${SSH_OPTS} "${REMOTE}:${REMOTE_DIR}/objects.manifest.sha256" "${_mtmp_sc}" 2>/dev/null; then
+    warn "objects: no .sha256 beside the manifest — refusing an unverifiable file list"
+    rm -f "${_mtmp}" "${_mtmp_sc}"
+    return 1
+  fi
+  _want="$(awk '{print $1; exit}' "${_mtmp_sc}")"
+  _got="$(sha256sum "${_mtmp}" | awk '{print $1}')"
+  if [ -z "${_want}" ] || [ "${_want}" != "${_got}" ]; then
+    error "objects: MANIFEST CHECKSUM MISMATCH — server says ${_want:-<empty>}, we got ${_got}"
+    rm -f "${_mtmp}" "${_mtmp_sc}"
+    return 1
+  fi
+  _want_files="$(wc -l <"${_mtmp}" | tr -d ' ')"
+  info "objects: manifest lists ${_want_files} file(s) on the server"
+
+  # ── the transfer ──────────────────────────────────────────────────────────
+  # `--backup --backup-dir` is the bounded rotation, and it is the reason
+  # `--delete` is safe to use at all. A file that has gone from the server is
+  # not erased here; it is moved under _attic/<date>/ with its path intact, and
+  # those directories are pruned by age at the end of this function. So:
+  #
+  #   * the local set never grows without bound — the attic is the only thing
+  #     that accumulates and it has a ceiling in days;
+  #   * a server that loses its volume (a wipe, a bad restore, ransomware)
+  #     cannot take the family's photographs with it inside one night. It has
+  #     to do it and then stay broken for ATTIC_KEEP_DAYS.
+  #
+  # `--delete-delay` so deletions happen after every transfer has succeeded: a
+  # run killed halfway has added files and removed none.
+  #
+  # No `-p`/`-o`/`-g`. The destination is a Windows folder through a Docker
+  # bind mount; unix ownership does not survive it and attempting it produces a
+  # nightly page of warnings. The restore procedure chowns the tree to the
+  # RustFS uid on arrival, which is where that belongs anyway.
+  # `%Y-%m-%d`, not `%Y%m%d`: busybox `date -d` parses the dashed form and
+  # rejects the compact one, and prune_attic has to be able to read this back.
+  _today="$(date +%Y-%m-%d)"
+  _itemize="${STATE_DIR}/objects.itemize"
+  rm -f "${_itemize}"
+
+  info "objects: rsync ${REMOTE}:${REMOTE_DIR}/objects/ -> ${OBJ_MIRROR}/"
+  _started="$(now)"
+
+  # shellcheck disable=SC2086
+  rsync -rlt --delete-delay --no-perms --chmod=D755,F644 --omit-dir-times         --backup --backup-dir="${ATTIC}/${_today}"         --out-format='%i %n'         -e "ssh ${SSH_OPTS}"         "${REMOTE}:${REMOTE_DIR}/objects/" "${OBJ_MIRROR}/" >"${_itemize}" 2>&1     && _rc=0 || _rc=$?
+
+  # 24 means files vanished between rsync listing them and sending them. On the
+  # server that is the media sweep at work and it is expected; here it means the
+  # server re-mirrored while we were mid-transfer. Either way the manifest check
+  # below is the authority on whether what landed is right, so this is a note,
+  # not a failure. Anything else is.
+  case "${_rc}" in
+    0) ;;
+    24) warn "objects: files vanished server-side mid-transfer (rsync exit 24) — the manifest check below decides" ;;
+    *)
+      error "objects: rsync failed (exit ${_rc}) — the previous mirror is untouched. Last lines:"
+      tail -n 5 "${_itemize}" | while IFS= read -r _l; do error "  ${_l}"; done
+      rm -f "${_mtmp}" "${_mtmp_sc}"
+      return 1
+      ;;
+  esac
+
+  # Clamped at zero. Docker Desktop's clock steps when the host resumes from
+  # sleep, and a run straddling that prints "-1s", which reads like a bug in
+  # something that should never look buggy.
+  _elapsed="$(( $(now) - _started ))"
+  [ "${_elapsed}" -ge 0 ] || _elapsed=0
+  _new="$(grep -c '^>f' "${_itemize}" || true)"
+  _gone="$(grep -c '^\*deleting' "${_itemize}" || true)"
+
+  # ── verify what actually landed ───────────────────────────────────────────
+  # Every file, every byte, against the server's manifest. This is the check
+  # that replaces "the gzip decompressed", and it is strictly stronger: it
+  # covers the network, rsync itself, and the disk this PC is writing to. On an
+  # unchanged 100 MB mirror it costs about two seconds.
+  #
+  # It runs on the LOCAL copy, so a pass means the bytes on this disk are the
+  # bytes the server hashed — which is the only statement a backup can usefully
+  # make.
+  #
+  # It is also the only thing here that can catch bit rot, and that is not a
+  # side benefit. rsync decides what to re-send by size and mtime; a file that
+  # decays in place on this PC keeps both, so rsync will never look at it again
+  # and the corruption would sit in the backup until somebody tried to restore
+  # a photograph. Which is why the failure path below does not merely report.
+  if ! verify_mirror "${_mtmp}"; then
+    # ── heal, once ──────────────────────────────────────────────────────────
+    # Delete exactly the files that failed and let rsync fetch them again. They
+    # are gone, so the size/mtime shortcut cannot skip them this time.
+    #
+    # Exactly one attempt. A second failure is not a bad transfer — it is this
+    # PC's disk, or a server whose mirror moved under us — and retrying in a
+    # loop would turn that into a nightly re-download of the entire store.
+    _bad="$(grep -c ': FAILED$' "${STATE_DIR}/objects.verify" || true)"
+    warn "objects: ${_bad} file(s) failed verification — deleting them and re-fetching once"
+
+    sed -n 's/: FAILED$//p' "${STATE_DIR}/objects.verify" | while IFS= read -r _f; do
+      [ -n "${_f}" ] && rm -f "${OBJ_MIRROR}/${_f}"
+    done
+
+    # shellcheck disable=SC2086
+    if rsync -rlt --delete-delay --no-perms --chmod=D755,F644 --omit-dir-times \
+          --backup --backup-dir="${ATTIC}/${_today}" \
+          --out-format='%i %n' \
+          -e "ssh ${SSH_OPTS}" \
+          "${REMOTE}:${REMOTE_DIR}/objects/" "${OBJ_MIRROR}/" >>"${_itemize}" 2>&1; then
+      :
+    else
+      _rc=$?
+      [ "${_rc}" -eq 24 ] || error "objects: the re-fetch itself failed (exit ${_rc})"
+    fi
+
+    if ! verify_mirror "${_mtmp}"; then
+      error "objects: THE LOCAL MIRROR STILL DOES NOT MATCH THE SERVER'S MANIFEST"
+      head -n 5 "${STATE_DIR}/objects.verify" | while IFS= read -r _l; do error "  ${_l}"; done
+      banner \
+        "OBJECT MIRROR FAILED VERIFICATION TWICE" \
+        "" \
+        "${OBJ_MIRROR} does not match objects.manifest from ${REMOTE}," \
+        "and re-fetching the failing files did not fix it." \
+        "" \
+        "Nothing has been deleted and the previous manifest is still in place." \
+        "The database backup is unaffected." \
+        "" \
+        "This PC's disk is the first suspect, and not merely by elimination:" \
+        "before publishing that manifest the server verified it against its" \
+        "own copy, AND compared every immutable object key against the previous" \
+        "night's hashes to catch rot on its own disk. Both passed." \
+        "" \
+        "Check the drive holding ${DEST}. If it stays clean, run backup.sh on" \
+        "the server by hand and read its objects: lines."
+      rm -f "${_mtmp}" "${_mtmp_sc}"
+      return 1
+    fi
+    info "objects: re-fetch healed it — the mirror now matches the manifest"
+  fi
+
+  # Extra files are not a verification failure, but they are worth naming: they
+  # mean --delete did not do its job, which usually means the run was killed.
+  _here="$(find "${OBJ_MIRROR}" -type f | wc -l | tr -d ' ')"
+  if [ "${_here}" -ne "${_want_files}" ]; then
+    warn "objects: mirror holds ${_here} file(s), manifest lists ${_want_files} — extra files present, next run will tidy"
+  fi
+
+  # Verified. Promote the manifest so a human (and restore-check) can re-run the
+  # same check offline, at any time, without the server.
+  mv -f "${_mtmp}" "${OBJ_MANIFEST}"
+  rm -f "${_mtmp_sc}"
+  now >"${OBJ_MARKER}"
+
+  _size="$(du -sh "${OBJ_MIRROR}" 2>/dev/null | awk '{print $1}')"
+  info "objects: ${_want_files} file(s), ${_size}, verified against the manifest (+${_new} new, -${_gone} moved to the attic, ${_elapsed}s)"
+
+  if [ "${_gone}" -gt "${ATTIC_ALERT_FILES}" ]; then
+    banner \
+      "${_gone} OBJECTS DISAPPEARED FROM THE SERVER TODAY" \
+      "" \
+      "They have NOT been deleted here. They are in:" \
+      "  ${ATTIC}/${_today}" \
+      "and will be kept for ${ATTIC_KEEP_DAYS} days." \
+      "" \
+      "If nobody deleted anything on Стена today, look at the server before" \
+      "that window closes."
+  fi
+
+  prune_attic
+  retire_legacy_tarball
+  return 0
+}
+
+# ── the attic: bounded, and the only thing here that accumulates ────────────
+# Whole dated directories, removed by age. Not by count, because a day on which
+# nothing was deleted creates no directory at all, so counting would let a busy
+# fortnight evict a deletion from a month ago.
+prune_attic() {
+  [ -d "${ATTIC}" ] || return 0
+  _cutoff="$(( $(now) - ATTIC_KEEP_DAYS * 86400 ))"
+  for _d in "${ATTIC}"/*; do
+    [ -d "${_d}" ] || continue
+    _name="$(basename "${_d}")"
+    # YYYY-MM-DD -> epoch. Anything that does not parse is left alone rather
+    # than guessed at: this loop calls `rm -rf`.
+    _when="$(date -d "${_name}" +%s 2>/dev/null || echo 0)"
+    case "${_when}" in ''|*[!0-9]*) _when=0 ;; esac
+    [ "${_when}" -gt 0 ] || continue
+    if [ "${_when}" -lt "${_cutoff}" ]; then
+      info "attic: removing ${_name} (older than ${ATTIC_KEEP_DAYS} days)"
+      rm -rf "${_d}"
+    fi
+  done
+  # rsync creates the backup directory whether or not it ends up putting
+  # anything in it, so most nights leave an empty shell behind. Remove those:
+  # an attic listing should mean "something went away on these days".
+  find "${ATTIC}" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+
+  _kept="$(find "${ATTIC}" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+  if [ "${_kept}" -gt 0 ]; then
+    info "attic: ${_kept} dated set(s) held, $(du -sh "${ATTIC}" 2>/dev/null | awk '{print $1}'), ${ATTIC_KEEP_DAYS}-day window"
+  fi
+}
+
+# The weekday object tarballs the old design left behind. Once a verified
+# mirror exists they are dead weight — never refreshed again, and exactly the
+# wrong thing for a panicking human to reach for at 3am, because they are
+# frozen at whatever day the changeover happened. Removed one at a time as
+# their weekday comes round, so the set drains over a week rather than
+# vanishing the moment this script is first run.
+retire_legacy_tarball() {
+  _old="${DEST}/${PREFIX}-objects-${SLOT}.tar.gz"
+  [ -f "${_old}" ] || return 0
+  [ -f "${OBJ_MANIFEST}" ] || return 0
+  info "objects: retiring the superseded tarball ${PREFIX}-objects-${SLOT}.tar.gz (the mirror replaces it)"
+  rm -f "${_old}" "${_old}.sha256"
+}
+
 # ── what is the server offering? ────────────────────────────────────────────
-# `latest.sql.gz` and `latest-objects.tar.gz` are symlinks backup.sh points at
-# the newest pair, always the same STAMP. Resolving them here is purely so the
-# log can name the stamp; scp would follow them regardless.
+# `latest.sql.gz` is a symlink backup.sh points at the newest dump. Resolving it
+# here is purely so the log can name the stamp; scp would follow it regardless.
 # shellcheck disable=SC2086
 STAMP="$(ssh ${SSH_OPTS} "${REMOTE}" "readlink '${REMOTE_DIR}/latest.sql.gz' 2>/dev/null || echo unknown" 2>/dev/null || echo unknown)"
 info "server's newest dump: ${STAMP}"
 
 DUMP_LOCAL="${PREFIX}-db-${SLOT}.sql.gz"
-OBJ_LOCAL="${PREFIX}-objects-${SLOT}.tar.gz"
+OBJ_LEGACY="${PREFIX}-objects-${SLOT}.tar.gz"
 
 DUMP_OK=0
 OBJ_OK=0
 
-if fetch latest.sql.gz "${DUMP_LOCAL}" dump; then DUMP_OK=1; fi
-
-# The database is not the whole of the durable state: `users.avatar_url` points
-# into the RustFS bucket, and a database restored without it gives every member
-# a broken face and no way to tell whose photo was whose. A deployment that has
-# never had an upload has no objects archive at all, which is a skip, not a
-# failure — so this does not gate success on its own.
-# shellcheck disable=SC2086
-if ssh ${SSH_OPTS} "${REMOTE}" "test -e '${REMOTE_DIR}/latest-objects.tar.gz'" 2>/dev/null; then
-  if fetch latest-objects.tar.gz "${OBJ_LOCAL}" objects; then OBJ_OK=1; fi
+if [ "${DUMP_DUE}" -eq 1 ]; then
+  if fetch latest.sql.gz "${DUMP_LOCAL}" dump; then DUMP_OK=1; fi
 else
-  info "objects: the server has no latest-objects.tar.gz yet (nobody has uploaded an avatar)"
-  OBJ_OK=1
+  info "dump: not due this tick — the object store is what brought us here"
 fi
 
+# Objects. Three outcomes, and the legacy branch matters for exactly as long as
+# it takes an installation to update both halves: a PC running this script
+# against a server still running the old backup.sh would otherwise silently
+# stop backing up photographs, which is the failure this whole change exists to
+# prevent. So a server with no mirror but with the old tarball still gets
+# pulled the old way.
+# `if`, not `sync_objects; OBJ_RC=$?`. Under `set -e` a function that returns
+# non-zero as a bare command ends the script, and a failed object sync must
+# still let the outcome block below report a partial backup.
+if sync_objects; then OBJ_RC=0; else OBJ_RC=$?; fi
+case "${OBJ_RC}" in
+  0) OBJ_OK=1 ;;
+  1) OBJ_OK=0 ;;
+  2)
+    # shellcheck disable=SC2086
+    if ssh ${SSH_OPTS} "${REMOTE}" "test -e '${REMOTE_DIR}/latest-objects.tar.gz'" 2>/dev/null; then
+      warn "objects: the server still publishes a tarball and no mirror — using the old path"
+      warn "objects: update infra/scripts/backup.sh on ${SERVER_HOST} to get incremental transfers"
+      if fetch latest-objects.tar.gz "${OBJ_LEGACY}" objects; then
+        OBJ_OK=1
+        now >"${OBJ_MARKER}"
+      fi
+    else
+      info "objects: the server has no object mirror yet (storage unconfigured, or nobody has uploaded anything)"
+      OBJ_OK=1
+    fi
+    ;;
+esac
+
 # ── outcome ─────────────────────────────────────────────────────────────────
-# The marker moves only on a real, verified dump. If it does not move, the next
-# hourly tick tries again — which is exactly what should happen after a failure.
+# Each marker moves only on its own verified artefact. If one does not move,
+# the next hourly tick tries that half again — which is exactly what should
+# happen after a failure.
+#
+# A tick that was only ever here for the objects (the dump was not due) is not
+# a failed dump. It reports on what it did and leaves the dump's marker where
+# it was.
+if [ "${DUMP_DUE}" -eq 0 ]; then
+  if [ "${OBJ_OK}" -eq 1 ]; then
+    info "objects-only tick complete; the dump is not due for another $(( MIN_INTERVAL_HOURS - $(age_of "${MARKER}") ))h"
+    write_status "success (objects only — dump not due)"
+    exit 0
+  fi
+  error "objects-only tick failed. See the ERROR lines above."
+  write_status "FAILED — objects only, and they failed"
+  exit 1
+fi
+
 if [ "${DUMP_OK}" -eq 1 ]; then
   now > "${MARKER}"
 
@@ -404,7 +842,12 @@ if [ "${DUMP_OK}" -eq 1 ]; then
     echo "pulled at   : $(date '+%Y-%m-%d %H:%M:%S %Z')"
     echo "server stamp: ${STAMP}"
     echo "database    : ${DUMP_LOCAL}"
-    if [ -f "${DEST}/${OBJ_LOCAL}" ]; then echo "avatars     : ${OBJ_LOCAL}"; fi
+    if [ -d "${OBJ_MIRROR}" ] && [ -f "${OBJ_MANIFEST}" ]; then
+      echo "objects     : ${PREFIX}-objects/  ($(wc -l <"${OBJ_MANIFEST}" | tr -d ' ') files, $(du -sh "${OBJ_MIRROR}" 2>/dev/null | awk '{print $1}'))"
+      echo "              verified against ${PREFIX}-objects.manifest"
+    elif [ -f "${DEST}/${OBJ_LEGACY}" ]; then
+      echo "objects     : ${OBJ_LEGACY}  (legacy tarball — update backup.sh on the server)"
+    fi
     echo
     echo "Restore instructions: docs/DEPLOYMENT.md, section 8."
   } >"${DEST}/LATEST.txt" 2>/dev/null || true
@@ -414,10 +857,15 @@ if [ "${DUMP_OK}" -eq 1 ]; then
   info "SUCCESS — local set: ${COUNT} dump slot(s), ${TOTAL} total. Next backup in ~${MIN_INTERVAL_HOURS}h."
   if [ "${OBJ_OK}" -eq 1 ]; then
     write_status "success"
-  else
-    write_status "partial — dump ok, avatars failed"
+    exit 0
   fi
-  exit 0
+  # A dump without its objects is a partial backup, and it must not be reported
+  # as a success: the run exits non-zero so the startup check and any wrapper
+  # sees it, while the dump's marker still moves because the dump really did
+  # arrive.
+  write_status "PARTIAL — dump ok, objects FAILED"
+  error "the database was pulled but the object mirror was not. See the ERROR lines above."
+  exit 1
 fi
 
 AGE="$(age_of "${MARKER}")"

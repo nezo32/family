@@ -41,6 +41,7 @@ export interface JobPayloads {
   'maintenance.prune-oauth-transactions': Record<string, never>;
   'maintenance.push-health-check': Record<string, never>;
   'maintenance.prune-activity-log': Record<string, never>;
+  'maintenance.sweep-media': Record<string, never>;
 }
 
 export type JobName = keyof JobPayloads;
@@ -60,6 +61,7 @@ const QUEUE_FOR_JOB: Record<JobName, QueueName> = {
   'maintenance.prune-oauth-transactions': 'maintenance',
   'maintenance.push-health-check': 'maintenance',
   'maintenance.prune-activity-log': 'maintenance',
+  'maintenance.sweep-media': 'maintenance',
 };
 
 const DEFAULT_JOB_OPTIONS: JobsOptions = {

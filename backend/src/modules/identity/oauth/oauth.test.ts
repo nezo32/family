@@ -34,6 +34,8 @@ import {
 import {
   assertTransactionUsable,
   createMemoryOAuthTransactionStore,
+  flowHintFromState,
+  generateState,
   OAUTH_TRANSACTION_TTL_MS,
 } from './transactions.js';
 
@@ -477,6 +479,7 @@ describe('decideLinkOutcome', () => {
     emailOwnerUserId: null,
     registrationAllowed: true,
     bootstrapOwnerEmail: null,
+    activeOwnerCount: 0,
   };
 
   it('logs in a known (provider, sub) and never consults email', () => {
@@ -580,6 +583,70 @@ describe('decideLinkOutcome', () => {
     const decision = decideLinkOutcome({ ...base, bootstrapOwnerEmail: 'IVAN@Example.com ' });
     expect(decision).toEqual({ kind: 'create', asOwner: true });
   });
+
+  /*
+   * Bootstrap is one-shot on this path too, not only on the password path.
+   *
+   * The address binding alone leaves the configured string a permanent
+   * unauthenticated route to a second owner: nothing verifies email ownership
+   * at a callback either, and the `email_belongs_to_existing_user` refusal that
+   * looks like it would catch it only fires when some row actually holds that
+   * address — which a Telegram-only owner never does, Telegram having no email
+   * at all.
+   */
+  it('never bootstraps a second owner once the family has an active one', () => {
+    const decision = decideLinkOutcome({
+      ...base,
+      bootstrapOwnerEmail: 'ivan@example.com',
+      activeOwnerCount: 1,
+    });
+    expect(decision).toEqual({ kind: 'create', asOwner: false });
+  });
+
+  /**
+   * The escalation question behind releasing a rejected applicant's identity:
+   * once the Telegram subject is free, does signing up again land anywhere but
+   * the approval queue? It cannot. Telegram carries no email, so `sameEmail`
+   * is false against every possible `BOOTSTRAP_OWNER_EMAIL` — including one
+   * that is somehow set to an empty-ish string — and the outcome is a plain
+   * `create` that `resolveOAuthIdentity` writes as `pending_approval`/`child`.
+   */
+  it('cannot bootstrap through Telegram under any configuration', () => {
+    for (const bootstrapOwnerEmail of [null, '', '  ', 'ivan@example.com']) {
+      const decision = decideLinkOutcome({
+        ...base,
+        profile: {
+          provider: 'telegram',
+          providerUserId: '835007860',
+          email: null,
+          emailVerified: false,
+        },
+        bootstrapOwnerEmail,
+        activeOwnerCount: 0,
+      });
+      expect(decision).toEqual({ kind: 'create', asOwner: false });
+    }
+  });
+
+  /**
+   * A released subject is a **stranger**, not a returning member.
+   *
+   * After `rejectMember` deletes the `user_identities` row there is no
+   * `existingIdentity` to find, so the known-subject branch cannot fire and the
+   * rejected tombstone cannot be re-entered. The rejected row also no longer
+   * holds the email, so the `email_belongs_to_existing_user` refusal does not
+   * fire either — which is the whole point: a second attempt gets a decision,
+   * not a permanent `IDENTITY_ALREADY_LINKED`.
+   */
+  it('treats a released subject as a fresh signup, not a login', () => {
+    const decision = decideLinkOutcome({
+      ...base,
+      existingIdentity: null,
+      emailOwnerUserId: null,
+      activeOwnerCount: 1,
+    });
+    expect(decision).toEqual({ kind: 'create', asOwner: false });
+  });
 });
 
 /* ========================================================================== */
@@ -632,6 +699,69 @@ describe('oauth transaction store', () => {
     const store = createMemoryOAuthTransactionStore();
     await expect(store.consume('never-existed', 'google')).rejects.toThrowError(
       /unknown or has already been used/,
+    );
+  });
+
+  /**
+   * The failure is one code (`BAD_REQUEST`) with three causes, and the callback
+   * treats one of them — "there was no row" — as a duplicate rather than an
+   * error. The discriminator is on the context, never on the wire.
+   */
+  it('labels why a state would not redeem', async () => {
+    let now = new Date('2026-08-19T10:00:00.000Z');
+    const store = createMemoryOAuthTransactionStore(() => now);
+    const reasonOf = async (state: string, provider: 'google' | 'telegram') => {
+      try {
+        await store.consume(state, provider);
+        return null;
+      } catch (error) {
+        return AppError.isAppError(error) ? error.context?.['reason'] : null;
+      }
+    };
+
+    expect(await reasonOf('never-existed', 'google')).toBe('unknown');
+
+    const spent = await store.create({ provider: 'google', nonce: 'n' });
+    await store.consume(spent, 'google');
+    expect(await reasonOf(spent, 'google')).toBe('unknown');
+
+    const mismatched = await store.create({ provider: 'google', nonce: 'n' });
+    expect(await reasonOf(mismatched, 'telegram')).toBe('provider_mismatch');
+
+    const stale = await store.create({ provider: 'google', nonce: 'n' });
+    now = new Date(now.getTime() + OAUTH_TRANSACTION_TTL_MS);
+    expect(await reasonOf(stale, 'google')).toBe('expired');
+  });
+
+  /**
+   * A callback whose row is gone knows nothing about the flow it is finishing
+   * except what the `state` itself carries — which is why the marker exists.
+   * It must never be mistaken for authority: everything it can change is which
+   * of our own two screens the browser lands on.
+   */
+  it('marks which flow minted a state, without spending any entropy on it', async () => {
+    const login = generateState('login');
+    const link = generateState('link');
+
+    expect(flowHintFromState(login)).toBe('login');
+    expect(flowHintFromState(link)).toBe('link');
+    // 32 bytes of base64url, unchanged — the marker is two extra characters.
+    expect(login.slice(2)).toHaveLength(43);
+    expect(link.slice(2)).toHaveLength(43);
+    expect(login.slice(2)).not.toBe(link.slice(2));
+
+    // Anything unrecognised reads as the flow whose landing page is public.
+    expect(flowHintFromState('legacy-state-from-an-older-build')).toBe('login');
+    expect(flowHintFromState(null)).toBe('login');
+    expect(flowHintFromState(undefined)).toBe('login');
+
+    // And the store stamps it from the intent it was asked for.
+    const store = createMemoryOAuthTransactionStore();
+    expect(
+      flowHintFromState(await store.create({ provider: 'telegram', nonce: 'n', intent: 'link' })),
+    ).toBe('link');
+    expect(flowHintFromState(await store.create({ provider: 'telegram', nonce: 'n' }))).toBe(
+      'login',
     );
   });
 
@@ -1039,13 +1169,59 @@ describe('oauth route plugin', () => {
     // sign-in as a whole.
     expect(location.searchParams.get('provider')).toBe('google');
 
-    // The callback is not a screen anybody can reach on purpose, and stays JSON.
+    // The callback is a top-level navigation too, and used to answer it with a
+    // JSON envelope in the address bar. It gets the same treatment now.
     // Reaches no database: the provider check runs before the state lookup.
     const callback = await app.inject({
       method: 'GET',
       url: '/api/auth/google/callback?code=abc&state=whatever',
     });
-    expect(callback.statusCode).toBe(503);
+    expect(callback.statusCode).toBe(302);
+    const back = new URL(callback.headers.location as string);
+    expect(back.pathname).toBe('/login');
+    expect(back.searchParams.get('error')).toBe('SERVICE_UNAVAILABLE');
+    expect(back.searchParams.get('provider')).toBe('google');
+
+    await app.close();
+  });
+
+  /**
+   * The state's flow marker is the only thing a dead callback knows about the
+   * flow it is finishing, and it decides which of our two screens the browser
+   * lands on. A link that fails must not dump a signed-in user on the login
+   * page.
+   */
+  it('sends a failed link flow back to Способы входа, not to the login screen', async () => {
+    const { app } = await buildTestApp();
+    const state = generateState('link');
+
+    const callback = await app.inject({
+      method: 'GET',
+      url: `/api/auth/telegram/callback?code=abc&state=${encodeURIComponent(state)}`,
+    });
+
+    expect(callback.statusCode).toBe(302);
+    const back = new URL(callback.headers.location as string);
+    expect(back.pathname).toBe('/settings/accounts');
+    expect(back.searchParams.get('error')).toBe('SERVICE_UNAVAILABLE');
+    expect(back.searchParams.get('provider')).toBe('telegram');
+
+    await app.close();
+  });
+
+  it('never answers a callback with an API error body', async () => {
+    const { app } = await buildTestApp();
+
+    for (const url of [
+      '/api/auth/google/callback?code=abc&state=whatever',
+      '/api/auth/telegram/callback?error=access_denied',
+      '/api/auth/telegram/callback?code=abc',
+      `/api/auth/google/callback?code=abc&state=${encodeURIComponent(generateState('link'))}`,
+    ]) {
+      const response = await app.inject({ method: 'GET', url });
+      expect(response.statusCode, url).toBe(302);
+      expect(response.body, url).not.toContain('"error"');
+    }
 
     await app.close();
   });

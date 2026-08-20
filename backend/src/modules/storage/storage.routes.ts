@@ -3,12 +3,13 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
-import { idSchema, selfUserSchema } from '@family/shared';
+import { MEDIA_MAX_BYTES, idSchema, selfUserSchema } from '@family/shared';
 
 import { getConfig } from '../../core/config.js';
 import { getDb } from '../../core/db.js';
 import { AppError } from '../../core/errors.js';
 import { ALLOWED_IMAGE_TYPES } from './image.js';
+import mediaRoutes from './media.routes.js';
 import { getStorage } from './s3.adapter.js';
 import * as service from './storage.service.js';
 
@@ -75,17 +76,24 @@ const storageRoutes: FastifyPluginAsync = async (fastify) => {
 
   /**
    * Scoped to this plugin, so the `multipart/form-data` content-type parser
-   * exists on these three routes and nowhere else — every other endpoint in the
+   * exists on these four routes and nowhere else — every other endpoint in the
    * app still rejects a multipart body with 415 rather than quietly accepting
    * one.
    *
-   * `fileSize` is the same number the service enforces on the buffer. Both are
-   * needed: the limit here stops us from ever holding 500 MB in memory, and the
-   * check in the service is what a direct call to the service still gets.
+   * `fileSize` is the **media** ceiling, not the avatar one, because the media
+   * routes registered below share this parser and a video is fifty times an
+   * avatar. The avatar route narrows it back per call (`request.file({ limits
+   * })`), which is what keeps a 2 MB endpoint from ever holding 100 MB in
+   * memory: `@fastify/multipart` merges per-call options over these.
+   *
+   * Both limits are still needed. The one here stops the transport; the check
+   * in each service is what a direct call to that service still gets, and the
+   * per-kind limits (photo vs video vs audio) can only be applied once the
+   * bytes have been sniffed.
    */
   await app.register(multipart, {
     limits: {
-      fileSize: config.storage.avatarMaxBytes,
+      fileSize: MEDIA_MAX_BYTES,
       files: 1,
       fields: 4,
       // A part name long enough to be interesting is an attack, not a filename.
@@ -96,6 +104,14 @@ const storageRoutes: FastifyPluginAsync = async (fastify) => {
     // handler a truncated file — a half-decoded JPEG is worse than an error.
     throwFileSizeLimit: true,
   });
+
+  /**
+   * Photo, video and audio for the wall — a sibling of the avatar routes rather
+   * than a separate module, so that both live behind the one multipart
+   * registration above and `modules/index.ts` (the lead's file) does not have
+   * to change to enable them.
+   */
+  await app.register(mediaRoutes);
 
   /**
    * Create the bucket at boot rather than on the first upload, so a
@@ -143,7 +159,9 @@ const storageRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request) => {
-      const part = await request.file();
+      // The narrower cap, per call: an avatar has no business being read into
+      // memory at the video ceiling this plugin's parser allows.
+      const part = await request.file({ limits: { fileSize: config.storage.avatarMaxBytes } });
       if (!part) throw new AppError('BAD_REQUEST', 'Expected one multipart file part');
 
       const bytes = await part.toBuffer();

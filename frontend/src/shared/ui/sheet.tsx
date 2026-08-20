@@ -69,10 +69,6 @@ function SheetContent({
           //
           // A full-height side sheet is the one that bit us: `inset-y-0` puts
           // its header at y=0, which on an iPhone is directly under the clock.
-          //
-          // The bottom sheet anchors with `bottom-above-keyboard`, not
-          // `bottom-0` — identical on a healthy browser, above the software
-          // keyboard on iOS. See `index.css`.
           side === "right" &&
             "inset-y-0 right-0 h-full w-3/4 border-l pt-safe pr-safe pb-safe data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right sm:max-w-sm",
           side === "left" &&
@@ -80,7 +76,7 @@ function SheetContent({
           side === "top" &&
             "inset-x-0 top-0 h-auto border-b px-safe pt-safe data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top",
           side === "bottom" &&
-            "inset-x-0 bottom-above-keyboard h-auto border-t px-safe pb-safe data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
+            "inset-x-0 bottom-0 h-auto border-t px-safe pb-safe data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
           className
         )}
         {...props}

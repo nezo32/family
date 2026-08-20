@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { KeyRound, Link2, ShieldAlert, TriangleAlert } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { CheckCircle2, KeyRound, Link2, ShieldAlert, TriangleAlert } from 'lucide-react';
 import {
   OAUTH_PROVIDERS,
   type AuthProvider,
@@ -15,6 +16,7 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card';
 import { isApiError } from '@/shared/api/errors';
+import { ERROR_MESSAGES_RU } from '@/shared/api/errors-ru';
 import { notify } from '@/shared/lib/toast';
 import { formatDateTime } from '@/shared/lib/format';
 import { ROUTES } from '@/shared/lib/routes';
@@ -50,12 +52,34 @@ const PROVIDER_LABELS: Record<AuthProvider, string> = {
  * outright — a provider asserting an address is not the human proving they
  * control the account, so "sign in with your existing method, then link from
  * Settings" is the only safe flow.
+ *
+ * 3. **This is also where a link flow comes back when it did not finish.** The
+ *    callback is a top-level navigation and therefore never renders an API
+ *    error body; it redirects here with `?error=` or `?oauth=replayed`. The
+ *    replay case is the interesting one — see `callbackBanner` at the bottom.
  */
 export default function AccountsPage() {
   const { data, isPending, error, refetch } = useIdentities();
   const unlink = useUnlinkIdentity();
   const [pendingLink, setPendingLink] = useState<OAuthProvider | null>(null);
   const [confirmUnlink, setConfirmUnlink] = useState<AuthProvider | null>(null);
+
+  // Read once, then stripped from the URL below: a reload or a share of this
+  // address must not resurrect a notice about a round trip that is long over.
+  const [params, setParams] = useSearchParams();
+  const [outcome] = useState(() => callbackOutcomeFrom(params));
+
+  useEffect(() => {
+    if (!outcome) return;
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        for (const key of CALLBACK_PARAMS) next.delete(key);
+        return next;
+      },
+      { replace: true },
+    );
+  }, [outcome, setParams]);
 
   if (isPending) return <LoadingScreen />;
   if (error || !data) {
@@ -71,6 +95,7 @@ export default function AccountsPage() {
   }
 
   const linked = data.items;
+  const banner = outcome ? callbackBanner(outcome, linked) : null;
   const unlinkAllowed = canUnlink(data);
   const available = data.available.filter((provider): provider is OAuthProvider =>
     (OAUTH_PROVIDERS as readonly string[]).includes(provider),
@@ -111,6 +136,20 @@ export default function AccountsPage() {
       <PageHeader title={T.title} description={T.description} />
 
       <div className="max-w-2xl">
+        {/* How the last round trip to the provider ended, if there was one. */}
+        {banner ? (
+          <Alert
+            className="mb-4"
+            {...(banner.variant === 'destructive' ? { variant: 'destructive' as const } : {})}
+          >
+            {banner.variant === 'success' ? <CheckCircle2 aria-hidden /> : null}
+            {banner.variant === 'destructive' ? <TriangleAlert aria-hidden /> : null}
+            {banner.variant === 'neutral' ? <Link2 aria-hidden /> : null}
+            <AlertTitle>{banner.title}</AlertTitle>
+            <AlertDescription>{banner.text}</AlertDescription>
+          </Alert>
+        ) : null}
+
         {/* The whole point of the screen, said before anything can go wrong. */}
         {!unlinkAllowed && linked.length > 0 ? (
           <Alert className="mb-4">
@@ -181,6 +220,84 @@ export default function AccountsPage() {
       />
     </>
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/* coming back from the provider                                               */
+/* -------------------------------------------------------------------------- */
+
+/** Stripped from the URL once read, so a reload does not replay the notice. */
+const CALLBACK_PARAMS = ['oauth', 'error', 'provider'] as const;
+
+type CallbackOutcome =
+  | { kind: 'replayed'; provider: OAuthProvider | null }
+  | { kind: 'failed'; provider: OAuthProvider | null; code: keyof typeof ERROR_MESSAGES_RU };
+
+interface CallbackBanner {
+  variant: 'success' | 'neutral' | 'destructive';
+  title: string;
+  text: string;
+}
+
+function providerParam(value: string | null): OAuthProvider | null {
+  return (OAUTH_PROVIDERS as readonly string[]).includes(value ?? '')
+    ? (value as OAuthProvider)
+    : null;
+}
+
+/**
+ * `/settings/accounts?oauth=replayed&provider=…` or `?error=<ErrorCode>&provider=…`.
+ *
+ * Only codes with a Russian sentence are accepted — a query string is attacker
+ * controlled, and nothing free-form from it is ever rendered.
+ */
+function callbackOutcomeFrom(params: URLSearchParams): CallbackOutcome | null {
+  const provider = providerParam(params.get('provider'));
+
+  if (params.get('oauth') === 'replayed') return { kind: 'replayed', provider };
+
+  const code = params.get('error');
+  if (code && Object.prototype.hasOwnProperty.call(ERROR_MESSAGES_RU, code)) {
+    return { kind: 'failed', provider, code: code as keyof typeof ERROR_MESSAGES_RU };
+  }
+  return null;
+}
+
+/**
+ * Turn the outcome into a sentence — reading the answer off the linked list
+ * rather than off the query string.
+ *
+ * `?oauth=replayed` means the callback ran a second time for one authorization
+ * and found the one-time state already spent. The server refuses to guess what
+ * that means: "already consumed" and "never existed" are the same observation
+ * once the row is deleted (D3), and the second is also what a replayed link
+ * would look like. It does not have to guess, because by the time this renders
+ * we have asked `GET /me/identities` and **know** whether the provider is
+ * attached. So a replay after a link that worked says so plainly, and a replay
+ * with nothing attached says only what is certain: the link did not complete,
+ * start again. Neither sentence is an error, and neither is a claim.
+ */
+function callbackBanner(
+  outcome: CallbackOutcome,
+  linked: readonly LinkedIdentity[],
+): CallbackBanner {
+  const name = outcome.provider ? PROVIDER_LABELS[outcome.provider] : null;
+
+  if (outcome.kind === 'replayed') {
+    const attached =
+      outcome.provider !== null && linked.some((row) => row.provider === outcome.provider);
+    return attached && name
+      ? { variant: 'success', title: T.replayedLinked(name), text: T.replayedLinkedText }
+      : { variant: 'neutral', title: T.replayedUnknownTitle, text: T.replayedUnknownText };
+  }
+
+  return {
+    variant: 'destructive',
+    title: name ? T.callbackFailedTitle(name) : T.callbackFailedTitleGeneric,
+    // D7: the machine-readable code carries the copy; the server's `message`
+    // never reaches a person.
+    text: ERROR_MESSAGES_RU[outcome.code],
+  };
 }
 
 function IdentityRow(props: {

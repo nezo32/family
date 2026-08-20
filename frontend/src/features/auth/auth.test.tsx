@@ -228,6 +228,28 @@ describe('LoginPage \u2014 a provider that failed before the user got there', ()
     expect(screen.queryByText(/Bot domain invalid/)).not.toBeInTheDocument();
     expect(screen.queryByText(AUTH_RU.errors.formTitle)).not.toBeInTheDocument();
   });
+
+  /**
+   * `?oauth=replayed` — the callback ran twice for one sign-in and the second
+   * one found the one-time state already spent. That used to render
+   * `{"error":{"code":"BAD_REQUEST",…}}` into the address bar.
+   *
+   * It is not «не удалось войти»: if the first callback did issue the session,
+   * `RedirectIfAuthenticated` takes the user into the app and this screen never
+   * paints. Reaching it means the session really is absent, so the only honest
+   * thing to say is that the link is spent — and to leave the buttons right
+   * there.
+   */
+  it('treats a duplicated callback as a spent link, not as a failure', () => {
+    renderWithProviders(<LoginPage />, '/login?oauth=replayed&provider=telegram');
+
+    expect(screen.getByText(AUTH_RU.errors.replayedTitle)).toBeInTheDocument();
+    expect(screen.getByText(AUTH_RU.errors.replayedText)).toBeInTheDocument();
+    expect(screen.queryByText(AUTH_RU.errors.formTitle)).not.toBeInTheDocument();
+    expect(screen.queryByText(ERROR_MESSAGES_RU.BAD_REQUEST)).not.toBeInTheDocument();
+    // The way out is the same button they pressed a moment ago.
+    expect(screen.getByRole('button', { name: /Telegram/ })).toBeInTheDocument();
+  });
 });
 
 /* -------------------------------------------------------------------------- */

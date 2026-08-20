@@ -26,9 +26,49 @@ import { oauthTransactions, type OAuthIntent } from '../identity.schema.js';
 /** D3: ten minutes. Long enough for a slow consent screen, short enough to sweep cheaply. */
 export const OAUTH_TRANSACTION_TTL_MS = 10 * 60 * 1000;
 
-/** 32 bytes of entropy. `state` is both the lookup key and the CSRF token. */
-export function generateState(): string {
-  return randomBytes(32).toString('base64url');
+/**
+ * Why a `state` could not be redeemed. Attached to the `AppError` context so the
+ * callback can choose a landing page and a sentence, never sent to the client.
+ *
+ * `unknown` deliberately conflates three things the *store* cannot tell apart —
+ * never existed, already consumed, already swept — which is the point of
+ * delete-on-read. The callback treats it as "most likely a replay"; see
+ * `oauth.routes.ts :: callbackFailureUrl` for why that is safe.
+ */
+export type OAuthStateFailure = 'unknown' | 'expired' | 'provider_mismatch';
+
+/**
+ * `<flow marker>.<32 random bytes>`.
+ *
+ * The random half is unchanged: `state` is still the lookup key and still the
+ * CSRF token, with 256 bits of entropy behind it. The one-character prefix is a
+ * **non-authoritative hint** at which flow minted it, and exists for exactly one
+ * moment — the callback whose transaction row is already gone, which therefore
+ * knows nothing else about the flow it is finishing.
+ *
+ * It grants nothing. The only thing it decides is *which of our own two pages*
+ * the browser is redirected to when the flow cannot be completed; every
+ * decision that matters (whose account, which provider, whether a session is
+ * issued) comes from the row, and a request that has no row gets no session.
+ * A forged `k.` prefix buys an attacker a redirect to `/settings/accounts`,
+ * which is behind the session guard they do not have.
+ *
+ * `.` is not in the base64url alphabet, so the marker can never be confused
+ * with the entropy that follows it.
+ */
+const STATE_FLOW_MARKER: Record<OAuthIntent, string> = { login: 'l', link: 'k' };
+
+export function generateState(intent: OAuthIntent = 'login'): string {
+  return `${STATE_FLOW_MARKER[intent]}.${randomBytes(32).toString('base64url')}`;
+}
+
+/**
+ * Read the flow marker back. Anything unmarked — a state minted by an older
+ * build, or one somebody made up — reads as `login`, the flow whose landing page
+ * is public.
+ */
+export function flowHintFromState(state: string | null | undefined): OAuthIntent {
+  return state?.startsWith(`${STATE_FLOW_MARKER.link}.`) ? 'link' : 'login';
 }
 
 export interface CreateOAuthTransactionInput {
@@ -78,14 +118,20 @@ export function assertTransactionUsable(
   now: Date = new Date(),
 ): OAuthTransaction {
   if (!row) {
-    throw new AppError('BAD_REQUEST', 'OAuth state is unknown or has already been used');
+    throw new AppError('BAD_REQUEST', 'OAuth state is unknown or has already been used', {
+      context: { reason: 'unknown' satisfies OAuthStateFailure },
+    });
   }
   if (row.expiresAt.getTime() <= now.getTime()) {
-    throw new AppError('BAD_REQUEST', 'OAuth state has expired');
+    throw new AppError('BAD_REQUEST', 'OAuth state has expired', {
+      context: { reason: 'expired' satisfies OAuthStateFailure },
+    });
   }
   if (row.provider !== expectedProvider) {
     // A state minted for Google must never be redeemable at Telegram's callback.
-    throw new AppError('BAD_REQUEST', 'OAuth state does not belong to this provider');
+    throw new AppError('BAD_REQUEST', 'OAuth state does not belong to this provider', {
+      context: { reason: 'provider_mismatch' satisfies OAuthStateFailure },
+    });
   }
   return row;
 }
@@ -113,7 +159,7 @@ export function createOAuthTransactionStore(
 ): OAuthTransactionStore {
   return {
     async create(input) {
-      const row = normalize(input, generateState(), clock());
+      const row = normalize(input, generateState(input.intent ?? 'login'), clock());
       await db.insert(oauthTransactions).values({
         state: row.state,
         provider: row.provider,
@@ -179,7 +225,7 @@ export function createMemoryOAuthTransactionStore(
 
   return {
     async create(input) {
-      const row = normalize(input, generateState(), clock());
+      const row = normalize(input, generateState(input.intent ?? 'login'), clock());
       rows.set(row.state, row);
       return row.state;
     },

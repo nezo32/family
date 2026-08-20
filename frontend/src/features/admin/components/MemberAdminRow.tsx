@@ -36,6 +36,14 @@ export function MemberAdminRow(props: {
 }) {
   const { member } = props;
   const suspended = member.status === 'suspended';
+  /*
+   * Suspend and reactivate are conditional updates on `active` and `suspended`
+   * respectively, so for any other status the button could only ever come back
+   * 409. `MembersPage` already routes pending rows to the queue and rejected
+   * rows to their own list; this is the guard that keeps a future caller from
+   * rendering a control that cannot work.
+   */
+  const moderatable = member.status === 'active' || suspended;
 
   return (
     <li className="flex items-center gap-3 rounded-2xl border border-border bg-card p-3">
@@ -64,7 +72,7 @@ export function MemberAdminRow(props: {
         </div>
       </div>
 
-      {props.canModerate && !props.isSelf ? (
+      {props.canModerate && moderatable && !props.isSelf ? (
         <Button
           type="button"
           size="sm"

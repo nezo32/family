@@ -72,22 +72,53 @@ const drawerSize: Record<ResponsiveDialogSize, string> = {
   // is precisely the defect §F3 exists to make impossible, reintroduced by a
   // string interpolation. Never build a Tailwind class from a variable.
   //
-  // The `- var(--viewport-keyboard,0px)` term in each is the keyboard
-  // avoidance, and it is inside the *size* rather than a separate `max-h`
-  // utility on purpose. As its own class it sorted **after** `max-h-[60dvh]`
-  // in the built stylesheet and silently won, which let an `auto` sheet grow to
-  // nearly the whole screen — verified in `dist/assets/*.css`, which is where
-  // this file's other cautionary tale was verified too. One height declaration
-  // per size, no ordering to reason about.
+  // These carried a `- var(--viewport-keyboard,0px)` term for one day, so that
+  // a keyboard would shorten the sheet rather than slide its header off the
+  // top. It is gone, along with the property, and the reasoning is worth
+  // keeping because it is subtle and it was wrong:
   //
-  // With the sheet's bottom on `--viewport-keyboard` (see the surface below),
-  // subtracting the same term here is what makes the keyboard *shorten* the
-  // sheet instead of sliding its header off the top of the screen. On any
-  // browser without a keyboard overlaying the page the property is absent, the
-  // term is `- 0px`, and all three are exactly the sizes they were.
-  full: 'h-[calc(100dvh_-_max(env(safe-area-inset-top,0px),0.75rem)_-_0.75rem_-_var(--viewport-keyboard,0px))]',
-  tall: 'h-[min(85dvh,calc(100dvh_-_max(env(safe-area-inset-top,0px),0.75rem)_-_0.75rem_-_var(--viewport-keyboard,0px)))]',
-  auto: 'max-h-[min(60dvh,calc(100dvh_-_max(env(safe-area-inset-top,0px),0.75rem)_-_0.75rem_-_var(--viewport-keyboard,0px)))]',
+  // `--viewport-keyboard` was `innerHeight - (visualViewport.height +
+  // visualViewport.offsetTop)`. The `offsetTop` term makes it the right number
+  // for a fixed element's `bottom` — but it also makes it **collapse to zero
+  // in exactly the state it exists for**. iOS scrolls the visual viewport to
+  // reveal a focused input, and `offsetTop` can reach `innerHeight -
+  // visualHeight`, i.e. the whole keyboard; at that point the inset reads 0,
+  // the sheet is sized to the full screen and anchored at `bottom: 0`, and its
+  // header is a keyboard's height above the top of what the user can see. The
+  // module's own unit test pinned the shape without naming the consequence:
+  // an `offsetTop` of 40 turned a 336px keyboard into 296px.
+  //
+  // Which is the second bug report — «Новое дело» opening with the form
+  // scrolled away and «Ещё» stranded near the top of the screen. The cure is
+  // not a better formula for how far to lift a fixed sheet; it is to stop iOS
+  // scrolling the visual viewport out from under it in the first place, which
+  // `vaul` already does. See `repositionInputs` on the surface below.
+  //
+  // The inputs were not sound either, and both defects are specific to the one
+  // mode this app runs in:
+  //
+  //  - `visualViewport.offsetTop` is documented as spuriously **0** «when soft
+  //    keyboard is open on web app mode» — bugs.webkit.org 237851, filed
+  //    2022-03-14, still NEW, and explicitly *"doesn't occur in mobile Safari,
+  //    only in the web app mode"*. So the term is either absent when it is
+  //    needed or present when it is not, on the Home Screen specifically.
+  //  - the `scroll` listener that was added to read it fires late and coarse
+  //    on iOS — bug 218465 (2020-11-02, NEW), where Simon Fraser records that
+  //    the visual viewport only fires `scroll` «when the visual viewport
+  //    changes relative to the layout viewport» — and fires spuriously on
+  //    half-pixel rounding and on rubber-banding (bug 226354, filed by Fraser
+  //    himself 2021-05-27, still NEW).
+  //
+  // Note also, before reaching for `env(safe-area-inset-bottom)` alongside any
+  // keyboard number: on iOS the two double-count. The inset keeps its full
+  // 34px while the keyboard is up (bug 217754, filed 2020-10-15, NEW, and not
+  // once commented on by an Apple engineer), and WebKit clips the visual
+  // viewport to the *top edge* of the keyboard rect, which already covers the
+  // home indicator. `innerHeight - visualViewport.height` therefore contains
+  // that 34px, and adding the inset spends it twice.
+  full: 'h-[calc(100dvh_-_max(env(safe-area-inset-top,0px),0.75rem)_-_0.75rem)]',
+  tall: 'h-[85dvh]',
+  auto: 'max-h-[60dvh]',
 };
 
 const dialogSize: Record<ResponsiveDialogSize, string> = {
@@ -131,23 +162,36 @@ export function ResponsiveDialogFrame({
     return (
       <SurfaceContext.Provider value={{ coarse: true }}>
         {/*
-          `repositionInputs={false}`: vaul's own keyboard avoidance writes an
-          inline `bottom` computed as `innerHeight - visualViewport.height`,
-          with no `visualViewport.offsetTop` term and no `scroll` listener. iOS
-          scrolls the visual viewport to reveal a focused input, so that offset
-          becomes tens of pixels and is never recomputed — and the sheet is
-          lifted that much too far, leaving a band of background beneath it for
-          as long as it is open. That band is the photograph that came with the
-          «снизу появляется отступ» report. `--viewport-keyboard` in
-          `viewport-insets.ts` is the same measurement with the missing term,
-          updated on `scroll` as well, and it is applied in CSS below.
+          **`repositionInputs` is left at its default `true`, and must stay
+          there.** It reads like a switch for vaul's keyboard *arithmetic* —
+          the inline `bottom` it writes as `innerHeight - visualViewport.height`
+          — and it was turned off for exactly that reason, so that a correction
+          of our own could own the number instead.
+
+          It is not that switch. In `vaul` 1.1.2 the same flag also gates
+          `usePreventScroll`, and on iOS that is `preventScrollMobileSafari()`:
+          ~150 lines whose stated purpose (vaul's own comment, point 3) is
+          «When tapping on an input, the page always scrolls so that the input
+          is centered in the visual viewport. **This may cause even fixed
+          position elements to scroll off the screen.**» It suppresses that by
+          focusing the input itself behind a `translateY(-2000px)`, scrolling
+          the element into view without moving the page, and pinning
+          `window.scrollTo(0, 0)` as a last resort.
+
+          Turning it off deleted all of that. Every create sheet in this app
+          autofocuses its title field on open, so on the owner's iPhone the
+          keyboard came up, iOS scrolled the visual viewport to centre the
+          input, and the sheet — `position: fixed`, and therefore anchored to a
+          layout viewport that does not move — went with it: the form scrolled
+          away, the header and «Создать» above the top edge, and the tail of
+          the form left near it.
+
+          The trade is not close. vaul's arithmetic is imperfect and its
+          failure is a band of background under a sheet; the scroll lock's
+          absence is a form the user cannot see. If the band is ever worth
+          another attempt, it needs a device, and it needs to keep this flag on.
         */}
-        <DrawerPrimitive.Root
-          open={open}
-          onOpenChange={onOpenChange}
-          dismissible={dismissible}
-          repositionInputs={false}
-        >
+        <DrawerPrimitive.Root open={open} onOpenChange={onOpenChange} dismissible={dismissible}>
           <DrawerPrimitive.Portal>
             <DrawerPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50" />
             <DrawerPrimitive.Content
@@ -155,10 +199,10 @@ export function ResponsiveDialogFrame({
               data-surface="sheet"
               data-size={size}
               className={cn(
-                // `bottom-above-keyboard`, not `bottom-0`: see `index.css`.
-                // The sheet is the surface the reported gap was photographed
-                // under, and it has to stay reachable while a keyboard is up.
-                'fixed inset-x-0 bottom-above-keyboard z-50 flex flex-col overflow-hidden outline-none',
+                // `bottom-0`, and vaul overwrites it with an inline `bottom`
+                // while a keyboard is up. That is the arrangement; see the
+                // `repositionInputs` note above before changing either half.
+                'fixed inset-x-0 bottom-0 z-50 flex flex-col overflow-hidden outline-none',
                 // L2 (§B3): --popover, 1px border, radius 16. The shadow is the
                 // only one in the system that is allowed to exist.
                 'rounded-t-2xl border-t border-border bg-popover text-popover-foreground',

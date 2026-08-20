@@ -38,10 +38,23 @@ const CONCURRENCY: Record<QueueName, number> = {
 };
 
 /**
- * Cron-scheduled work. Times are UTC; jobs that care about local wall time read
- * the family timezone from `family_settings` themselves.
+ * Cron-scheduled work.
+ *
+ * Patterns are evaluated in **this process's timezone**, not UTC: BullMQ passes
+ * them to cron-parser without a `tz`, so the container's `TZ` decides — and
+ * `infra/docker-compose.yml` sets `TZ: ${TZ:-Europe/Moscow}` on the backend.
+ * The two readings differ by three hours, which matters for exactly one thing
+ * here: staying clear of the VDI's nightly backup window (see
+ * `maintenance.sweep-media` below). Jobs that care about a *family member's*
+ * local wall time still read the timezone from `family_settings` themselves and
+ * ignore this entirely.
+ *
+ * Exported so a test can assert a job is actually scheduled. The reverse
+ * direction — scheduled with no handler — already stops the boot below; a
+ * handler with no schedule is the silent half, and it is how the media sweep
+ * sat written, tested and never running.
  */
-const REPEATABLE: Array<{ name: JobName; pattern: string }> = [
+export const REPEATABLE: ReadonlyArray<{ name: JobName; pattern: string }> = [
   // Extend the 90-day occurrence horizon and pick up anything the eager path missed.
   { name: 'scheduler.materialize-all', pattern: '0 0 * * *' },
   // Fire due reminders every five minutes.
@@ -59,6 +72,26 @@ const REPEATABLE: Array<{ name: JobName; pattern: string }> = [
   { name: 'maintenance.prune-oauth-transactions', pattern: '*/30 * * * *' },
   { name: 'maintenance.push-health-check', pattern: '45 3 * * *' },
   { name: 'maintenance.prune-activity-log', pattern: '0 4 * * 0' },
+  /**
+   * Reclaim abandoned drafts (24 h) and long-detached rows (30 days).
+   *
+   * Daily, because the shorter of the two windows is 24 h: any finer buys
+   * nothing a member can perceive (a draft still lives out its full day; the
+   * cutoff is in the query, not in the schedule) and any coarser leaves bytes
+   * lying around for a multiple of a day that nothing needs.
+   *
+   * 05:20 rather than the small hours everything else uses, because this is the
+   * only scheduled job that **writes to the object store**, and the nightly
+   * backup mirrors that store's live volume: `infra/scripts/vdi-bootstrap.sh`
+   * installs it at 03:30, its own header and `docs/DEPLOYMENT.md` §8 say 03:17.
+   * Deleting objects while rsync walks the volume is how you get a mirror that
+   * holds half of an object. 05:20 here is 05:20 Moscow / 02:20 UTC, and host
+   * cron may itself be running in either zone, so the four combinations put this
+   * between 57 and 123 minutes away from the backup — never inside it, under any
+   * reading. The half-hourly oauth prune owns :00 and :30 on the same
+   * single-slot maintenance queue, so :20 also avoids queueing behind it.
+   */
+  { name: 'maintenance.sweep-media', pattern: '20 5 * * *' },
 ];
 
 async function scheduleRepeatables(): Promise<void> {

@@ -41,17 +41,187 @@ export const postTypeSchema = z.enum(['announcement', 'system']);
 export type PostType = z.infer<typeof postTypeSchema>;
 
 /* -------------------------------------------------------------------------- */
+/* Media attachments (фото / видео / аудио)                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Photo, video and audio on a post or on a comment.
+ *
+ * ## The client never names an object, and never sends a URL
+ *
+ * `avatarUrl` was once a client-writable URL, and that shape is why a
+ * token-leak check had to become structural. Media therefore has exactly one
+ * door: the bytes are POSTed to `/api/media`, the server sniffs them, stores
+ * them and mints an **id**. A post or comment then references that id and
+ * nothing else — `url` below is an output field, produced by the server, and a
+ * client that sends one gets it ignored.
+ *
+ * ## Why the limits live in the contract
+ *
+ * A 413 with no number in it is a mystery; a mystery on an upload that took
+ * ninety seconds is worse. The caps are published here so the composer can
+ * refuse an oversized file **before** it is uploaded and say why, in the same
+ * words the server would use. The server imports the same constants, so the two
+ * cannot drift.
+ */
+export const MEDIA_KINDS = ['image', 'video', 'audio'] as const;
+export const mediaKindSchema = z.enum(MEDIA_KINDS);
+export type MediaKind = z.infer<typeof mediaKindSchema>;
+
+/**
+ * The formats we accept, decided by **magic bytes** on the way in — the
+ * declared `Content-Type` and the filename are never trusted and never stored.
+ *
+ * The list is short on purpose, and the rule that produced it is *"every device
+ * in this family can play it"*, not *"some browser can produce it"*:
+ *
+ * - **JPEG / PNG / WebP** — the three a canvas can re-encode to, so the client
+ *   can downscale anything it manages to decode before it ever uploads.
+ * - **GIF** — costs one magic-byte check, renders in an `<img>`, and carries no
+ *   script. Refusing «смешная гифка» would be a security answer to a question
+ *   nobody asked.
+ * - **MP4** and **QuickTime** — an iPhone records `.mov` (QuickTime) by default
+ *   and a PWA cannot change that. Rejecting it would mean the family's main
+ *   camera cannot post video; transcoding it would mean ffmpeg on a VDI that
+ *   also runs Postgres, Redis and the object store. Both containers are
+ *   H.264/AAC in practice and play everywhere the family looks.
+ * - **M4A/AAC and MP3** — the two audio formats Safari plays without argument.
+ *
+ * Deliberately absent: **SVG** (a document that executes), **HEIC/AVIF** (no
+ * browser but Safari renders them and we cannot transcode — the client is asked
+ * to re-encode in a canvas instead), **WebM/Ogg/Opus** (a recording no iPhone
+ * in the family could play back), **WAV** (uncompressed audio, huge for what it
+ * carries).
+ */
+export const ALLOWED_MEDIA_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'video/mp4',
+  'video/quicktime',
+  'audio/mp4',
+  'audio/mpeg',
+] as const;
+export type AllowedMediaType = (typeof ALLOWED_MEDIA_TYPES)[number];
+
+/**
+ * Size and duration caps, per kind.
+ *
+ * Six people, one small VDI, and an object store whose **whole volume is
+ * tarred over the network every night**. That last one is what sets the video
+ * number: every byte accepted here is re-read, re-compressed and re-transferred
+ * every night for as long as the family keeps it, and «Очистить доску» is a
+ * horizon rather than a delete, so nothing ever shrinks.
+ *
+ * - **Photo 10 MiB.** A 12 MP phone JPEG is 3–5 MB, so this takes an original
+ *   straight off a camera without pretending a 60 MP raw export is a snapshot.
+ * - **Video 100 MiB / 3 minutes.** 1080p30 off an iPhone runs ≈ 60 MB per
+ *   minute, so in practice the size cap binds first on a long clip and the
+ *   duration cap binds first on a short one at 4K — both are published, and the
+ *   refusal names whichever one was hit. Three minutes is a birthday song, a
+ *   first bike ride, a school concert item; it is not a film.
+ * - **Audio 25 MiB / 10 minutes.** A voice message is seconds; the ceiling is
+ *   there so a whole album cannot arrive one track at a time.
+ */
+export const MEDIA_LIMITS = {
+  image: { maxBytes: 10 * 1024 * 1024, maxDurationMs: null },
+  video: { maxBytes: 100 * 1024 * 1024, maxDurationMs: 3 * 60 * 1000 },
+  audio: { maxBytes: 25 * 1024 * 1024, maxDurationMs: 10 * 60 * 1000 },
+} as const satisfies Record<MediaKind, { maxBytes: number; maxDurationMs: number | null }>;
+
+/** The transport's own ceiling — the largest of the three, enforced by the parser. */
+export const MEDIA_MAX_BYTES = MEDIA_LIMITS.video.maxBytes;
+
+/**
+ * Attachments per post or per comment.
+ *
+ * Ten is a phone's photo-picker selection, not a design constraint; the real
+ * bound is the size cap multiplied by this number, which is why it is not
+ * larger.
+ */
+export const MAX_ATTACHMENTS = 10;
+
+/**
+ * Decompression-bomb guard. We never decode an image server-side, but the six
+ * phones that render it do — a 200 kB PNG declaring 50 000 × 50 000 is a denial
+ * of service against the reader, and the dimensions are already parsed.
+ */
+export const MEDIA_MAX_PIXELS = 60_000_000;
+export const MEDIA_MAX_DIMENSION = 12_000;
+
+/**
+ * One stored object, as the API hands it back.
+ *
+ * `width`/`height` are always present for an image and for video (parsed from
+ * the container, rotation applied), so the card can reserve the box **before**
+ * the bytes arrive and nothing in the feed reflows on load (§D7.6). They are
+ * `null` for audio, which has no box. `durationMs` is the mirror: present for
+ * video and audio, `null` for a still image.
+ */
+export const mediaAttachmentSchema = z.object({
+  id: idSchema,
+  kind: mediaKindSchema,
+  /** The **sniffed** type, never the uploader's claim. One of `ALLOWED_MEDIA_TYPES`. */
+  contentType: z.string(),
+  /**
+   * Our own authenticated path — `/api/media/<id>`. Never a bucket URL: the
+   * object store has no route to the internet and no published port, so this is
+   * the only door, and a family photo stays readable exactly as long as the
+   * session is.
+   */
+  url: z.string(),
+  byteSize: z.number().int().nonnegative(),
+  width: z.number().int().positive().nullable(),
+  height: z.number().int().positive().nullable(),
+  durationMs: z.number().int().nonnegative().nullable(),
+  createdAt: isoDateTimeSchema,
+});
+export type MediaAttachment = z.infer<typeof mediaAttachmentSchema>;
+
+/**
+ * What a writer sends: ids minted by `POST /api/media`, **in the order they
+ * should be drawn**. The array is the ordering — there is no `sortOrder` on the
+ * wire, because two clients disagreeing about a number is a bug and an array
+ * cannot disagree with itself.
+ *
+ * On an update the array is the **whole** set: ids omitted from it are detached
+ * and their objects reclaimed. Omitting the field entirely leaves the existing
+ * attachments alone.
+ */
+export const attachmentIdsSchema = z.array(idSchema).max(MAX_ATTACHMENTS);
+
+/* -------------------------------------------------------------------------- */
 /* Posts                                                                       */
 /* -------------------------------------------------------------------------- */
 
 const postWritableFields = z.object({
   title: z.string().trim().max(160).nullish(),
-  body: nonEmptyString(8000),
+  /**
+   * **May be empty — but only when the post carries media.**
+   *
+   * It used to be `nonEmptyString(8000)`, which was right while a post was
+   * words and nothing else. A photo with no caption is a whole note on a family
+   * wall, and «пусто» is not what the reader sees — they see the photo. The
+   * *"one of body or attachments must be present"* rule is enforced in
+   * `wall.service.ts` rather than here, because a `superRefine` would turn this
+   * object into a `ZodEffects` and the composer builds its form schema with
+   * `createPostSchema.omit(...)`, which only a `ZodObject` has.
+   */
+  body: z.string().trim().max(8000, 'Не длиннее 8000 символов'),
   /**
    * Pinning has an expiry rather than a flag: "закреплено до" self-clears,
    * a boolean stays pinned forever. Requires `post:pin`.
    */
   pinnedUntil: isoDateTimeSchema.nullish(),
+  /**
+   * Ids from `POST /api/media`, in draw order. Optional rather than
+   * `.default([])` on purpose: a defaulted array is *required* in the inferred
+   * output type, and every existing caller that builds a `CreatePost` literal —
+   * including the PWA's optimistic draft — would stop compiling for a field it
+   * does not use yet.
+   */
+  attachmentIds: attachmentIdsSchema.optional(),
 });
 
 export const createPostSchema = postWritableFields;
@@ -96,6 +266,12 @@ export const postResponseSchema = z.object({
   isPinned: z.boolean(),
   commentCount: z.number().int().min(0),
   reactions: z.array(reactionSummarySchema).default([]),
+  /**
+   * Photo, video and audio, in draw order. Always sent by the server (an empty
+   * array when there is none); optional in the type for the same reason
+   * `attachmentIds` is — see `postWritableFields`.
+   */
+  attachments: z.array(mediaAttachmentSchema).optional(),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
 });
@@ -116,7 +292,9 @@ export type PostListResponse = z.infer<typeof postListResponseSchema>;
 /* -------------------------------------------------------------------------- */
 
 export const createCommentSchema = z.object({
-  body: nonEmptyString(4000),
+  /** Empty is allowed only with media, exactly as on a post. Enforced in the service. */
+  body: z.string().trim().max(4000, 'Не длиннее 4000 символов'),
+  attachmentIds: attachmentIdsSchema.optional(),
 });
 export type CreateComment = z.infer<typeof createCommentSchema>;
 
@@ -130,6 +308,8 @@ export const commentResponseSchema = z.object({
   authorId: idSchema,
   body: z.string(),
   reactions: z.array(reactionSummarySchema).default([]),
+  /** Same shape and same rules as a post's — a thread takes photos too. */
+  attachments: z.array(mediaAttachmentSchema).optional(),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
 });

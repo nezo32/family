@@ -67,22 +67,93 @@ followed by the normal callback.
 
 ### 1.5 Member administration
 
-| Method   | Path                     | Guard               | Purpose                                                                                                                               |
-| -------- | ------------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET`    | `/members`               | `member:read`       | Roster. Callers with `member:update:any` get `memberListItemSchema` + `pendingCount`; everyone else gets `publicUserSchema` rows.     |
-| `GET`    | `/members/:id`           | `member:read`       | One member, same two-serializer rule. `404` (not `403`) when out of read scope.                                                       |
-| `PATCH`  | `/members/:id`           | `member:update:any` | Role, chore weight, permission overrides. Role changes additionally require `member:role:assign` and `canManageRole(actor, target)`.  |
-| `POST`   | `/members/:id/approve`   | `member:approve`    | `UPDATE ... WHERE status = 'pending_approval'` — conditional, so two admins clicking at once yields one `200` and one `409 CONFLICT`. |
-| `POST`   | `/members/:id/reject`    | `member:approve`    | Same conditional update to `rejected`, stores `rejected_reason`.                                                                      |
-| `POST`   | `/members/:id/suspend`   | `member:update:any` | `active -> suspended`. Revokes every refresh family immediately.                                                                      |
-| `POST`   | `/members/:id/reinstate` | `member:update:any` | `suspended -> active`. Does **not** restore sessions; the user logs in again.                                                         |
-| `DELETE` | `/members/:id`           | `member:remove`     | Cascades identities and refresh tokens; `audit_log.actor_id` survives as NULL. `403 LAST_OWNER` for the last owner.                   |
-| `GET`    | `/audit`                 | `audit:read`        | Cursor-paginated audit log.                                                                                                           |
-| `GET`    | `/settings`              | `settings:read`     | The singleton `family_settings` row.                                                                                                  |
-| `PATCH`  | `/settings`              | `settings:manage`   | Update it.                                                                                                                            |
+| Method   | Path                     | Guard               | Purpose                                                                                                                                                                                                                                                                                                                                                                                                               |
+| -------- | ------------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/members`               | `member:read`       | Roster. Callers with `member:update:any` get `memberListItemSchema` + `pendingCount`; everyone else gets `publicUserSchema` rows. **`rejected` is subtracted by default**, for everyone: `?includeRejected=true` or an explicit `?status=rejected` opts an admin back in, and a non-admin asking for either gets the subtraction rather than a `403` — for `status=rejected` that is an empty list, per D4. See §1.6. |
+| `GET`    | `/members/:id`           | `member:read`       | One member, same two-serializer rule. `404` (not `403`) when out of read scope.                                                                                                                                                                                                                                                                                                                                       |
+| `PATCH`  | `/members/:id`           | `member:update:any` | Role, chore weight, permission overrides. Role changes additionally require `member:role:assign` and `canManageRole(actor, target)`.                                                                                                                                                                                                                                                                                  |
+| `POST`   | `/members/:id/approve`   | `member:approve`    | `UPDATE ... WHERE status = 'pending_approval'` — conditional, so two admins clicking at once yields one `200` and one `409 CONFLICT`.                                                                                                                                                                                                                                                                                 |
+| `POST`   | `/members/:id/reject`    | `member:approve`    | Same conditional update to `rejected`, stores `rejected_reason` — **and releases every sign-in key the applicant held** in the same transaction: all `user_identities` rows, `email`, `email_verified`, `password_hash`. The `users` row itself survives as a **tombstone**. Read §1.6 before changing this.                                                                                                          |
+| `POST`   | `/members/:id/suspend`   | `member:update:any` | `active -> suspended`. Revokes every refresh family immediately. **Releases nothing** — §1.6.                                                                                                                                                                                                                                                                                                                         |
+| `POST`   | `/members/:id/reinstate` | `member:update:any` | `suspended -> active`. Registered under `/reactivate` as well. Does **not** restore sessions; the user logs in again.                                                                                                                                                                                                                                                                                                 |
+| `DELETE` | `/members/:id`           | `member:remove`     | **Designed, not implemented — no such route is registered.** Would cascade identities and refresh tokens, leave `audit_log.actor_id` NULL, and refuse the last owner with `403 LAST_OWNER`. The `member:remove` permission does exist in the catalog and gates UI today, so its presence is not evidence the endpoint is there. §1.6 explains what its absence costs.                                                 |
+| `GET`    | `/audit`                 | `audit:read`        | Cursor-paginated audit log.                                                                                                                                                                                                                                                                                                                                                                                           |
+| `GET`    | `/settings`              | `settings:read`     | The singleton `family_settings` row.                                                                                                                                                                                                                                                                                                                                                                                  |
+| `PATCH`  | `/settings`              | `settings:manage`   | Update it.                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 Every route in 1.5 writes an `audit_log` row inside the same transaction as the
 mutation. If the audit write fails, the mutation fails.
+
+### 1.6 Rejection releases the applicant's keys; suspension does not
+
+#### What reject releases
+
+`POST /members/:id/reject` does four things in one transaction: the conditional
+status change, a revoke of every refresh family, the audit write, and the
+release. Released is every credential-shaped key the applicant held, so the
+provider account is free the instant the transaction commits:
+
+- **all `user_identities` rows** — the `UNIQUE (provider, provider_user_id)`
+  binding;
+- **`email` / `email_verified`** — `users_email_lower_uq`, the `ALREADY_EXISTS`
+  check in `POST /auth/register`, and `decideLinkOutcome`'s email-collision
+  refusal all key off the address;
+- **`password_hash`** — a `password` identity row without one is not a login.
+
+The reason is a real incident, not a hypothetical. The owner signed in from the
+wrong account by accident, declined the join request it raised, and then could
+never link that Telegram account to their real profile: the subject was bound
+to a row no human would ever use again, and there is no un-reject transition to
+free it. Google and password signups have the same shape through `users.email`.
+**A declined request must not cost the person their identity.**
+
+What was released is written into the `member:reject` audit entry **first** —
+providers, subject ids, usernames, the address, whether a password existed — so
+«кто это вообще был» survives the release. `audit_log.target_id` is a loose
+pointer rather than a foreign key, and it keeps pointing at the tombstone.
+
+The operation is idempotent and safe for the same person twice: their second
+signup resolves to no existing subject, so it creates a **new** `users` row, and
+a second rejection releases that row and collides with nothing.
+
+#### Why a tombstone and not a `DELETE`
+
+**Read this before deleting rejected rows.** They look like litter — a status
+nobody can log in as, on a user with no email, no password and no identities.
+Removing them is not a cleanup; it re-opens a privilege-escalation path.
+
+1. The rejected row is the record that somebody asked to join and was told no.
+   The admin queue shows what was declined, which an admin who declined by
+   accident needs.
+2. `audit_log.target_id` stays resolvable only because the row is still there,
+   and deleting the user would also cascade into `refresh_tokens` and any
+   `notification_intents` aimed at them.
+3. **The decisive one: `isBootstrapSignup`'s no-address branch is
+   `existingUserCount === 0`.** With no `BOOTSTRAP_OWNER_EMAIL` configured — the
+   local-dev configuration — an empty `users` table means _first user wins_, and
+   the next signup to arrive is an auto-approved `owner`. A `users` table that a
+   spree of rejections could empty is a table where that branch comes back to
+   life. The tombstone cannot be emptied that way, because the row still counts.
+
+#### Suspension is deliberately the other answer
+
+`POST /members/:id/suspend` releases nothing at all. `reinstate` / `reactivate`
+exists, so a suspension is a pause rather than a decision: the person must be
+able to sign back in with **the same provider account they always used**.
+Releasing their identity would silently turn reinstatement into a
+re-registration — a new `users` row in `pending_approval`, none of their
+history attached.
+
+The consequence is known and accepted: **a member who is suspended and never
+reinstated holds their provider account indefinitely.** Nothing frees the
+`(provider, provider_user_id)` binding or the address, so that Google or
+Telegram account can never join this family under a different profile.
+
+The honest lever for "this person is not coming back" is `DELETE
+/members/:id` — which §1.5 describes and which **is not implemented**, so today
+there is no lever at all. Do not fake one out of the reject path: rejection
+fires `WHERE status = 'pending_approval'`, and widening that predicate would let
+a moderation button turn an active member with real history into a tombstone.
 
 ---
 
@@ -196,32 +267,81 @@ permission guard. The status gate runs first so a suspended admin gets
 Codes are from `@family/shared` (`ERROR_CODES`); the frontend maps the `code` to
 Russian copy and never renders `message`.
 
-| Route                                            | Codes                                                                                                                                                                                                                                                                                                                                                                 |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /auth/register`                            | `VALIDATION_ERROR`, `ALREADY_EXISTS`, `FORBIDDEN` (registration closed), `RATE_LIMITED`                                                                                                                                                                                                                                                                               |
-| `POST /auth/login`                               | `VALIDATION_ERROR`, `INVALID_CREDENTIALS`, `ACCOUNT_PENDING_APPROVAL`, `ACCOUNT_REJECTED`, `ACCOUNT_SUSPENDED`, `RATE_LIMITED`                                                                                                                                                                                                                                        |
-| `GET /auth/:p/start`                             | `BAD_REQUEST` (unknown provider / bad `redirect`), `UNAUTHENTICATED` (`intent=link` without a session), `SERVICE_UNAVAILABLE` (discovery down)                                                                                                                                                                                                                        |
-| `*/callback`                                     | `BAD_REQUEST` (missing or expired `state`), `OAUTH_PROVIDER_ERROR` (provider returned `error`, token exchange or JWKS failure), `TOKEN_INVALID` (nonce/iss/aud mismatch), `IDENTITY_ALREADY_LINKED` (subject belongs to another user, or email-match refusal), `ACCOUNT_PENDING_APPROVAL`, `ACCOUNT_REJECTED`, `ACCOUNT_SUSPENDED`, `FORBIDDEN` (registration closed) |
-| `POST /auth/telegram/widget` \| `/init-data`     | `VALIDATION_ERROR`, `TOKEN_INVALID` (bad HMAC or stale `auth_date`), plus the callback status codes                                                                                                                                                                                                                                                                   |
-| `POST /auth/refresh`                             | `UNAUTHENTICATED` (no cookie), `TOKEN_EXPIRED`, `TOKEN_INVALID`, `REFRESH_TOKEN_REUSED`, `ACCOUNT_PENDING_APPROVAL`, `ACCOUNT_REJECTED`, `ACCOUNT_SUSPENDED`                                                                                                                                                                                                          |
-| `POST /auth/logout`                              | none — always `200`, even without a cookie                                                                                                                                                                                                                                                                                                                            |
-| `GET /auth/status`                               | `NOT_FOUND` (unknown or expired ticket)                                                                                                                                                                                                                                                                                                                               |
-| `POST /auth/password`                            | `VALIDATION_ERROR`, `INVALID_CREDENTIALS` (wrong `currentPassword`), `UNAUTHENTICATED`                                                                                                                                                                                                                                                                                |
-| `GET /me`                                        | `UNAUTHENTICATED`, `TOKEN_EXPIRED`                                                                                                                                                                                                                                                                                                                                    |
-| `PATCH /me`                                      | `VALIDATION_ERROR`, `FORBIDDEN`                                                                                                                                                                                                                                                                                                                                       |
-| `GET /me/identities`                             | `UNAUTHENTICATED`, `FORBIDDEN`                                                                                                                                                                                                                                                                                                                                        |
-| `DELETE /me/identities/:provider`                | `NOT_FOUND` (not linked), `LAST_LOGIN_METHOD`, `FORBIDDEN`                                                                                                                                                                                                                                                                                                            |
-| `GET /members`, `GET /members/:id`               | `UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND` (outside read scope — 404, never 403)                                                                                                                                                                                                                                                                                     |
-| `PATCH /members/:id`                             | `VALIDATION_ERROR`, `FORBIDDEN` (target outranks actor), `NOT_FOUND`, `LAST_OWNER` (demoting the last owner)                                                                                                                                                                                                                                                          |
-| `POST /members/:id/approve` \| `/reject`         | `CONFLICT` (already decided — the conditional-update loser), `NOT_FOUND`, `FORBIDDEN`                                                                                                                                                                                                                                                                                 |
-| `POST /members/:id/suspend` \| `/reinstate`      | `CONFLICT`, `NOT_FOUND`, `FORBIDDEN`, `LAST_OWNER`                                                                                                                                                                                                                                                                                                                    |
-| `DELETE /members/:id`                            | `NOT_FOUND`, `FORBIDDEN`, `LAST_OWNER`                                                                                                                                                                                                                                                                                                                                |
-| `GET /audit`, `GET /settings`, `PATCH /settings` | `UNAUTHENTICATED`, `FORBIDDEN`, `VALIDATION_ERROR`                                                                                                                                                                                                                                                                                                                    |
+| Route                                            | Codes                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /auth/register`                            | `VALIDATION_ERROR`, `ALREADY_EXISTS`, `FORBIDDEN` (registration closed), `RATE_LIMITED`                                                                                                                                                                                                                                                         |
+| `POST /auth/login`                               | `VALIDATION_ERROR`, `INVALID_CREDENTIALS`, `ACCOUNT_PENDING_APPROVAL`, `ACCOUNT_REJECTED`, `ACCOUNT_SUSPENDED`, `RATE_LIMITED`                                                                                                                                                                                                                  |
+| `GET /auth/:p/start`                             | `BAD_REQUEST` (unknown provider / bad `redirect`), `UNAUTHENTICATED` (`intent=link` without a session), `SERVICE_UNAVAILABLE` (discovery down)                                                                                                                                                                                                  |
+| `*/callback`                                     | **None on the wire — see §6.** The same failures (`BAD_REQUEST`, `OAUTH_PROVIDER_ERROR`, `TOKEN_INVALID`, `IDENTITY_ALREADY_LINKED`, `ACCOUNT_*`, `FORBIDDEN`) still happen; each becomes a `302` to `/login?error=<code>` or `/settings/accounts?error=<code>`, because the callback is a browser navigation and can never render an envelope. |
+| `POST /auth/telegram/widget` \| `/init-data`     | `VALIDATION_ERROR`, `TOKEN_INVALID` (bad HMAC or stale `auth_date`), plus the callback status codes                                                                                                                                                                                                                                             |
+| `POST /auth/refresh`                             | `UNAUTHENTICATED` (no cookie), `TOKEN_EXPIRED`, `TOKEN_INVALID`, `REFRESH_TOKEN_REUSED`, `ACCOUNT_PENDING_APPROVAL`, `ACCOUNT_REJECTED`, `ACCOUNT_SUSPENDED`                                                                                                                                                                                    |
+| `POST /auth/logout`                              | none — always `200`, even without a cookie                                                                                                                                                                                                                                                                                                      |
+| `GET /auth/status`                               | `NOT_FOUND` (unknown or expired ticket)                                                                                                                                                                                                                                                                                                         |
+| `POST /auth/password`                            | `VALIDATION_ERROR`, `INVALID_CREDENTIALS` (wrong `currentPassword`), `UNAUTHENTICATED`                                                                                                                                                                                                                                                          |
+| `GET /me`                                        | `UNAUTHENTICATED`, `TOKEN_EXPIRED`                                                                                                                                                                                                                                                                                                              |
+| `PATCH /me`                                      | `VALIDATION_ERROR`, `FORBIDDEN`                                                                                                                                                                                                                                                                                                                 |
+| `GET /me/identities`                             | `UNAUTHENTICATED`, `FORBIDDEN`                                                                                                                                                                                                                                                                                                                  |
+| `DELETE /me/identities/:provider`                | `NOT_FOUND` (not linked), `LAST_LOGIN_METHOD`, `FORBIDDEN`                                                                                                                                                                                                                                                                                      |
+| `GET /members`, `GET /members/:id`               | `UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND` (outside read scope — 404, never 403)                                                                                                                                                                                                                                                               |
+| `PATCH /members/:id`                             | `VALIDATION_ERROR`, `FORBIDDEN` (target outranks actor), `NOT_FOUND`, `LAST_OWNER` (demoting the last owner)                                                                                                                                                                                                                                    |
+| `POST /members/:id/approve` \| `/reject`         | `CONFLICT` (already decided — the conditional-update loser), `NOT_FOUND`, `FORBIDDEN`                                                                                                                                                                                                                                                           |
+| `POST /members/:id/suspend` \| `/reinstate`      | `CONFLICT`, `NOT_FOUND`, `FORBIDDEN`, `LAST_OWNER`                                                                                                                                                                                                                                                                                              |
+| `DELETE /members/:id`                            | _(designed, not implemented — §1.5)_ `NOT_FOUND`, `FORBIDDEN`, `LAST_OWNER`                                                                                                                                                                                                                                                                     |
+| `GET /audit`, `GET /settings`, `PATCH /settings` | `UNAUTHENTICATED`, `FORBIDDEN`, `VALIDATION_ERROR`                                                                                                                                                                                                                                                                                              |
 
 Every route may additionally return `VALIDATION_ERROR` from the zod schema,
 `RATE_LIMITED`, and `INTERNAL_ERROR`.
 
-## 6. Cookies and CSRF
+## 6. A callback is a screen, not an API response
+
+`GET /auth/:provider/callback` is only ever reached as a **top-level browser
+navigation**. Throwing out of it puts the JSON error envelope in the address
+bar — English, developer-facing, with no way back into the app — which is the
+defect that made `/auth/:provider/start` redirect to `/login?error=<code>`. The
+callback now does the same, for every failure it has.
+
+Where it lands is decided by the flow:
+
+| Flow           | Landing              | Carries                        |
+| -------------- | -------------------- | ------------------------------ |
+| `intent=login` | `/login`             | `?error=<ErrorCode>&provider=` |
+| `intent=link`  | `/settings/accounts` | `?error=<ErrorCode>&provider=` |
+
+The intent comes from the consumed transaction row. When there is no row — the
+case below — it comes from a one-character **flow marker** prefixed to `state`
+(`l.` / `k.`, `transactions.ts :: generateState`). The marker is deliberately
+non-authoritative: 256 bits of entropy still follow it, nothing but the choice
+of landing page depends on it, and a forged `k.` buys an attacker a redirect to
+a screen behind the session guard.
+
+### A replayed state is not an error
+
+One authorization can produce two callbacks — a duplicated navigation, not an
+attack (`frontend/src/sw.ts` documents the mechanism that caused it here). The
+first redeems the `state` and does the work; the second finds it spent. Its
+`400` is the first one's _success_, seen from the losing side, and showing it as
+a failure to somebody whose link just worked is simply wrong.
+
+So an unknown state redirects with **`?oauth=replayed`** instead of `?error=`,
+and the landing pages treat it as neutral. What it deliberately does **not** do
+is claim success:
+
+- Delete-on-read is the replay guard (D3), so "already consumed" and "never
+  existed" are the same observation by construction. A recently-consumed set
+  would tell them apart, at the price of keeping the state D3 deletes — and it
+  would only change the wording, never the outcome.
+- The **page** settles it instead, authoritatively: Способы входа has already
+  fetched `GET /me/identities`, so it says «Telegram привязан» only when the
+  provider really is in the list, and otherwise says only that the link is spent.
+  `/login` needs no copy at all in the good case — `RedirectIfAuthenticated`
+  takes a visitor who now has a session into the app before the screen paints.
+- Nothing is issued on that path. An unknown state costs its sender one redirect.
+
+Expired states, provider mismatches, refused token exchanges and
+`IDENTITY_ALREADY_LINKED` stay real failures — they just arrive as a screen with
+Russian copy keyed off the `ErrorCode` rather than as JSON.
+
+## 7. Cookies and CSRF
 
 - Refresh cookie: `__Host-rt; HttpOnly; Secure; SameSite=Lax; Path=/;
 Max-Age=30d`. Server-set `HttpOnly` cookies are **not** subject to iOS's 7-day

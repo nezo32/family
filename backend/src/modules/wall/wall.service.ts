@@ -3,6 +3,7 @@ import { eq, inArray } from 'drizzle-orm';
 import type {
   ActivityItem,
   CreatePost,
+  MediaAttachment,
   KudosCreate,
   KudosFeedItem,
   KudosResponse,
@@ -21,6 +22,7 @@ import type { Db, Executor } from '../../core/db.js';
 import { badRequest, conflict, forbidden, notFound } from '../../core/errors.js';
 import { kudos, type KudosRow } from '../chores/chores.schema.js';
 import { users } from '../identity/users.schema.js';
+import * as media from '../storage/media.service.js';
 import { dispatchAfterCommit, emitIntent } from '../notifications/notifications.service.js';
 import { recordActivityEvent } from './activity.service.js';
 import { deleteCommentsFor } from './comments.service.js';
@@ -51,6 +53,7 @@ export function toPostResponse(
   commentCount: number,
   reactions: PostResponse['reactions'],
   now: Date = new Date(),
+  attachments: MediaAttachment[] = [],
 ): PostResponse {
   return {
     id: row.id,
@@ -62,6 +65,7 @@ export function toPostResponse(
     isPinned: isPinned(row, now),
     commentCount,
     reactions,
+    attachments,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -93,10 +97,12 @@ export function toKudosResponse(row: KudosRow): KudosResponse {
 }
 
 /**
- * Hydrates a page of posts with comment counts and reaction summaries.
+ * Hydrates a page of posts with comment counts, reaction summaries and media.
  *
- * Two extra queries for the whole page — never one per row. This is the reason
- * `countComments` and `loadReactions` take an array of ids.
+ * Three extra queries for the whole page — never one per row. This is the reason
+ * `countComments`, `loadReactions` and `attachmentsForPage` all take an array of
+ * ids: a feed of twenty cards costs four round trips whether or not any of them
+ * carries a photo.
  */
 export async function hydratePosts(
   exec: Executor,
@@ -106,14 +112,42 @@ export async function hydratePosts(
 ): Promise<PostResponse[]> {
   if (rows.length === 0) return [];
   const ids = rows.map((r) => r.id);
-  const [counts, facts] = await Promise.all([
+  const [counts, facts, attachments] = await Promise.all([
     repo.countComments(exec, 'post', ids),
     repo.loadReactions(exec, 'post', ids),
+    media.attachmentsForPage(exec, 'post', ids),
   ]);
   const summaries = repo.buildReactionSummaries(facts, viewerId);
   return rows.map((row) =>
-    toPostResponse(row, repo.commentCountOf(counts, row.id), summaries.get(row.id) ?? [], now),
+    toPostResponse(
+      row,
+      repo.commentCountOf(counts, row.id),
+      summaries.get(row.id) ?? [],
+      now,
+      attachments.get(row.id) ?? [],
+    ),
   );
+}
+
+/**
+ * A note must say *something*: words, or media, or both.
+ *
+ * `body` used to be `nonEmptyString(8000)` in the contract, which made this
+ * unnecessary — and also made a photo with no caption impossible, which is a
+ * whole note on a family wall. The rule lives here rather than in the zod
+ * schema because that schema is also the PWA's form schema, and a
+ * `superRefine` would turn it into a `ZodEffects` the composer cannot
+ * `.omit()` from.
+ */
+export function assertPostHasContent(
+  body: string,
+  attachmentIds: readonly string[] | undefined,
+): void {
+  if (body.trim().length === 0 && (attachmentIds?.length ?? 0) === 0) {
+    throw badRequest('A post needs a body or an attachment', {
+      body: ['Напишите что-нибудь или прикрепите фото.'],
+    });
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -134,17 +168,28 @@ export async function createAnnouncement(
   input: CreatePost,
 ): Promise<PostResponse> {
   if (!auth.can('post:create')) throw forbidden('Missing permission: post:create');
+  assertPostHasContent(input.body, input.attachmentIds);
 
   const pinnedUntil = input.pinnedUntil ? new Date(input.pinnedUntil) : null;
   if (pinnedUntil && !auth.can('post:pin')) throw forbidden('Missing permission: post:pin');
 
-  const { post, dispatch } = await db.transaction(async (tx) => {
+  const { post, attachments, dispatch } = await db.transaction(async (tx) => {
     const row = await repo.insertPost(tx, {
       authorId: auth.userId,
       type: 'announcement',
       title: input.title?.trim() ?? null,
       body: input.body.trim(),
       pinnedUntil,
+    });
+
+    // Inside the post's own transaction, so a note that fails to save never
+    // claims its author's uploads, and an id that turns out to be somebody
+    // else's stops the note (`media.service.attachMediaTo`).
+    const attached = await media.attachMediaTo(tx, {
+      entityType: 'post',
+      entityId: row.id,
+      uploaderId: auth.userId,
+      attachmentIds: input.attachmentIds ?? [],
     });
 
     await recordActivityEvent(tx, {
@@ -176,11 +221,15 @@ export async function createAnnouncement(
       dedupeKey: `announcement_posted:${row.id}`,
     });
 
-    return { post: row, dispatch: intent.dispatch };
+    return {
+      post: row,
+      attachments: attached.map(media.toMediaAttachment),
+      dispatch: intent.dispatch,
+    };
   });
 
   await dispatchAfterCommit([dispatch]);
-  return toPostResponse(post, 0, []);
+  return toPostResponse(post, 0, [], new Date(), attachments);
 }
 
 /**
@@ -213,9 +262,39 @@ export async function updateAnnouncement(
     patch.pinnedUntil = input.pinnedUntil ? new Date(input.pinnedUntil) : null;
   }
 
-  const updated =
-    Object.keys(patch).length > 0 ? await repo.updatePost(db, postId, patch) : existing;
-  if (!updated) throw notFound('Post');
+  if (input.body !== undefined) {
+    // The new body against the media the post will have afterwards — an edit
+    // that empties the text is fine while a photo stays, and is not otherwise.
+    assertPostHasContent(
+      input.body,
+      input.attachmentIds ?? (await media.attachmentsOf(db, 'post', postId)).map((item) => item.id),
+    );
+  }
+
+  const { updated, removedKeys } = await db.transaction(async (tx) => {
+    const row = Object.keys(patch).length > 0 ? await repo.updatePost(tx, postId, patch) : existing;
+    if (!row) throw notFound('Post');
+
+    // `undefined` leaves the media alone; an array — empty included — is the
+    // whole new set, in draw order.
+    const reconciled = input.attachmentIds
+      ? await media.reconcileAttachments(tx, {
+          entityType: 'post',
+          entityId: postId,
+          uploaderId: auth.userId,
+          attachmentIds: input.attachmentIds,
+        })
+      : { removedKeys: [] as readonly string[] };
+
+    return { updated: row, removedKeys: reconciled.removedKeys };
+  });
+
+  // After the commit, never inside it: a rollback that had already deleted
+  // bytes cannot be undone. Removing a photo from your own note is deliberate,
+  // so unlike the delete cascade it reclaims the object immediately — the same
+  // rule as replacing an avatar.
+  await media.removeAllQuietly(removedKeys);
+
   const [hydrated] = await hydratePosts(db, [updated], auth.userId);
   if (!hydrated) throw notFound('Post');
   return hydrated;
@@ -280,6 +359,12 @@ export async function deletePost(db: Db, auth: AuthContext, postId: string): Pro
 
   await db.transaction(async (tx) => {
     await repo.softDeletePost(tx, postId);
+    // The post's own photos, and — inside `deleteCommentsFor` — the photos on
+    // every comment underneath it. Both are soft deletes that keep the bytes:
+    // a moderator deleting somebody else's note is exactly the case where
+    // «верните, я не то удалил» has to be answerable, and the sweep's grace
+    // period is that window (`media.service.DETACHED_GRACE_DAYS`).
+    await media.detachAllFrom(tx, 'post', postId);
     await deleteCommentsFor(tx, 'post', postId);
   });
 }

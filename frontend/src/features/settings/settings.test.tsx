@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import type { LinkedIdentityList, MeResponse } from '@family/shared';
 
 import { InstallPrompt } from '@/features/auth/components/InstallPrompt';
@@ -33,6 +33,7 @@ import {
   shouldOfferPushPrompt,
 } from './push/onboarding';
 import { PushOnboarding } from './push/PushOnboarding';
+import { ERROR_MESSAGES_RU } from '@/shared/api/errors-ru';
 import { SETTINGS_RU } from './locale';
 import { canUnlink } from './api';
 import AccountsPage from './pages/AccountsPage';
@@ -560,13 +561,13 @@ describe('delivery ack contract (D11)', () => {
 /* 5. unbinding the last login method                                          */
 /* -------------------------------------------------------------------------- */
 
-function renderWithProviders(ui: React.ReactElement) {
+function renderWithProviders(ui: React.ReactElement, route = '/settings/accounts') {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={['/settings/accounts']}>{ui}</MemoryRouter>
+      <MemoryRouter initialEntries={[route]}>{ui}</MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -650,6 +651,123 @@ describe('unbinding the last login method', () => {
     expect(canUnlink(identitiesResponse(['google']))).toBe(false);
     expect(canUnlink(identitiesResponse(['google', 'telegram']))).toBe(true);
     expect(canUnlink(undefined)).toBe(false);
+  });
+});
+
+/** Reads the live query string back, so "the URL was cleaned" is assertable. */
+function SearchProbe() {
+  return <span data-testid="search">{useLocation().search}</span>;
+}
+
+/* -------------------------------------------------------------------------- */
+/* 5b. coming back from a provider callback that ran twice                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The bug this section exists for: the owner linked Telegram, it worked, and
+ * they were shown
+ *
+ * ```
+ * {"error":{"code":"BAD_REQUEST","message":"OAuth state is unknown or has
+ *  already been used","requestId":"dd7ef045-…"}}
+ * ```
+ *
+ * raw, in English, in their browser — because the callback fired twice and the
+ * second attempt was correctly refused. The callback now redirects here instead
+ * of rendering an envelope, and this screen decides what to say by **looking at
+ * the linked list**, not by trusting the query string.
+ */
+describe('a link flow that came back through the callback', () => {
+  const identitiesStub = (providers: string[]) =>
+    vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify(identitiesResponse(providers)), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    );
+
+  it('says the link is done when the provider is actually attached', async () => {
+    vi.stubGlobal('fetch', identitiesStub(['google', 'telegram']));
+
+    renderWithProviders(<AccountsPage />, '/settings/accounts?oauth=replayed&provider=telegram');
+
+    await waitFor(() => {
+      expect(screen.getByText(SETTINGS_RU.accounts.replayedLinked('Telegram'))).toBeInTheDocument();
+    });
+    // Nothing alarming, and above all not the server's English envelope.
+    expect(screen.queryByText(/BAD_REQUEST/)).not.toBeInTheDocument();
+    expect(screen.queryByText(ERROR_MESSAGES_RU.BAD_REQUEST)).not.toBeInTheDocument();
+  });
+
+  it('claims nothing when the provider is not in the list', async () => {
+    // Same query string, different truth: the server cannot tell a replay from
+    // a state that never existed, so the page reads the answer off the list.
+    vi.stubGlobal('fetch', identitiesStub(['google']));
+
+    renderWithProviders(<AccountsPage />, '/settings/accounts?oauth=replayed&provider=telegram');
+
+    await waitFor(() => {
+      expect(screen.getByText(SETTINGS_RU.accounts.replayedUnknownTitle)).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText(SETTINGS_RU.accounts.replayedLinked('Telegram')),
+    ).not.toBeInTheDocument();
+  });
+
+  it('renders a real failure as Russian copy keyed off the code', async () => {
+    vi.stubGlobal('fetch', identitiesStub(['google']));
+
+    renderWithProviders(
+      <AccountsPage />,
+      '/settings/accounts?error=IDENTITY_ALREADY_LINKED&provider=telegram',
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(SETTINGS_RU.accounts.callbackFailedTitle('Telegram')),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByText(ERROR_MESSAGES_RU.IDENTITY_ALREADY_LINKED)).toBeInTheDocument();
+  });
+
+  it('ignores anything free-form in the query string', async () => {
+    vi.stubGlobal('fetch', identitiesStub(['google']));
+
+    renderWithProviders(
+      <AccountsPage />,
+      '/settings/accounts?error=Bot%20domain%20invalid&provider=evil',
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(SETTINGS_RU.accounts.linkedTitle)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/Bot domain invalid/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(SETTINGS_RU.accounts.callbackFailedTitleGeneric),
+    ).not.toBeInTheDocument();
+  });
+
+  it('clears the parameters so a reload does not replay the notice', async () => {
+    vi.stubGlobal('fetch', identitiesStub(['telegram']));
+
+    render(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}
+      >
+        <MemoryRouter initialEntries={['/settings/accounts?oauth=replayed&provider=telegram']}>
+          <AccountsPage />
+          <SearchProbe />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(SETTINGS_RU.accounts.replayedLinked('Telegram'))).toBeInTheDocument();
+    });
+    // The notice survives the URL it arrived on; the URL does not survive it.
+    expect(screen.getByTestId('search').textContent).toBe('');
   });
 });
 

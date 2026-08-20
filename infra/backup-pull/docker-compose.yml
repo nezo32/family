@@ -56,8 +56,23 @@ services:
       REMOTE_DIR: ${REMOTE_DIR:-/opt/family/backups}
       PREFIX: ${PREFIX:-family}
 
-      # Rotation: overwrite, never accumulate. Seven weekday slots.
+      # Rotation for the DATABASE: overwrite, never accumulate. Seven weekday
+      # slots, each replaced once a week.
       GENERATIONS: ${GENERATIONS:-7}
+
+      # Rotation for the OBJECT STORE, which is a different shape of problem.
+      # Objects are immutable and named by content hash, so they are pulled
+      # incrementally into one mirror rather than into weekday copies of the
+      # same bytes. What bounds that mirror is the attic: anything that
+      # disappears from the server is moved under _attic/<date>/ instead of
+      # being erased, and dated sets past ATTIC_KEEP_DAYS are removed. That is
+      # what makes `rsync --delete` safe to point at the family's photographs —
+      # a server that loses its volume cannot take this PC's copy with it in
+      # one night; it has to stay broken for a month first.
+      OBJECTS_MIN_INTERVAL_HOURS: ${OBJECTS_MIN_INTERVAL_HOURS:-20}
+      OBJECTS_STALE_HOURS: ${OBJECTS_STALE_HOURS:-96}
+      ATTIC_KEEP_DAYS: ${ATTIC_KEEP_DAYS:-30}
+      ATTIC_ALERT_FILES: ${ATTIC_ALERT_FILES:-100}
 
       # The schedule, such as it is. See pull.sh's `is_due`.
       MIN_INTERVAL_HOURS: ${MIN_INTERVAL_HOURS:-20}

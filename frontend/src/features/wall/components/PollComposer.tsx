@@ -9,7 +9,9 @@ import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
 import { Switch } from '@/shared/ui/switch';
 import { Textarea } from '@/shared/ui/textarea';
+import { cn } from '@/shared/lib/utils';
 import { isoInDays } from '../api';
+import { composerFieldClass, composerNoteClass } from '../composer-field';
 import { useCreatePoll } from '../hooks';
 import { WALL_RU } from '../locale';
 
@@ -122,7 +124,7 @@ export function PollComposer(props: { open: boolean; onOpenChange: (open: boolea
                 onChange={(event) => {
                   patch({ question: event.target.value });
                 }}
-                className="min-h-16 resize-none border-0 bg-transparent px-0 text-[17px] leading-6 shadow-none focus-visible:ring-0 md:text-[17px]"
+                className={cn(composerNoteClass, 'min-h-16')}
               />
             </div>
           </Section>
@@ -148,7 +150,7 @@ export function PollComposer(props: { open: boolean; onOpenChange: (open: boolea
                       ),
                     });
                   }}
-                  className="h-11 border-0 bg-transparent px-0 text-[17px] shadow-none focus-visible:ring-0 md:text-[17px]"
+                  className={cn(composerFieldClass, 'h-11')}
                 />
                 {draft.options.length > MIN_OPTIONS ? (
                   <Button

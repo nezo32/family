@@ -5,31 +5,37 @@ import { expect, test } from './fixtures';
 /**
  * The software keyboard and the bottom of the screen.
  *
- * ## What is being reproduced
+ * ## What this file is for now
  *
- * Reported from the owner's installed app on iOS 26.6: «после открытия
- * клавиатуры мобильной — снизу появляется отступ». A band of empty background
- * is left between the bottom edge of a bottom sheet — and of the tab bar — and
- * the bottom of the display, and it stays.
+ * It began as the pin for a report from the owner's installed app on iOS 26.6:
+ * «после открытия клавиатуры мобильной — снизу появляется отступ», a band of
+ * empty background left under a bottom sheet and under the tab bar. The fix
+ * shipped for that — two custom properties published from `visualViewport` by
+ * `app/layout/viewport-insets.ts`, and two `@utility` rules positioning the
+ * fixed chrome from them — produced two worse defects on the same phone within
+ * the hour, and has been removed in full.
  *
- * No browser this suite can drive has WebKit's viewport defects, and none can
- * open a real iOS keyboard. What is driven here is the mechanism, in two ways.
+ * So this suite has changed sides. It no longer measures a correction; it
+ * measures that **there is none**, and that the chrome is where plain CSS puts
+ * it. Three properties are under test:
  *
- * **The engine's.** A keyboard-sized reduction of the viewport, held past the
- * compensator's settle window and then reverted. The assertion that matters is
- * the one *after* the revert: no residual padding, no residual scroll offset,
- * no residual custom property, no gap. That is the reported bug, and it is what
- * this file exists to pin.
- *
- * **The app's.** `--viewport-keyboard` and `--viewport-shortfall`
- * (`src/app/layout/viewport-insets.ts`) are the two numbers the fixed chrome is
- * positioned from, and they are absent on a healthy browser. The last two tests
- * therefore stage them and measure that the chrome moves by exactly that much
- * and no further — the part of the fix a Chromium run can genuinely verify,
- * and the part that would silently rot otherwise.
+ * 1. A keyboard-sized reduction of the viewport, held and then reverted,
+ *    leaves nothing behind — no residual padding, no residual scroll offset,
+ *    no gap. That is the original report, and it is still worth pinning.
+ * 2. **Nothing ever writes a `--viewport-*` custom property onto `<html>`.**
+ *    This is the regression guard. The old mechanism was invisible to every
+ *    gate this project can run — it is absent on a healthy browser by
+ *    construction — so the only thing that can catch its return is an
+ *    assertion that the property is not there.
+ * 3. **The tab bar's computed `bottom` is `0px`, always**, and its box never
+ *    leaves the viewport. The second reported defect was a bar pushed 59px
+ *    *below* the bottom edge with its icons cut off, by a `bottom:
+ *    calc(-1 * var(--viewport-shortfall,0px))` firing on a false positive.
+ *    Anything that can make this element's `bottom` negative is a bug.
  *
  * The viewport meta deliberately carries no `interactive-widget`; see
- * `index.html` for the WebKit dates behind that.
+ * `index.html` for the WebKit dates behind that, and for why the keyboard is
+ * `vaul`'s problem rather than this app's.
  */
 
 test.use({ ...devices['iPhone 15'], browserName: 'chromium' });
@@ -48,7 +54,7 @@ const FULL = { width: 393, height: 659 };
 const KEYBOARD_PX = 336;
 const REDUCED = { width: FULL.width, height: FULL.height - KEYBOARD_PX };
 
-/** Longer than `SETTLE_MS` in `viewport-insets.ts`, with room for a frame. */
+/** Longer than any debounce the app could plausibly grow, with room for a frame. */
 const SETTLED_MS = 700;
 
 interface Measurements {
@@ -59,8 +65,6 @@ interface Measurements {
   tabbarTop: number;
   tabbarBottom: number;
   tabbarComputedBottom: string;
-  keyboard: string;
-  shortfall: string;
   rootStyleAttribute: string;
 }
 
@@ -78,8 +82,6 @@ async function measure(page: Page): Promise<Measurements> {
       tabbarTop: Math.round(box?.top ?? Number.NaN),
       tabbarBottom: Math.round(box?.bottom ?? Number.NaN),
       tabbarComputedBottom: bar === null ? '' : getComputedStyle(bar).bottom,
-      keyboard: root.style.getPropertyValue('--viewport-keyboard').trim(),
-      shortfall: root.style.getPropertyValue('--viewport-shortfall').trim(),
       rootStyleAttribute: root.getAttribute('style') ?? '',
     };
   });
@@ -95,10 +97,11 @@ async function measure(page: Page): Promise<Measurements> {
  * so `(pointer: coarse)`, `prefers-color-scheme` and `prefers-reduced-motion`
  * are still the real answers.
  *
- * The gate itself is not test-only scaffolding — `viewport-insets.ts` refuses
- * to correct a shortfall in a browser tab on purpose, because a URL bar
- * shrinking `innerHeight` is exactly the false positive that would push the tab
- * bar off the screen.
+ * It still matters after the removal, and for a sharper reason than before.
+ * The mechanism that was removed was **standalone-only**: it stood down in a
+ * browser tab on purpose, which is precisely why nobody saw it misbehave until
+ * it reached a Home Screen. A regression guard that runs in tab mode would not
+ * have caught the thing it is guarding against.
  */
 async function emulateInstalled(page: Page): Promise<void> {
   await page.addInitScript(() => {
@@ -136,8 +139,10 @@ test('the keyboard-sized reduction leaves nothing behind when it is reverted', a
 
   const before = await measure(page);
   expect(before.tabbarBottom, 'the tab bar starts on the bottom of the viewport').toBe(FULL.height);
-  expect(before.shortfall, 'nothing is corrected on a healthy viewport').toBe('');
-  expect(before.keyboard, 'and no keyboard inset either').toBe('');
+  expect(before.tabbarComputedBottom, 'and it is anchored by plain CSS').toBe('0px');
+  expect(before.rootStyleAttribute, 'nothing is published onto <html>').not.toContain(
+    '--viewport-',
+  );
 
   // Focus the composer, then take the keyboard's height off the viewport —
   // the reported repro, in the order it was reported.
@@ -164,19 +169,14 @@ test('the keyboard-sized reduction leaves nothing behind when it is reverted', a
     before.tabbarBottom,
   );
   expect(after.tabbarTop, 'and it is the same height it was').toBe(before.tabbarTop);
-  expect(after.tabbarComputedBottom, 'no residual offset on the bar').toBe(
-    before.tabbarComputedBottom,
-  );
+  expect(after.tabbarComputedBottom, 'no residual offset on the bar').toBe('0px');
   expect(after.mainPaddingBottom, 'no residual padding under the page').toBe(
     before.mainPaddingBottom,
   );
   expect(after.docHeight, 'the document is the height it was').toBe(before.docHeight);
-  expect(after.shortfall, 'the shortfall correction cleared itself').toBe('');
-  expect(after.keyboard, 'the keyboard inset cleared itself').toBe('');
-  expect(
-    after.rootStyleAttribute,
-    'the compensator removed its properties rather than zeroing them',
-  ).not.toContain('--viewport-');
+  expect(after.rootStyleAttribute, 'and still nothing published onto <html>').not.toContain(
+    '--viewport-',
+  );
 });
 
 test('while the viewport is reduced the tab bar sits on the bottom of what is visible', async ({
@@ -186,14 +186,12 @@ test('while the viewport is reduced the tab bar sits on the bottom of what is vi
   await openFirstList(page);
   await page.waitForTimeout(500);
 
-  // With a text control focused the shortfall correction stands down by design
-  // — a keyboard that is genuinely up is not that defect.
   await page.locator('main textarea').first().click();
   await page.setViewportSize(REDUCED);
   await page.waitForTimeout(SETTLED_MS);
 
   const reduced = await measure(page);
-  expect(reduced.shortfall, 'no correction while a keyboard is genuinely up').toBe('');
+  expect(reduced.tabbarComputedBottom, 'still plain CSS').toBe('0px');
   expect(reduced.tabbarBottom, 'the bar is on the bottom of the visible area').toBe(REDUCED.height);
   expect(reduced.tabbarTop).toBeGreaterThan(0);
 
@@ -231,11 +229,24 @@ test('a drawer opened and closed while the viewport is reduced does not shift th
   const after = await measure(page);
   expect(after.scrollY, 'the drawer put the page back exactly where it was').toBe(before.scrollY);
   expect(after.tabbarBottom).toBe(before.tabbarBottom);
-  expect(after.shortfall).toBe('');
   expect(after.rootStyleAttribute).not.toContain('--viewport-');
 });
 
-test('a layout viewport left short with no keyboard up puts the chrome back on the screen', async ({
+/**
+ * The regression guard for the second reported defect, stated as the property
+ * that was violated rather than as the mechanism that violated it.
+ *
+ * The old code answered a shrinking `innerHeight` in standalone by pushing the
+ * tab bar *down* by the difference, on the theory that the layout viewport had
+ * been left short of the display. When the theory was wrong — and on iOS 26 a
+ * standalone `innerHeight` moves for reasons that are not that defect — the
+ * bar went off the bottom of the screen with its icons cut off. Measured at
+ * these metrics: a 59px reading moved its box from [602, 659] to [661, 718].
+ *
+ * The invariant below would have failed on that build, and does not care how
+ * the next attempt is implemented.
+ */
+test('a layout viewport that comes back short never pushes the tab bar off the screen', async ({
   page,
 }) => {
   await emulateInstalled(page);
@@ -245,74 +256,82 @@ test('a layout viewport left short with no keyboard up puts the chrome back on t
   const before = await measure(page);
   expect(before.tabbarComputedBottom).toBe('0px');
 
-  // The defect's signature: the layout viewport comes back short with nothing
-  // focused and the visual viewport agreeing with it. WebKit does this by
-  // itself; here it has to be staged.
+  // The defect's signature, staged: the layout viewport comes back short with
+  // nothing focused and the visual viewport agreeing with it.
   const SHORT_BY = 59;
   await page.setViewportSize({ width: FULL.width, height: FULL.height - SHORT_BY });
   await page.waitForTimeout(SETTLED_MS);
 
   const short = await measure(page);
-  expect(short.shortfall, 'the band was measured').toBe(`${String(SHORT_BY)}px`);
-  expect(short.tabbarComputedBottom, 'and the bar was pushed down by exactly that much').toBe(
-    `-${String(SHORT_BY)}px`,
+  expect(short.tabbarComputedBottom, 'no correction is applied at all').toBe('0px');
+  expect(short.tabbarBottom, 'the bar is on the bottom of the short viewport, not below it').toBe(
+    short.innerHeight,
   );
+  expect(short.tabbarTop, 'the whole bar is on screen').toBeGreaterThanOrEqual(0);
+  expect(short.rootStyleAttribute).not.toContain('--viewport-');
 
   await page.setViewportSize(FULL);
   await page.waitForTimeout(SETTLED_MS);
 
   const recovered = await measure(page);
-  expect(recovered.shortfall).toBe('');
   expect(recovered.tabbarComputedBottom).toBe('0px');
   expect(recovered.tabbarBottom).toBe(before.tabbarBottom);
 });
 
-test('the two bottom-anchor utilities resolve to the numbers the chrome is placed by', async ({
-  page,
-}) => {
+/**
+ * The other half of the guard, against the built stylesheet rather than the
+ * live page: the two `@utility` rules are gone, so a class name surviving in
+ * some component that was missed cannot silently start positioning anything.
+ *
+ * Against the real stylesheet on purpose. Twice in this codebase a Tailwind
+ * class has compiled to nothing and the failure was invisible — a class built
+ * from a template literal, and a keyboard term written as a separate utility
+ * that sorted after `max-h-[60dvh]` and won. Reading `getComputedStyle` back is
+ * the only form of this check that cannot be fooled.
+ */
+test('the reverted bottom-anchor utilities no longer exist in the stylesheet', async ({ page }) => {
   await emulateInstalled(page);
   await page.goto('/');
   await page.waitForTimeout(600);
 
-  // Against the real stylesheet, not a re-implementation of the calc: the
-  // failure mode this guards against is the utility being renamed, dropped, or
-  // — twice before in this codebase — compiled to nothing.
   const resolved = await page.evaluate(() => {
+    // Every rule the page actually loaded, read back from the CSSOM. Note that
+    // `getComputedStyle(el).bottom` cannot answer this question: on a
+    // positioned element `bottom: auto` resolves to a *used* value in pixels,
+    // so a class that matches no rule at all still reads back as a number —
+    // which is how the first draft of this test passed a `-40px` off as proof.
+    const offenders: string[] = [];
+    for (const sheet of [...document.styleSheets]) {
+      let rules: CSSRuleList;
+      try {
+        rules = sheet.cssRules;
+      } catch {
+        // A cross-origin stylesheet, which this app has none of.
+        continue;
+      }
+      for (const rule of [...rules]) {
+        if (/bottom-viewport|bottom-above-keyboard|--viewport-/.test(rule.cssText)) {
+          offenders.push(rule.cssText.slice(0, 160));
+        }
+      }
+    }
+
+    // And a positive control, so an empty result cannot mean "the stylesheet
+    // did not load".
     const probe = document.createElement('div');
-    probe.className = 'fixed inset-x-0';
+    probe.className = 'fixed inset-x-0 bottom-0';
     document.body.append(probe);
-    const read = (className: string) => {
-      probe.className = `fixed inset-x-0 ${className}`;
-      return getComputedStyle(probe).bottom;
-    };
-    const root = document.documentElement;
-
-    const quiet = { bar: read('bottom-viewport'), sheet: read('bottom-above-keyboard') };
-
-    root.style.setProperty('--viewport-keyboard', '300px');
-    const typing = { bar: read('bottom-viewport'), sheet: read('bottom-above-keyboard') };
-
-    root.style.removeProperty('--viewport-keyboard');
-    root.style.setProperty('--viewport-shortfall', '59px');
-    const short = { bar: read('bottom-viewport'), sheet: read('bottom-above-keyboard') };
-
-    root.style.removeProperty('--viewport-shortfall');
+    const plain = getComputedStyle(probe).bottom;
     probe.remove();
-    return { quiet, typing, short };
+
+    return { offenders, plain };
   });
 
   expect(
-    resolved.quiet,
-    'absent properties mean the chrome sits exactly where it always did',
-  ).toEqual({ bar: '0px', sheet: '0px' });
-  expect(
-    resolved.typing,
-    'a keyboard lifts the sheet onto it and leaves the tab bar behind it',
-  ).toEqual({ bar: '0px', sheet: '300px' });
-  expect(resolved.short, 'a short layout viewport pushes both back down onto the screen').toEqual({
-    bar: '-59px',
-    sheet: '-59px',
-  });
+    resolved.offenders,
+    'no rule may mention the reverted utilities or the properties behind them',
+  ).toEqual([]);
+  expect(resolved.plain, 'and plain `bottom-0` still resolves, so the sheet did load').toBe('0px');
 
   const after = await measure(page);
   expect(after.rootStyleAttribute, 'the probe cleaned up after itself').not.toContain(
@@ -320,24 +339,111 @@ test('the two bottom-anchor utilities resolve to the numbers the chrome is place
   );
 });
 
-test('a sheet keeps its own size, and gives the keyboard only what the keyboard needs', async ({
-  page,
-}) => {
+/**
+ * The first reported defect, stated as geometry.
+ *
+ * «Новое дело» autofocuses its title field, so on the owner's phone the sheet
+ * opened, the keyboard came up, and the sheet's header — «Отмена · Новое дело
+ * · Создать» — ended up above the top edge of the screen with the tail of the
+ * form near it. The mechanism was iOS scrolling the visual viewport to centre
+ * the focused input while nothing held the page still; the cure was restoring
+ * `vaul`'s `preventScrollMobileSafari`, which no browser here has an equivalent
+ * of.
+ *
+ * What Chromium *can* pin is the part that is pure CSS, and that is worth
+ * pinning because it is what the removed height arithmetic changed: the sheet's
+ * top edge sits at the top inset and its submit control is inside the viewport,
+ * both when the viewport is whole and when a keyboard's worth of it is gone.
+ */
+test('the create sheet opens with its header and its submit on screen', async ({ page }) => {
+  await emulateInstalled(page);
+  await page.goto('/tasks');
+
+  const trigger = page.getByRole('button', { name: /Новое дело|Новая задача|Добавить/i }).first();
+  await expect(trigger, 'no create trigger on /tasks').toBeVisible({ timeout: 20_000 });
+  await trigger.click();
+
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible({ timeout: 15_000 });
+
+  // Wait for vaul's slide-in to finish rather than sleeping at it. Measuring
+  // mid-transform reads a top edge one pixel off and makes this flaky, which
+  // is exactly the kind of noise that gets an inconvenient assertion loosened
+  // until it stops meaning anything.
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const surface = document.querySelector('[role=dialog]');
+          return surface === null ? 'missing' : getComputedStyle(surface).transform;
+        }),
+      { timeout: 5_000 },
+    )
+    .toBe('none');
+
+  const read = async () =>
+    page.evaluate(() => {
+      const surface = document.querySelector('[role=dialog]');
+      const box = surface?.getBoundingClientRect();
+      const submit = [...(surface?.querySelectorAll('button') ?? [])].find((b) =>
+        /Создать/i.test(b.textContent ?? ''),
+      );
+      const sb = submit?.getBoundingClientRect();
+      const body = surface?.querySelector('[data-scroll-pane]') ?? null;
+      return {
+        innerHeight: window.innerHeight,
+        top: Math.round(box?.top ?? Number.NaN),
+        bottom: Math.round(box?.bottom ?? Number.NaN),
+        submitTop: Math.round(sb?.top ?? Number.NaN),
+        submitBottom: Math.round(sb?.bottom ?? Number.NaN),
+        bodyScrollTop: Math.round(body?.scrollTop ?? Number.NaN),
+        rootStyle: document.documentElement.getAttribute('style') ?? '',
+      };
+    });
+
+  const whole = await read();
+  // `max(env(safe-area-inset-top), 12px) + 12px`, and the inset is 0 here.
+  expect(whole.top, 'the sheet starts below the status-bar inset, not above the screen').toBe(24);
+  expect(whole.bottom, 'and reaches the bottom of the viewport').toBe(whole.innerHeight);
+  expect(whole.bodyScrollTop, 'the form opens at the top of itself, never scrolled').toBe(0);
+  expect(whole.submitTop, '«Создать» is on screen').toBeGreaterThanOrEqual(0);
+  expect(whole.submitBottom).toBeLessThanOrEqual(whole.innerHeight);
+  expect(whole.rootStyle).not.toContain('--viewport-');
+
+  // A keyboard's worth of viewport removed. The header must not move up.
+  await page.setViewportSize(REDUCED);
+  await page.waitForTimeout(SETTLED_MS);
+
+  const reduced = await read();
+  expect(reduced.top, 'the header stays under the top inset').toBe(24);
+  expect(reduced.submitTop, '«Создать» is still on screen').toBeGreaterThanOrEqual(0);
+  expect(reduced.submitBottom).toBeLessThanOrEqual(reduced.innerHeight);
+  expect(reduced.rootStyle).not.toContain('--viewport-');
+
+  await page.setViewportSize(FULL);
+  await page.waitForTimeout(SETTLED_MS);
+});
+
+/**
+ * The three `drawerSize` strings from `responsive-dialog.tsx`, verbatim.
+ *
+ * Copied rather than imported on purpose: what is under test is what the
+ * *built stylesheet* does with them. The hazard is real and has fired twice —
+ * once as a class assembled from a template literal, which Tailwind's source
+ * scanner never sees and which therefore generated no rule at all, and once as
+ * a keyboard term written as its own `max-h-[…]` utility, which sorted after
+ * `max-h-[60dvh]` and silently won, letting an action sheet grow to nearly the
+ * whole screen. Neither failed anything. Both were found in `dist/assets/*.css`.
+ */
+test('each sheet size still resolves to the height it claims', async ({ page }) => {
   await emulateInstalled(page);
   await page.goto('/');
   await page.waitForTimeout(600);
 
-  // The three `drawerSize` strings from `responsive-dialog.tsx`, verbatim.
-  // Copied rather than imported on purpose: what is under test is what the
-  // *built stylesheet* does with them, and the hazard is real — the keyboard
-  // term first went in as a separate `max-h-[…]` utility, which Tailwind sorted
-  // after `max-h-[60dvh]`, so it won outright and an action sheet quietly
-  // gained the freedom to grow to nearly the whole screen. Nothing in the app
-  // would have failed; this measures it.
   const SIZES = {
-    full: 'h-[calc(100dvh_-_max(env(safe-area-inset-top,0px),0.75rem)_-_0.75rem_-_var(--viewport-keyboard,0px))]',
-    tall: 'h-[min(85dvh,calc(100dvh_-_max(env(safe-area-inset-top,0px),0.75rem)_-_0.75rem_-_var(--viewport-keyboard,0px)))]',
-    auto: 'max-h-[min(60dvh,calc(100dvh_-_max(env(safe-area-inset-top,0px),0.75rem)_-_0.75rem_-_var(--viewport-keyboard,0px)))]',
+    full: 'h-[calc(100dvh_-_max(env(safe-area-inset-top,0px),0.75rem)_-_0.75rem)]',
+    tall: 'h-[85dvh]',
+    auto: 'max-h-[60dvh]',
   } as const;
 
   const measured = await page.evaluate((sizes: Record<string, string>) => {
@@ -354,31 +460,30 @@ test('a sheet keeps its own size, and gives the keyboard only what the keyboard 
       probe.className = className;
       return Math.round(parseFloat(getComputedStyle(probe).height));
     };
-    const root = document.documentElement;
 
     const quiet = Object.fromEntries(Object.entries(sizes).map(([k, v]) => [k, read(v)]));
+
+    // And the same three, with both removed properties staged. A size that
+    // still moved would mean a keyboard term survived somewhere.
+    const root = document.documentElement;
     root.style.setProperty('--viewport-keyboard', '300px');
-    const typing = Object.fromEntries(Object.entries(sizes).map(([k, v]) => [k, read(v)]));
+    root.style.setProperty('--viewport-shortfall', '59px');
+    const hostile = Object.fromEntries(Object.entries(sizes).map(([k, v]) => [k, read(v)]));
     root.style.removeProperty('--viewport-keyboard');
+    root.style.removeProperty('--viewport-shortfall');
 
     probe.remove();
-    return { quiet, typing, viewport: window.innerHeight };
+    return { quiet, hostile, viewport: window.innerHeight };
   }, SIZES);
 
   // `max(env(safe-area-inset-top), 12px) + 12px`, and the inset is 0 here.
   const available = measured.viewport - 24;
 
-  expect(measured.quiet.auto, 'auto is still capped at 60dvh, not at the whole screen').toBe(
+  expect(measured.quiet.auto, 'auto is capped at 60dvh, not at the whole screen').toBe(
     Math.round(measured.viewport * 0.6),
   );
-  expect(measured.quiet.tall, 'tall is still 85dvh').toBe(Math.round(measured.viewport * 0.85));
-  expect(measured.quiet.full, 'full is still the screen less the top inset').toBe(available);
+  expect(measured.quiet.tall, 'tall is 85dvh').toBe(Math.round(measured.viewport * 0.85));
+  expect(measured.quiet.full, 'full is the screen less the top inset').toBe(available);
 
-  // With a keyboard up every size loses exactly the keyboard's height, so the
-  // sheet's *top* stays where it was instead of being pushed off the screen.
-  expect(measured.typing.full).toBe(available - 300);
-  expect(measured.typing.tall).toBe(
-    Math.min(Math.round(measured.viewport * 0.85), available - 300),
-  );
-  expect(measured.typing.auto).toBe(Math.min(Math.round(measured.viewport * 0.6), available - 300));
+  expect(measured.hostile, 'no size reads a viewport property any more').toEqual(measured.quiet);
 });

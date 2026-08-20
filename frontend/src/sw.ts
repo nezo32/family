@@ -51,8 +51,17 @@ const PRECACHE_URLS = MANIFEST.map((entry) => new URL(entry.url, self.location.o
 /** The SPA entry point every unmatched navigation falls back to. */
 const NAVIGATION_FALLBACK = new URL('/index.html', self.location.origin).href;
 
-/** Requests that must never be served from a cache. */
+/**
+ * Requests that must never be served from a cache — and, for a navigation,
+ * never fall back to the app shell either. `/api/auth/:provider/callback` is
+ * both: a top-level navigation *and* an API path.
+ */
 const NEVER_CACHE = [/^\/api\//, /^\/auth\//];
+
+/** What a navigation gets when the network is genuinely gone. */
+function offlineResponse(): Response {
+  return new Response('Нет соединения', { status: 503, statusText: 'Offline' });
+}
 
 function hash(input: string): string {
   let h = 0x811c9dc5;
@@ -149,6 +158,10 @@ self.addEventListener('activate', (event) => {
       } catch {
         // Absent on Safari, and purely an optimisation where it exists.
       }
+      // Enabling it puts one obligation on the `fetch` handler: every
+      // navigation it declines to answer costs the server a *second* request,
+      // because the preload is already in flight. Read the navigation branch
+      // below before changing either half.
 
       try {
         await self.clients.claim();
@@ -181,10 +194,35 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
-  if (NEVER_CACHE.some((re) => re.test(url.pathname))) return;
 
-  // Navigations: network first (so a deploy is picked up), falling back to the
-  // precached shell when offline. React Router owns routing from there.
+  const neverCache = NEVER_CACHE.some((re) => re.test(url.pathname));
+
+  /**
+   * Navigations: network first (so a deploy is picked up), falling back to the
+   * precached shell when offline. React Router owns routing from there.
+   *
+   * **Every in-scope navigation is answered here, including the ones we refuse
+   * to cache — and that is the whole point.** Returning without calling
+   * `respondWith()` does not mean "stay out of the way"; with navigation
+   * preload enabled (see `activate`) the browser has *already sent* the request
+   * by the time this handler runs, and declining to answer makes it send the
+   * request a second time and use that one instead. The first response is
+   * discarded.
+   *
+   * For a static page that is a wasted round trip. For
+   * `GET /api/auth/:provider/callback` it was a bug with teeth: the discarded
+   * first request is the one that redeemed the one-time `state`, linked the
+   * identity and set `__Host-rt`, and the request whose response the user
+   * actually saw was the duplicate — which found the state spent and answered
+   * `400 BAD_REQUEST`. A link that worked perfectly rendered a raw JSON error
+   * envelope into the address bar.
+   *
+   * So: consume `event.preloadResponse` and hand it back. One navigation, one
+   * request, and the response the server built for it is the response the
+   * browser gets. `NEVER_CACHE` still decides everything about *caching* — an
+   * API navigation is never stored and never falls back to the shell, because
+   * answering `/api/auth/…` with `index.html` would be a lie.
+   */
   if (request.mode === 'navigate') {
     event.respondWith(
       (async () => {
@@ -193,14 +231,17 @@ self.addEventListener('fetch', (event) => {
           if (preloaded) return preloaded;
           return await fetch(request);
         } catch {
+          if (neverCache) return offlineResponse();
           const cache = await caches.open(PRECACHE);
           const cached = await cache.match(NAVIGATION_FALLBACK);
-          return cached ?? new Response('Нет соединения', { status: 503, statusText: 'Offline' });
+          return cached ?? offlineResponse();
         }
       })(),
     );
     return;
   }
+
+  if (neverCache) return;
 
   // Hashed build assets: cache first, they are immutable by construction.
   event.respondWith(

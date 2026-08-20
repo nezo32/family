@@ -8,6 +8,7 @@ import {
   isoDateSchema,
   isoDateTimeSchema,
   nonEmptyString,
+  queryBooleanSchema,
   timeZoneSchema,
 } from './common.js';
 
@@ -220,9 +221,31 @@ export const memberListItemSchema = publicUserSchema.extend({
 });
 export type MemberListItem = z.infer<typeof memberListItemSchema>;
 
+/**
+ * `GET /api/members`.
+ *
+ * ## `rejected` is not a member state
+ *
+ * A rejected row is the record of a join request that was declined — it is
+ * moderation history, not a person in the family. The roster therefore omits
+ * `rejected` **by default**, everywhere and for everyone, so no picker, avatar
+ * stack, attendee list or assignee dropdown can offer a stranger the family
+ * already turned away.
+ *
+ * `includeRejected=true` (or an explicit `status=rejected`) opts the admin
+ * moderation screen back in — an admin who declined somebody by accident has to
+ * be able to see what they declined. The server additionally requires
+ * `member:update:any` for either opt-in, so the roster a child receives never
+ * contains a rejected row whatever they put in the querystring.
+ *
+ * `.optional()` rather than the `queryBooleanSchema.default(false)` used
+ * elsewhere: `MemberListQuery` is also the client's call-site type, and two of
+ * them pass `{}`. The service treats anything but `true` as false.
+ */
 export const memberListQuerySchema = z.object({
   status: userStatusSchema.optional(),
   role: roleSchema.optional(),
+  includeRejected: queryBooleanSchema.optional(),
 });
 export type MemberListQuery = z.infer<typeof memberListQuerySchema>;
 

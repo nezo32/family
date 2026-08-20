@@ -8,6 +8,7 @@ import { OptionList, OptionRow, PickerSheet } from '@/shared/ui/option-sheet';
 import { MemberDisc } from '@/shared/ui/member-disc';
 import { Textarea } from '@/shared/ui/textarea';
 import { cn } from '@/shared/lib/utils';
+import { composerNoteClass } from '../composer-field';
 import { useGiveKudos, useRoster } from '../hooks';
 import { KUDOS_EMOJI, WALL_RU } from '../locale';
 
@@ -23,6 +24,22 @@ import { KUDOS_EMOJI, WALL_RU } from '../locale';
  * no streak, no suggestion of whom you owe. Кому and за что, and that is all.
  *
  * You cannot thank yourself, so the picker does not offer you.
+ *
+ * **And you can only thank an `active` member.** `GET /members` subtracts
+ * `rejected` at the source (identity.md §1.5), but it still serves
+ * `pending_approval` and `suspended` — the roster is a roster, and the admin and
+ * family screens need both. Neither belongs in a «кому сказать спасибо» list:
+ * somebody waiting at the door has not joined the family yet, and somebody
+ * suspended has been deliberately set aside. `giveKudos` agrees and is the
+ * authority — it re-reads the recipient and answers `404` for any status but
+ * `active` — so offering them was offering a row the server would refuse.
+ *
+ * `active` alone, and not the `['active', 'pending_approval']` that
+ * `dashboard.loadMembers` uses: that set answers "who is in the household"
+ * for a display surface, where showing the newcomer is the point. This one
+ * answers "whom may I act upon", which is the narrower question every other
+ * action-target picker in the app already answers the same way
+ * (`tasks/api.ts`, `EventFormDialog`).
  */
 
 type SheetKey = 'to' | 'emoji';
@@ -42,11 +59,18 @@ export function KudosComposer(props: { open: boolean; onOpenChange: (open: boole
     setOpenSheet(null);
   }, [props.open]);
 
-  const candidates = roster.members.filter((member) => member.id !== userId);
+  const candidates = roster.members.filter(
+    (member) => member.id !== userId && member.status === 'active',
+  );
+  /**
+   * Resolved against `candidates`, not the whole roster, so a restored draft
+   * naming somebody who has since been suspended reads as "nobody picked yet"
+   * rather than as a recipient the send would 404 on.
+   */
   const recipient = candidates.find((member) => member.id === toUserId);
 
   const submit = (): void => {
-    if (toUserId.length === 0) return;
+    if (!recipient) return;
     const trimmed = message.trim();
     give.mutate(
       {
@@ -74,7 +98,7 @@ export function KudosComposer(props: { open: boolean; onOpenChange: (open: boole
         description={WALL_RU.kudos.giveDescription}
         submitLabel={WALL_RU.kudos.send}
         onSubmit={submit}
-        submitDisabled={toUserId.length === 0}
+        submitDisabled={!recipient}
         submitting={give.isPending}
         dirty={toUserId.length > 0 || message.trim().length > 0}
         draft={{
@@ -135,7 +159,7 @@ export function KudosComposer(props: { open: boolean; onOpenChange: (open: boole
                 onChange={(event) => {
                   setMessage(event.target.value);
                 }}
-                className="min-h-20 resize-none border-0 bg-transparent px-0 text-[17px] leading-6 shadow-none focus-visible:ring-0 md:text-[17px]"
+                className={cn(composerNoteClass, 'min-h-20')}
               />
             </div>
           </Section>

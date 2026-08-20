@@ -8,17 +8,29 @@
       `interactive-widget=resizes-content` is deliberately **not** here. It is
       the spec's answer to "the keyboard should shrink the layout viewport", and
       it would be the right declaration — but WebKit only turned the feature
-      flag on in trunk on 2026-08-13 (`[interactive-widget] Enable feature
-      flag`, `MetaViewportInteractiveWidgetEnabled` → true on PLATFORM(COCOA)),
-      so no shipping Safari has it, iOS 26.6 included; MDN's compat data still
-      records Safari as unsupported and bugs.webkit.org 259770 is still open.
+      flag on in trunk on 2026-08-13 (`MetaViewportInteractiveWidgetEnabled` →
+      `PLATFORM(COCOA): true`, commit 44ecc0e3 = 319118@main, bug 321543), and
+      that revision is *above* the range Safari Technology Preview 250 was cut
+      from on the same day. So it is in no shipping Safari, iOS 26.6 included —
+      whose release notes (2026-07-27) mention no viewport or keyboard change at
+      all. bugs.webkit.org 259770 is still NEW, and 322197, filed 2026-08-20,
+      reports the new code not reflecting a dynamically changed value, so the
+      feature is still churning. Feature-detect it; do not assume a version.
       On the phones this app is opened from it is parsed, discarded, and logged
       as «Viewport argument key "interactive-widget" not recognized and
       ignored» — which is also what fails `assertClean` in the e2e suite.
 
       Add it back when WebKit ships it (it costs one entry in `IGNORED_CONSOLE`
-      in `e2e/helpers.ts` for the engines that still warn). Until then the
-      keyboard is handled in JavaScript: `src/app/layout/viewport-insets.ts`.
+      in `e2e/helpers.ts` for the engines that still warn). It is the only
+      declaration that would actually fix this, and it is worth watching for.
+
+      Until then the keyboard belongs to `vaul`, on the surfaces `vaul` owns,
+      and to nothing else. There was briefly a JavaScript compensator here —
+      `src/app/layout/viewport-insets.ts`, two custom properties published from
+      `visualViewport` — and it cost two visual regressions on the owner's
+      phone in one hour. `src/shared/ui/responsive-dialog.tsx` and
+      `src/app/layout/BottomTabBar.tsx` record what happened; read both before
+      writing another one.
     -->
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="format-detection" content="telephone=no" />

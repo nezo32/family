@@ -59,6 +59,18 @@ import { bumpRevisions } from '../revisions.js';
  *   comment posted on a task would invalidate the task list and leave an open
  *   thread on another phone stale. (`/api/posts` and `/api/polls` exist only as
  *   comment/reaction mounts, so they take a plain prefix row.)
+ * - **`/media` is classified as changing nothing, and that is the interesting
+ *   row.** An upload is a **private draft**: it has no `entity_id` yet, nobody
+ *   but its uploader can even fetch it, and no screen in the app lists it. It
+ *   becomes visible to the family at the moment the post or comment carrying
+ *   its id is written — and *that* write bumps `wall` through the rows below.
+ *   Bumping `wall` here as well would make every other phone in the house
+ *   refetch the feed once per file while somebody is still choosing photos, and
+ *   show them nothing new each time. `DELETE /media/:id` is the same act in
+ *   reverse and only ever reaches a draft (an attached file is removed by
+ *   editing the post, which is a `/wall` write). Media *on* a live post is
+ *   changed only through `PATCH /api/wall/posts/:id` and `PATCH
+ *   /api/comments/:id`, both already `wall`.
  * - **`/notifications/deliveries/*`** are the D11 acknowledgement endpoints,
  *   written by the service worker on behalf of the device that just received a
  *   push. They change no shared state and must not make every open client
@@ -84,6 +96,7 @@ export const ROUTE_DOMAINS: readonly (readonly [string, readonly ChangeDomain[]]
   // land on Стена, so both bump `wall` and nothing else.
   ['/api/kudos/:id/comments', ['wall']],
   ['/api/kudos/:id/reactions', ['wall']],
+  ['/api/media', []],
   ['/api/posts', ['wall']],
   ['/api/polls', ['wall']],
   ['/api/notifications/preferences', []],

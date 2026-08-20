@@ -220,6 +220,121 @@ export const pollVotes = pgTable(
   ],
 );
 
+/* -------------------------------------------------------------------------- */
+/* Media attachments                                                           */
+/* -------------------------------------------------------------------------- */
+
+export const mediaKind = pgEnum('media_kind', ['image', 'video', 'audio']);
+
+/**
+ * Photo, video and audio hanging off a post or a comment.
+ *
+ * ## Why one table and not two
+ *
+ * The obvious alternative is an assets table plus a join table. It buys reuse —
+ * one object referenced by several posts — and costs a join on every read plus
+ * a second class of orphan (an asset with no link rows). **Nothing in this app
+ * reuses an object.** A photo is taken, uploaded and hung on one note; there is
+ * no library screen, no picker over past uploads, no de-duplication. A join
+ * table with exactly one row per asset is state that can disagree with itself:
+ * two link rows for one object make "delete the object when it is detached"
+ * ambiguous, and two `sort_order`s for one asset make the draw order a
+ * question. One row, one object, one place it hangs.
+ *
+ * ## The draft state is a null pointer
+ *
+ * Upload happens **before** the post exists (attach-then-post): the composer
+ * uploads while the writer is still typing, so the note appears complete the
+ * moment it is posted, and a failed upload is a failure the writer can see and
+ * retry *before* anything is published. A freshly uploaded row therefore has
+ * `entity_id IS NULL` — it is a draft, visible to its uploader and to nobody
+ * else, and `media_attachments_drafts_idx` is exactly the index the orphan
+ * sweep scans.
+ *
+ * ## The pointer is polymorphic and the database cannot help
+ *
+ * `(entity_type, entity_id)` carries the same trade-off as `comments` above and
+ * one extra obligation: an object outlives its row unless somebody deletes it.
+ * So every path that removes an entity calls `detachAllFrom` in the same
+ * transaction (soft delete, objects kept — see `media.service.ts`), and the
+ * nightly sweep is what actually reclaims bytes. `entity_type` here is a
+ * **narrower** set than `COMMENTABLE_ENTITY_TYPES`: only `post` and `comment`
+ * hold media, and `ATTACHABLE_ENTITY_TYPES` in the storage module is where that
+ * is enforced.
+ *
+ * ## Why it lives in this file rather than in the storage module
+ *
+ * `db/schema.ts` is the lead's barrel and drizzle-kit only sees what the barrel
+ * re-exports. `wall.schema.ts` is already in it, and the attachment pointer is
+ * a wall concept — the storage module owns the *objects*, this table owns
+ * *where they hang*.
+ */
+export const mediaAttachments = pgTable(
+  'media_attachments',
+  {
+    id: primaryId(),
+
+    /** Who uploaded it. Never deleted while their media exists — same rule as a comment. */
+    uploaderId: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+
+    kind: mediaKind().notNull(),
+
+    /** The **sniffed** type. Echoed on every GET, so it is never the client's claim. */
+    contentType: text().notNull(),
+
+    /**
+     * The bucket key, generated server-side (`media/<id>/<random>.<ext>`).
+     * Unique so two rows can never claim the same object and make deletion a
+     * question of which row wins.
+     */
+    objectKey: text().notNull(),
+
+    byteSize: integer().notNull(),
+
+    /**
+     * Pixel dimensions, rotation already applied, so the card can box the
+     * aspect ratio before the bytes land and the feed never reflows (§D7.6).
+     * NULL for audio.
+     */
+    width: integer(),
+    height: integer(),
+
+    /** NULL for a still image. Parsed from the container, never from the client. */
+    durationMs: integer(),
+
+    /** `post` | `comment`. NULL together with `entityId` => an unattached draft. */
+    entityType: text(),
+    entityId: uuid(),
+
+    /** Draw order within one entity. Assigned from the position in `attachmentIds`. */
+    sortOrder: integer().notNull().default(0),
+
+    /** When it stopped being a draft. NULL for a draft; the sweep reads `createdAt`. */
+    attachedAt: timestamp({ withTimezone: true }),
+
+    ...timestamps(),
+    ...softDelete(),
+  },
+  (t) => [
+    /** The only read path: "everything hanging on this thing, in order". */
+    index('media_attachments_entity_idx')
+      .on(t.entityType, t.entityId, t.sortOrder)
+      .where(sql`${t.deletedAt} is null`),
+    /** The sweep's index: drafts nobody ever posted. */
+    index('media_attachments_drafts_idx')
+      .on(t.createdAt)
+      .where(sql`${t.entityId} is null and ${t.deletedAt} is null`),
+    /** The sweep's other index: detached rows past their grace period. */
+    index('media_attachments_deleted_idx')
+      .on(t.deletedAt)
+      .where(sql`${t.deletedAt} is not null`),
+    index('media_attachments_uploader_idx').on(t.uploaderId),
+    uniqueIndex('media_attachments_object_key_idx').on(t.objectKey),
+  ],
+);
+
 /**
  * Append-only feed of domain events ("Папа выполнил задачу «Вынести мусор»").
  *
@@ -274,3 +389,5 @@ export type PollVoteRow = typeof pollVotes.$inferSelect;
 export type NewPollVoteRow = typeof pollVotes.$inferInsert;
 export type ActivityLogRow = typeof activityLog.$inferSelect;
 export type NewActivityLogRow = typeof activityLog.$inferInsert;
+export type MediaAttachmentRow = typeof mediaAttachments.$inferSelect;
+export type NewMediaAttachmentRow = typeof mediaAttachments.$inferInsert;

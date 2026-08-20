@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, count, eq, sql } from 'drizzle-orm';
 
 import type { OAuthProvider } from '@family/shared';
 
@@ -111,6 +111,18 @@ export interface LinkDecisionInput {
   registrationAllowed: boolean;
   /** `BOOTSTRAP_OWNER_EMAIL` — the first sign-in with it is auto-approved as owner. */
   bootstrapOwnerEmail: string | null;
+  /**
+   * How many `active` owners the family already has.
+   *
+   * Bootstrap is **one-shot**: `isBootstrapSignup` on the password path has
+   * refused to fire while an owner exists ever since a smoke-test registration
+   * against fresh production came back `role: owner`, and this path had the
+   * address binding but not the spent-once half. Without it the configured
+   * address stays a permanent unauthenticated route to a second owner account
+   * for as long as nobody happens to hold that address in `users.email` — and a
+   * Telegram-only owner never does, because Telegram yields no email at all.
+   */
+  activeOwnerCount: number;
 }
 
 function sameEmail(a: string | null, b: string | null): boolean {
@@ -172,7 +184,17 @@ export function decideLinkOutcome(input: LinkDecisionInput): LinkDecision {
     return { kind: 'reject', reason: 'registration_closed' };
   }
 
-  return { kind: 'create', asOwner: sameEmail(linkEligibleEmail, input.bootstrapOwnerEmail) };
+  /*
+   * Auto-approve as owner only while the family has none — the same one-shot
+   * rule `isBootstrapSignup` applies to the password path, and the reason a
+   * released identity signing up again cannot come back as anything but a
+   * `pending_approval` `child`. Telegram is doubly covered: it carries no
+   * email, so `sameEmail` is false for it under every configuration.
+   */
+  const asOwner =
+    input.activeOwnerCount === 0 && sameEmail(linkEligibleEmail, input.bootstrapOwnerEmail);
+
+  return { kind: 'create', asOwner };
 }
 
 /** Maps a decision failure onto the wire error the frontend already knows how to render. */
@@ -314,6 +336,20 @@ export async function resolveOAuthIdentity(
     .from(familySettings)
     .limit(1);
 
+  /**
+   * Only asked when a brand-new account is on the table. A login or a link
+   * cannot change anybody's role, so the count would be dead weight on the hot
+   * path — every single sign-in — for a question only registration asks.
+   */
+  let activeOwnerCount = 0;
+  if (!existingIdentity && intent === 'login') {
+    const [owners] = await db
+      .select({ value: count() })
+      .from(users)
+      .where(and(eq(users.role, 'owner'), eq(users.status, 'active')));
+    activeOwnerCount = owners?.value ?? 0;
+  }
+
   const decision = decideLinkOutcome({
     intent,
     sessionUserId,
@@ -327,6 +363,7 @@ export async function resolveOAuthIdentity(
     // door, so registration is open — the bootstrap owner has to get in somehow.
     registrationAllowed: settings?.allowRegistration ?? true,
     bootstrapOwnerEmail: config.BOOTSTRAP_OWNER_EMAIL || null,
+    activeOwnerCount,
   });
 
   if (decision.kind === 'conflict' || decision.kind === 'reject') {

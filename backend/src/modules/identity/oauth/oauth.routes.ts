@@ -41,6 +41,7 @@ import {
 } from './telegram.js';
 import {
   createOAuthTransactionStore,
+  flowHintFromState,
   type OAuthTransaction,
   type OAuthTransactionStore,
 } from './transactions.js';
@@ -239,6 +240,96 @@ function providerError(provider: string, error: string, description?: string): A
 }
 
 /* -------------------------------------------------------------------------- */
+/* callback failures — the same rule as /start, for the same reason            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Where a browser flow lands when it could not be finished. Mirrors
+ * `ROUTES.login` / `ROUTES.settingsAccounts` in
+ * `frontend/src/shared/lib/routes.ts`.
+ *
+ * A failed *link* must not be dumped on the login screen: the user is signed in
+ * and was standing on Настройки → Способы входа, which is also the one screen
+ * that can show them whether the link actually took.
+ */
+const CALLBACK_LANDING: Record<OAuthIntent, string> = {
+  login: '/login',
+  link: '/settings/accounts',
+};
+
+/**
+ * `?oauth=replayed` — the callback ran twice and this is the second one.
+ *
+ * Deliberately **not** `?error=`: the landing pages render it as a neutral
+ * notice, not a failure. See `callbackFailureUrl` for why that is the honest
+ * reading and what it is careful not to claim.
+ */
+export const REPLAYED_STATE_PARAM = 'oauth';
+export const REPLAYED_STATE_VALUE = 'replayed';
+
+/** The `reason` `assertTransactionUsable` attaches when there was no row at all. */
+function isUnknownStateFailure(error: unknown): boolean {
+  return (
+    AppError.isAppError(error) &&
+    error.code === 'BAD_REQUEST' &&
+    error.context?.['reason'] === 'unknown'
+  );
+}
+
+/**
+ * Turn a dead callback into a place in the app, never into a JSON envelope.
+ *
+ * The callback is a **top-level browser navigation** — the same fact that made
+ * `/start` redirect. Everything it can throw (a provider that is not
+ * configured, a token exchange that failed, a subject already bound to somebody
+ * else, a state that will not redeem) was being rendered into the address bar
+ * as `{"error":{"code":"BAD_REQUEST","message":"OAuth state is unknown or has
+ * already been used","requestId":"…"}}`: English, developer-facing, no way back.
+ *
+ * ### The replay case is not an error
+ *
+ * When the state is unknown *because it was already consumed*, the flow the
+ * human performed succeeded — a second callback for one authorization is a
+ * client-side duplicate (see `frontend/src/sw.ts`), and its 400 is the *first*
+ * one's success viewed from the losing side. Showing an error there is simply
+ * wrong.
+ *
+ * We cannot prove that from here, and we do not try to. Delete-on-read is the
+ * replay guard (D3), so "already consumed" and "never existed" are the same
+ * observation by construction, and the second is also what an attacker
+ * replaying a stolen link would present. Keeping a recently-consumed set to
+ * tell them apart would put back the state D3 deletes, and would still only
+ * change the wording.
+ *
+ * So the redirect claims nothing. It carries `?oauth=replayed`, and the page it
+ * lands on is the one that already knows the truth: Способы входа lists the
+ * linked providers, and `/login` bounces a signed-in visitor into the app. The
+ * user is told what actually happened by the app's own state rather than by a
+ * sentence we guessed. An unknown state costs an attacker one redirect to a
+ * screen that is behind the session guard.
+ */
+function callbackFailureUrl(
+  provider: OAuthProvider,
+  intent: OAuthIntent,
+  error: unknown,
+): { url: string; replayed: boolean } {
+  const url = new URL(appUrl(CALLBACK_LANDING[intent]));
+  url.searchParams.set('provider', provider);
+
+  if (isUnknownStateFailure(error)) {
+    url.searchParams.set(REPLAYED_STATE_PARAM, REPLAYED_STATE_VALUE);
+    return { url: url.href, replayed: true };
+  }
+
+  // Expired states, provider mismatches, token-exchange failures, a subject
+  // that belongs to somebody else — all real failures, all with Russian copy
+  // already keyed off the code.
+  const code: ErrorCode = AppError.isAppError(error) ? error.code : 'INTERNAL_ERROR';
+  url.searchParams.set('error', code);
+  return { url: url.href, replayed: false };
+}
+
+/* -------------------------------------------------------------------------- */
 /* plugin                                                                      */
 /* -------------------------------------------------------------------------- */
 
@@ -317,7 +408,75 @@ const oauthRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     },
   );
 
-  /* -------------------------- google callback --------------------------- */
+  /* --------------------------- the callbacks ---------------------------- */
+
+  /**
+   * One handler for both providers, on purpose.
+   *
+   * Everything that differs between Google and Telegram is the token exchange;
+   * everything that goes wrong — a duplicate callback, an expired state, a
+   * refused exchange — goes wrong identically for both, and for `intent=login`
+   * and `intent=link` alike. A fix written into one provider's branch would
+   * have left the other three combinations rendering JSON at the user.
+   */
+  const browserCallback = (provider: OAuthProvider) =>
+    async function handleCallback(
+      request: FastifyRequest<{ Querystring: z.infer<typeof oauthCallbackQuerySchema> }>,
+      reply: FastifyReply,
+    ): Promise<FastifyReply> {
+      const { code, state, error, error_description } = request.query;
+      // Known only from the row; until it is consumed, the state's own marker is
+      // the best guess at where this browser came from.
+      let intent: OAuthIntent = flowHintFromState(state);
+
+      try {
+        // Checked before anything touches the database: a provider with no
+        // credentials must answer cleanly, not fail somewhere deeper.
+        assertProviderEnabled(provider);
+        if (error) throw providerError(provider, error, error_description);
+        if (!code || !state) throw new AppError('BAD_REQUEST', 'Missing code or state');
+
+        const transaction = await store().consume(state, provider);
+        intent = transaction.intent;
+        if (!transaction.codeVerifier) {
+          throw new AppError('BAD_REQUEST', 'OAuth transaction is missing its PKCE verifier');
+        }
+
+        const profile =
+          provider === 'google'
+            ? await exchangeGoogleCode({
+                code,
+                codeVerifier: transaction.codeVerifier,
+                nonce: transaction.nonce,
+              })
+            : await exchangeTelegramCode({
+                code,
+                state,
+                nonce: transaction.nonce,
+                codeVerifier: transaction.codeVerifier,
+              });
+
+        return await finishBrowserFlow(request, reply, profile, transaction);
+      } catch (failure) {
+        const { url, replayed } = callbackFailureUrl(provider, intent, failure);
+        // A replay is the expected shape of a duplicated navigation, not an
+        // incident; everything else is worth an error line with its context.
+        request.log[replayed ? 'info' : 'error'](
+          {
+            err: failure,
+            provider,
+            intent,
+            ...(AppError.isAppError(failure)
+              ? { code: failure.code, context: failure.context }
+              : {}),
+          },
+          replayed
+            ? 'oauth callback replayed a spent state — redirecting instead of erroring'
+            : 'oauth callback failed — redirecting the browser into the app',
+        );
+        return reply.redirect(url, 302);
+      }
+    };
 
   r.get(
     '/auth/google/callback',
@@ -325,29 +484,8 @@ const oauthRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       config: { public: true },
       schema: { summary: 'Google OIDC callback', querystring: oauthCallbackQuerySchema },
     },
-    async (request, reply) => {
-      // Checked before anything touches the database: a provider with no
-      // credentials must answer 503, not fail somewhere deeper.
-      assertProviderEnabled('google');
-      const { code, state, error, error_description } = request.query;
-      if (error) throw providerError('google', error, error_description);
-      if (!code || !state) throw new AppError('BAD_REQUEST', 'Missing code or state');
-
-      const transaction = await store().consume(state, 'google');
-      if (!transaction.codeVerifier) {
-        throw new AppError('BAD_REQUEST', 'OAuth transaction is missing its PKCE verifier');
-      }
-
-      const profile = await exchangeGoogleCode({
-        code,
-        codeVerifier: transaction.codeVerifier,
-        nonce: transaction.nonce,
-      });
-      return finishBrowserFlow(request, reply, profile, transaction);
-    },
+    browserCallback('google'),
   );
-
-  /* ------------------------- telegram callback -------------------------- */
 
   r.get(
     '/auth/telegram/callback',
@@ -355,25 +493,7 @@ const oauthRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       config: { public: true },
       schema: { summary: 'Telegram OIDC callback', querystring: oauthCallbackQuerySchema },
     },
-    async (request, reply) => {
-      assertProviderEnabled('telegram');
-      const { code, state, error, error_description } = request.query;
-      if (error) throw providerError('telegram', error, error_description);
-      if (!code || !state) throw new AppError('BAD_REQUEST', 'Missing code or state');
-
-      const transaction = await store().consume(state, 'telegram');
-      if (!transaction.codeVerifier) {
-        throw new AppError('BAD_REQUEST', 'OAuth transaction is missing its PKCE verifier');
-      }
-
-      const profile = await exchangeTelegramCode({
-        code,
-        state,
-        nonce: transaction.nonce,
-        codeVerifier: transaction.codeVerifier,
-      });
-      return finishBrowserFlow(request, reply, profile, transaction);
-    },
+    browserCallback('telegram'),
   );
 
   /* ------------------ telegram login widget (legacy) -------------------- */

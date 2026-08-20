@@ -154,5 +154,19 @@ export const AUTH_RU = {
     providerUnavailableTitle: (provider: string) => `Вход через ${provider} сейчас недоступен`,
     providerUnavailableText: (provider: string) =>
       `Вход через ${provider} не настроен на сервере. Войдите другим способом — или попросите администратора семьи проверить настройки.`,
+
+    /**
+     * `?oauth=replayed` — the provider callback ran twice for one sign-in and
+     * the second one found the one-time link already used.
+     *
+     * **Not** «не удалось войти», and not styled as a failure: if the first
+     * callback did sign the user in, they never read this — `RedirectIfAuthenticated`
+     * takes them into the app before this screen paints. Seeing this sentence
+     * therefore means the session really is absent, and the only useful thing to
+     * say is "that link is spent, press the button again".
+     */
+    replayedTitle: 'Ссылка для входа уже использована',
+    replayedText:
+      'Ссылка от провайдера действует один раз. Нажмите кнопку входа ещё раз — это займёт пару секунд.',
   },
 } as const;

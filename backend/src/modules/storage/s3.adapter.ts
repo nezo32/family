@@ -44,6 +44,19 @@ export interface ObjectMetadata {
 
 export interface StoredObject extends ObjectMetadata {
   readonly body: Readable;
+  /**
+   * `bytes <start>-<end>/<total>` when this was a ranged read, `undefined`
+   * otherwise. The serving route copies it straight onto a `206`.
+   */
+  readonly contentRange: string | undefined;
+}
+
+/** Raised when a `Range` header names bytes the object does not have. */
+export class RangeNotSatisfiableError extends Error {
+  constructor() {
+    super('Requested range is not satisfiable');
+    this.name = 'RangeNotSatisfiableError';
+  }
 }
 
 export interface Storage {
@@ -55,10 +68,36 @@ export interface Storage {
     contentType: string;
     cacheControl?: string;
   }): Promise<{ etag: string | undefined }>;
+  /**
+   * Same as `put`, but from a stream whose length is already known.
+   *
+   * This is the video path, and it exists because `put` takes a `Uint8Array`:
+   * buffering a 100 MB upload to hand it over would put 100 MB per concurrent
+   * upload on a VDI that also runs Postgres, Redis and the object store. The
+   * upload spools to a temp file instead and this streams it out of there.
+   *
+   * `contentLength` is **required** rather than optional on purpose: without it
+   * the SDK falls back to `aws-chunked` streaming, which several S3 clones
+   * handle badly — the same reason `put` sends the length explicitly.
+   */
+  putStream(input: {
+    key: string;
+    body: Readable;
+    contentLength: number;
+    contentType: string;
+    cacheControl?: string;
+  }): Promise<{ etag: string | undefined }>;
   /** Metadata only, for `If-None-Match` — a 304 must not pull the body. */
   head(key: string): Promise<ObjectMetadata | null>;
-  /** `null` when the key does not exist — a missing object is not an error here. */
-  get(key: string): Promise<StoredObject | null>;
+  /**
+   * `null` when the key does not exist — a missing object is not an error here.
+   *
+   * `range` is passed through verbatim (`bytes=0-1`, `bytes=1000-`), because
+   * the store already implements RFC 9110 ranges correctly and re-deriving the
+   * arithmetic here would be a second implementation to keep right. An
+   * unsatisfiable range raises {@link RangeNotSatisfiableError}.
+   */
+  get(key: string, options?: { range?: string | undefined }): Promise<StoredObject | null>;
   /** Idempotent: deleting a key that is already gone succeeds. */
   remove(key: string): Promise<void>;
   /** Test seam — drops the memoized `ensureBucket` result. */
@@ -82,6 +121,11 @@ function isNotFound(error: unknown): boolean {
     name === 'NoSuchKey' ||
     name === 'NoSuchBucket'
   );
+}
+
+/** A 416 from the store: the `Range` header named bytes the object does not have. */
+function isRangeNotSatisfiable(error: unknown): boolean {
+  return statusOf(error) === 416 || nameOf(error) === 'InvalidRange';
 }
 
 /**
@@ -173,6 +217,27 @@ class S3Storage implements Storage {
     return { etag: result.ETag };
   }
 
+  async putStream(input: {
+    key: string;
+    body: Readable;
+    contentLength: number;
+    contentType: string;
+    cacheControl?: string;
+  }): Promise<{ etag: string | undefined }> {
+    await this.ensureBucket();
+    const result = await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: input.key,
+        Body: input.body,
+        ContentLength: input.contentLength,
+        ContentType: input.contentType,
+        ...(input.cacheControl ? { CacheControl: input.cacheControl } : {}),
+      }),
+    );
+    return { etag: result.ETag };
+  }
+
   async head(key: string): Promise<ObjectMetadata | null> {
     try {
       const result = await this.client.send(
@@ -189,11 +254,21 @@ class S3Storage implements Storage {
     }
   }
 
-  async get(key: string): Promise<StoredObject | null> {
+  async get(
+    key: string,
+    options: { range?: string | undefined } = {},
+  ): Promise<StoredObject | null> {
     let result;
     try {
-      result = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+      result = await this.client.send(
+        new GetObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+          ...(options.range ? { Range: options.range } : {}),
+        }),
+      );
     } catch (error) {
+      if (isRangeNotSatisfiable(error)) throw new RangeNotSatisfiableError();
       if (isNotFound(error)) return null;
       throw error;
     }
@@ -211,6 +286,7 @@ class S3Storage implements Storage {
       contentType: result.ContentType ?? 'application/octet-stream',
       contentLength: result.ContentLength,
       etag: result.ETag,
+      contentRange: result.ContentRange,
     };
   }
 

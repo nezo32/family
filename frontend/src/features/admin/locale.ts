@@ -49,12 +49,30 @@ export const ADMIN_RU = {
   /* reject ---------------------------------------------------------------- */
   reject: 'Отклонить',
   rejectDialogTitle: 'Отклонить заявку?',
+  /**
+   * Says out loud what the rejection now *does*, because it is no longer only
+   * a refusal. Declining releases the sign-in method the request came in with,
+   * and an admin has to know that before they tap: it is what makes an
+   * accidental rejection recoverable, and it is also what lets the person
+   * knock again.
+   */
   rejectDialogDescription:
-    'Человек увидит отказ при следующей попытке войти. Причину указывать необязательно — её покажут на экране отказа.',
+    'Человек увидит отказ на экране ожидания. Данные для входа освободятся: этот аккаунт Google или Telegram снова можно будет привязать к любому профилю, а человек — подать заявку заново.',
   rejectReasonLabel: 'Причина',
   rejectReasonPlaceholder: 'Например: незнакомый человек',
   rejectConfirm: 'Отклонить заявку',
   rejectedToast: 'Заявка отклонена',
+
+  /* declined requests ----------------------------------------------------- */
+  rejectedTitle: 'Отклонённые заявки',
+  /**
+   * The one place a rejected row is still shown. Everywhere else in the app it
+   * is gone — an admin who declined somebody by accident would otherwise have
+   * no way to see what they declined.
+   */
+  rejectedHint:
+    'Это не участники семьи — в «Семье» и в списках выбора их нет. Данные для входа освобождены.',
+  rejectedNoReason: 'Причина не указана',
 
   /* the conditional-update loser (409) ------------------------------------ */
   alreadyHandled: 'Уже обработано',
