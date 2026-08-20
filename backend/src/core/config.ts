@@ -143,8 +143,18 @@ const envSchema = z
           botToken: env.TELEGRAM_BOT_TOKEN,
           botUsername: env.TELEGRAM_BOT_USERNAME,
           clientSecret: env.TELEGRAM_CLIENT_SECRET,
-          /** Telegram's OIDC client_id is the numeric bot id, i.e. the token prefix. */
-          botId: env.TELEGRAM_BOT_TOKEN.split(':')[0] ?? '',
+          /**
+           * Telegram's OIDC `client_id` is the numeric bot id — the part of the
+           * bot token before the colon.
+           *
+           * Matched rather than split: a value with no colon is not a bot token,
+           * and `split(':')[0]` would hand back the whole string, which is the
+           * secret. That secret would then travel as `client_id` in an
+           * authorization URL — in a browser address bar, in access logs, in a
+           * Referer header. An empty `botId` fails loudly in
+           * `getTelegramConfiguration` instead.
+           */
+          botId: /^(\d+):/.exec(env.TELEGRAM_BOT_TOKEN)?.[1] ?? '',
           redirectUri: `${publicUrl.origin}/api/auth/telegram/callback`,
         },
       },

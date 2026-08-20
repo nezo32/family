@@ -31,3 +31,4 @@ export * from './contracts/shopping.js';
 export * from './contracts/wall.js';
 export * from './contracts/notifications.js';
 export * from './contracts/dashboard.js';
+export * from './contracts/changes.js';

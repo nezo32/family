@@ -1,17 +1,22 @@
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
-import { cn } from '@/shared/lib/utils';
 import { COMMON } from '@/shared/lib/i18n';
 import { addDaysToKey, dateKeyToLocalNoon, todayKey, type DateKey } from '../calendar-model';
 
 /**
- * The date header of an agenda section.
+ * The date header of one agenda day — «СЕГОДНЯ · 20 августа», «сб, 22 августа».
  *
- * "Сегодня" / "Завтра" are decided against the family timezone, not the device
- * one — the shared `dayLabel()` helper compares against the device clock, which
- * is the wrong question for a family calendar.
+ * It renders **inline content**, not a heading element. The heading is the
+ * `Section`'s own `<h2>` (§E), and a day group is a section: one label outside
+ * the surface, one surface of hairline-separated rows. Nesting an `<h2>` inside
+ * an `<h2>` to get a date on screen is how a list of nine events ends up
+ * announcing nine level-2 headings.
+ *
+ * «Сегодня» / «Завтра» are decided against the **family** timezone, not the
+ * device one — `dayLabel()` in `shared/lib` compares against the device clock,
+ * which is the wrong question for a family calendar (D2).
  */
-export function DayHeading(props: { dateKey: DateKey; timeZone: string; className?: string }) {
+export function DayHeading(props: { dateKey: DateKey; timeZone: string }) {
   const today = todayKey(props.timeZone);
   const relative =
     props.dateKey === today
@@ -23,20 +28,15 @@ export function DayHeading(props: { dateKey: DateKey; timeZone: string; classNam
           : null;
 
   const date = dateKeyToLocalNoon(props.dateKey);
-  const isPast = props.dateKey < today;
 
+  // `inline-flex` with a gap rather than literal spaces: inside `Section`'s
+  // truncating `<h2>` the whitespace between two `<span>`s collapses away and
+  // the label renders as «СЕГОДНЯ·20 АВГУСТА».
   return (
-    <h2
-      className={cn(
-        'flex items-baseline gap-2 text-sm font-semibold text-foreground',
-        isPast && 'text-muted-foreground',
-        props.className,
-      )}
-    >
+    <span className="inline-flex items-baseline gap-1.5">
       {relative ? <span>{relative}</span> : null}
-      <span className={cn(relative && 'text-xs font-normal text-muted-foreground')}>
-        {format(date, relative ? 'd MMMM' : 'EEEE, d MMMM', { locale: ru })}
-      </span>
-    </h2>
+      {relative ? <span aria-hidden>·</span> : null}
+      <span>{format(date, relative ? 'd MMMM' : 'EEEE, d MMMM', { locale: ru })}</span>
+    </span>
   );
 }

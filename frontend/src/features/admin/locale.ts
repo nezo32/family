@@ -22,6 +22,8 @@ export const ADMIN_RU = {
   /* access ---------------------------------------------------------------- */
   noAccessTitle: 'Нет доступа',
   noAccessDescription: 'Заявки на вступление видят только администраторы семьи.',
+  /** The same roster without the moderation verbs — visible to everyone. */
+  noAccessAction: 'Открыть «Семью»',
 
   /* the approval queue ---------------------------------------------------- */
   queueTitle: 'Ждут решения',

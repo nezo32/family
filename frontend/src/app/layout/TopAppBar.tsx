@@ -25,6 +25,14 @@ import { usePageSlots } from './page-slots';
 import { SHELL_BAR_CONTAINER, SHELL_GUTTER } from './measures';
 
 /**
+ * The bar's own title, used only when no `PageHeader` has published one. Same
+ * metrics as the portalled `<h1>` in `PageHeader` so the two are
+ * indistinguishable across a route change.
+ */
+const FALLBACK_TITLE =
+  'min-w-0 flex-1 truncate font-display text-[17px] leading-6 font-semibold tracking-tight';
+
+/**
  * Top app bar: page title, notification bell, avatar menu.
  *
  * On mobile it is sticky rather than fixed, and padded by
@@ -32,15 +40,18 @@ import { SHELL_BAR_CONTAINER, SHELL_GUTTER } from './measures';
  * `black-translucent` — the app paints under the status bar and has to make
  * room for it itself.
  *
- * ## On `≥ md` this bar is band 1 (§C4)
+ * ## This bar is band 1, at every width (§C2/§C4/§D2)
  *
- * It used to be 1200×57 holding a section title on the left and two icon
- * buttons on the right, with a thousand pixels of nothing in between, while the
- * page below repeated the same word as its `<h1>` and put its primary action a
- * further 80px down. From `md` up the bar now carries the **page** title and
- * the screen's action, hoisted out of `PageHeader` by a portal, and its inner
- * container tracks the content container exactly — so the title starts on the
- * main column's left edge and the avatar ends on the side column's right edge.
+ * On a desktop it used to be 1200×57 holding a section title on the left and
+ * two icon buttons on the right, with a thousand pixels of nothing in between,
+ * while the page below repeated the same word as its `<h1>`. On a phone it did
+ * the same thing in 390px, which is where it actually hurt: «Задачи» in the bar
+ * and «Задачи» again as a heading 8px underneath.
+ *
+ * The bar now carries the **page** title and the screen's one action at every
+ * width, hoisted out of `PageHeader` by a portal, and its inner container
+ * tracks the content container exactly — so the title starts on the main
+ * column's left edge and the avatar ends on the side column's right edge.
  *
  * The nav-derived section name is the fallback: it shows while a lazy route is
  * still loading, and on the few screens that render no `PageHeader` at all.
@@ -68,26 +79,25 @@ export function TopAppBar(props: {
     <header className="sticky top-0 z-30 border-b border-border bg-background/90 pt-safe backdrop-blur-md">
       <div className={cn('flex h-appbar items-center gap-2', SHELL_GUTTER, SHELL_BAR_CONTAINER)}>
         {/*
-          Below `md` this bar is the only wayfinding there is, so it names the
-          section — and only the section: the page repeats the same words as its
-          `<h1>` right underneath, and the sidebar is not there to help.
-        */}
-        <div className="min-w-0 flex-1 md:hidden">
-          <h2 className="truncate text-base font-semibold tracking-tight">{title}</h2>
-        </div>
+          Band 1, at every width (§C2/§D2). `display: contents` on the slot so
+          the portalled `<h1>` becomes a flex child of this row directly — an
+          empty wrapper would otherwise eat a `gap` on every screen that
+          publishes no title.
 
-        {/*
-          Band 1 on `≥ md`. `display: contents` on the slot so the portalled
-          `<h1>` becomes a flex child of this row directly — an empty wrapper
-          would otherwise eat a `gap` on every screen that publishes no title.
+          The nav-derived section name is the fallback, and its level depends on
+          who owns the page title. Nothing published one (a lazy route in
+          flight, a screen with no `PageHeader`) → the bar *is* the page title,
+          `<h1>`. Сегодня below `md` keeps its greeting in the page as the
+          `<h1>` (§D1) → the bar names the section and steps down to `<h2>`, so
+          the document still has exactly one level-1 heading.
         */}
-        <div className="hidden min-w-0 flex-1 items-center gap-3 md:flex">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
           <div ref={slots.setAppBarTitle} className="contents" />
-          {!slots.hasPageTitle ? (
-            <h1 className="min-w-0 flex-1 truncate text-[17px] leading-6 font-semibold tracking-tight">
-              {title}
-            </h1>
-          ) : null}
+          {slots.barTitle ? null : slots.pageTitle ? (
+            <h2 className={FALLBACK_TITLE}>{title}</h2>
+          ) : (
+            <h1 className={FALLBACK_TITLE}>{title}</h1>
+          )}
         </div>
 
         {/* The screen's one primary action (§C2 band 1), hoisted by `PageHeader`. */}

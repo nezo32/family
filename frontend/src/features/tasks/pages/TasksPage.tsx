@@ -6,6 +6,7 @@ import { PageHeader } from '@/shared/components/PageHeader';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { Button } from '@/shared/ui/button';
+import { SectionStack } from '@/shared/ui/section';
 import { getFamilyTimeZone } from '@/shared/lib/format';
 import { TASKS_RU } from '../locale';
 import { addDaysToKey, todayKey } from '../recurrence';
@@ -13,7 +14,7 @@ import { collectCategories, groupOccurrences } from '../grouping';
 import { useFairness, useMembers, useOccurrences, useSwaps } from '../hooks';
 import type { OccurrenceFilters } from '../api';
 import { TaskList } from '../components/TaskList';
-import { TaskFilters } from '../components/TaskFilters';
+import { TaskFilterPanel, TaskScopeBar } from '../components/TaskFilters';
 import { DEFAULT_FILTERS, type TaskFilterState } from '../filters';
 import { TaskEditor } from '../components/TaskEditor';
 import { WeeklyLoad } from '../components/WeeklyLoad';
@@ -21,7 +22,28 @@ import { SwapInbox } from '../components/SwapPanel';
 import { LoadBarSkeleton, TaskListSkeleton } from '../components/Skeletons';
 
 /**
- * «Задачи» — the section index.
+ * «Задачи» — the section index (§D2).
+ *
+ * **What the user came for:** "what is mine, and what is late."
+ *
+ * **Band 2 is a swap request, and nothing else.** Overdue chores are the
+ * screen's first *section*, not a tinted block: on a screen whose whole subject
+ * is chores, an attention wash around the first group would tint a third of the
+ * page and say nothing. Their hierarchy is carried by order instead —
+ * просрочено → сегодня → на неделе → позже, the same hierarchy
+ * `grouping.ts` already encodes.
+ *
+ * What does earn the band is `SwapInbox`: a question somebody asked *you*,
+ * which is a different kind of thing from a chore, and which is absent almost
+ * every day. It is also what `chore_swap_requested` notifications navigate here
+ * for — this panel holds the only «Помогу» / «Не смогу» controls in the app
+ * — so it cannot sit in the side column, which on a phone collapses to *below
+ * the whole list*.
+ *
+ * Band 1 (the title and the one primary action, «Новое дело») is hoisted into
+ * the app bar from `md` up by `PageHeader`. On a phone that action is the
+ * bar's `⊕`; it is no longer a full-width clay button eating the top of the
+ * list.
  *
  * The read window is deliberately bounded: two weeks back (so overdue chores
  * cannot silently fall off the list) and two months forward (the materialized
@@ -62,11 +84,10 @@ export default function TasksPage() {
     <>
       <PageHeader
         title={TASKS_RU.title}
-        description={TASKS_RU.subtitle}
         actions={
           <Can perm="task:create">
             <Button
-              className="min-h-11 w-full sm:w-auto"
+              className="h-11"
               onClick={() => {
                 setCreating(true);
               }}
@@ -79,13 +100,20 @@ export default function TasksPage() {
       />
 
       {/*
-        No grid here any more: `AppShell` owns the two-column composition (§C1)
-        and this page just says which half its content belongs in. The local
+        No grid here: `AppShell` owns the two-column composition (§C1) and this
+        page only says which half its content belongs in. The local
         `lg:grid-cols-[1fr_20rem]` this replaces would now be nested inside a
         720px main column and split the task list down to ~376px.
       */}
-      <div className="min-w-0 space-y-5">
-        <TaskFilters
+      <div className="flex min-w-0 flex-col gap-4">
+        {/*
+          Band 2 (§C2). Renders `null` unless somebody is waiting on an answer,
+          so on an ordinary day this screen still has exactly one loud thing:
+          nothing.
+        */}
+        <SwapInbox swaps={swaps.data?.items ?? []} members={roster} />
+
+        <TaskScopeBar
           value={filters}
           onChange={setFilters}
           members={roster}
@@ -112,10 +140,12 @@ export default function TasksPage() {
               filtersActive ? TASKS_RU.emptyFilteredDescription : TASKS_RU.emptyDescription
             }
             action={
+              // Filtered-empty is a different problem from empty, so it gets a
+              // different way out (§D2): the fix is the filter, not a new chore.
               filtersActive ? (
                 <Button
                   variant="outline"
-                  className="min-h-11"
+                  className="h-11"
                   onClick={() => {
                     setFilters(DEFAULT_FILTERS);
                   }}
@@ -125,7 +155,7 @@ export default function TasksPage() {
               ) : (
                 <Can perm="task:create">
                   <Button
-                    className="min-h-11"
+                    className="h-11"
                     onClick={() => {
                       setCreating(true);
                     }}
@@ -144,18 +174,22 @@ export default function TasksPage() {
       </div>
 
       {/*
-        §C4: «Нагрузка за неделю» beside the list on a wide screen, at the
-        bottom of it on a phone. Фильтры belong here too, but that move is
-        paired with turning them into a «Фильтры · N» sheet row on a phone
-        (§D2); moved on their own they would land at the *bottom* of the phone
-        screen, below the list they filter.
+        §C4: Фильтры as a real panel plus «Нагрузка за неделю», beside the list
+        on a wide screen. Both hide below 1088px rather than collapsing to the
+        bottom of the page — a filter panel *under* the list it filters is worse
+        than no panel, and the phone already has the «Фильтры · N» sheet.
       */}
       <SideColumn>
-        <div className="space-y-4">
-          <SwapInbox swaps={swaps.data?.items ?? []} members={roster} />
+        <SectionStack>
+          <TaskFilterPanel
+            value={filters}
+            onChange={setFilters}
+            members={roster}
+            categories={categories}
+          />
 
           {fairness.isPending && fairness.fetchStatus !== 'idle' ? (
-            <div className="rounded-2xl border border-border bg-card p-4">
+            <div className="rounded-xl border border-border bg-card p-4">
               <LoadBarSkeleton />
             </div>
           ) : null}
@@ -167,7 +201,7 @@ export default function TasksPage() {
               imbalance={fairness.data.imbalance}
             />
           ) : null}
-        </div>
+        </SectionStack>
       </SideColumn>
 
       <TaskEditor open={creating} onOpenChange={setCreating} members={roster} />

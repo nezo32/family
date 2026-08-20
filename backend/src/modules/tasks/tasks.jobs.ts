@@ -2,6 +2,7 @@ import type { Db } from '../../core/db.js';
 import { getDb } from '../../core/db.js';
 import { logger } from '../../core/logger.js';
 import { registerJobHandler } from '../../core/queue/workers.js';
+import { bumpRevisions } from '../../core/revisions.js';
 import {
   emit,
   type NotificationAudience,
@@ -183,6 +184,15 @@ export function registerTaskJobs(): void {
     const result = await runMaterializeAll(getDb());
     if (result.inserted > 0 || result.cancelled > 0) {
       logger.info(result, 'task materialization pass complete');
+      /**
+       * A job's writes never pass through the HTTP `onResponse` hook, so the
+       * change feed has to be told explicitly (D12, `sync.md` §4.3). Awaited,
+       * not fired and forgotten: a worker may be torn down the moment its
+       * handler resolves. Without this the new occurrences still appear on
+       * focus and on mount, so a missing bump is a latency bug, never a
+       * correctness one.
+       */
+      await bumpRevisions(['tasks']);
     }
   });
 

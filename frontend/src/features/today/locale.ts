@@ -10,7 +10,12 @@ import { PLURALS, pluralize } from '@/shared/lib/i18n';
  *  - Overdue copy is **urgent, never shaming**: it states how late a chore is
  *    and offers the tick. «Вы не сделали» would assign blame, and a family app
  *    that nags is a family app that gets deleted.
- *  - Load is neutral (D5): «Ваша неделя», never «место в рейтинге».
+ *  - Nothing here counts a person. There is no score, no streak and no
+ *    per-member total anywhere in this file, and there must never be (D5).
+ *
+ * Section labels are written in sentence case and uppercased by CSS
+ * (`Section` renders them at `label` type, §B2). Keeping the source string
+ * readable is what lets a test assert on the same constant the screen shows.
  */
 export const TODAY_RU = {
   /* greeting ------------------------------------------------------------- */
@@ -20,60 +25,59 @@ export const TODAY_RU = {
   greetingNight: 'Доброй ночи',
   greetingFallback: 'Здравствуйте',
 
-  /* overdue -------------------------------------------------------------- */
-  overdueTitle: 'Требует внимания',
-  overdueHint: 'Сроки прошли — можно закрыть сейчас или перенести.',
-  overdueBy: 'Просрочено на',
+  /* the one attention block (§C2 band 2) --------------------------------- */
+  attentionLabel: 'Требует внимания',
+  overdueTitle: 'Просрочено',
+  overdueBy: 'срок был',
   overdueLongAgo: 'Просрочено',
+  overdueDue: 'срок был в',
 
   /* my tasks ------------------------------------------------------------- */
-  tasksTitle: 'Мои дела на сегодня',
-  tasksAllDone: 'Все дела на сегодня закрыты.',
-  tasksAllDoneHint: 'Хороший день. Можно выдохнуть.',
+  tasksTitle: 'Мои дела',
   tasksFree: 'На сегодня дел за вами не закреплено.',
-  tasksDoneToday: 'Сегодня закрыто',
-  tasksAll: 'Все задачи',
+  tasksAllDone: 'Все дела на сегодня закрыты. Можно выдохнуть.',
+  tasksDoneToday: (n: number): string => `Сегодня в семье закрыли ${pluralize(n, PLURALS.chore)}.`,
   complete: 'Отметить выполненным',
   completeErrorTitle: 'Не удалось отметить',
   dueAt: 'до',
   dueAnyTime: 'в течение дня',
 
   /* events --------------------------------------------------------------- */
-  eventsTitle: 'События',
+  eventsTitle: 'Сегодня и завтра',
   eventsToday: 'Сегодня',
   eventsTomorrow: 'Завтра',
   eventsEmpty: 'Ни одного события на сегодня и завтра.',
-  eventsAll: 'Весь календарь',
-  allDay: 'Весь день',
+  allDay: 'весь день',
 
   /* shopping ------------------------------------------------------------- */
-  shoppingTitle: 'Купить срочно',
-  shoppingEmpty: 'Срочных покупок нет.',
-  shoppingAll: 'Список покупок',
-  shoppingNeededPrefix: 'Всего в списках',
+  shoppingTitle: 'Надо купить',
+  shoppingUrgent: 'срочно',
 
   /* goal ----------------------------------------------------------------- */
-  goalTitle: 'Ближайшая цель',
-  goalRemaining: 'Осталось собрать',
-  goalReached: 'Цель достигнута 🎉',
-  goalDeadline: 'до',
-  goalAll: 'Все копилки',
-  goalEmpty: 'Пока нет активных копилок.',
+  goalTitle: 'Копилка',
+  goalRemaining: 'осталось',
+  goalReached: 'Собрано 🎉',
+  goalOf: 'из',
 
-  /* weekly load ---------------------------------------------------------- */
-  loadTitle: 'Ваша неделя',
-  loadDone: 'сделано',
-  loadShare: 'доля недели',
-  weekAhead: 'Впереди на неделе',
+  /* the week ahead (side column, ≥ 1088) --------------------------------- */
+  weekTitle: 'Неделя',
+  weekEmpty: 'На неделе пока пусто.',
+  weekNothing: 'свободно',
 
   /* approvals ------------------------------------------------------------ */
-  approvalsTitle: 'Заявки на вступление',
+  approvalsTitle: 'Заявки',
   approvalsHint: 'Ждут вашего решения.',
-  approvalsAction: 'Посмотреть заявки',
+  approvalsAction: 'Открыть',
+
+  /* the one link per section (§A3) --------------------------------------- */
+  linkAll: 'все',
+  linkEverything: 'всё',
 
   /* empty & error -------------------------------------------------------- */
   emptyTitle: 'Сегодня свободно 🎉',
   emptyDescription: 'Ни дел, ни событий, ни срочных покупок. Проведите день по-своему.',
+  emptyAddTask: 'Добавить дело',
+  emptyAddEvent: 'Записать событие',
   errorTitle: 'Не получилось загрузить день',
   loadingLabel: 'Загружаем ваш день',
 } as const;
@@ -93,4 +97,3 @@ export const eventCount = (n: number): string => pluralize(n, PLURALS.event);
 export const itemCount = (n: number): string => pluralize(n, PLURALS.item);
 export const requestCount = (n: number): string => pluralize(n, PLURALS.request);
 export const choreCount = (n: number): string => pluralize(n, PLURALS.chore);
-/** The bare word, for a figure already rendered next to it. */

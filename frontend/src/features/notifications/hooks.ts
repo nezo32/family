@@ -18,6 +18,7 @@ import {
   fetchReceipts,
   fetchUnreadCount,
   markRead,
+  markUnread,
   notificationKeys,
   type InboxPage,
   type NotificationReceipts,
@@ -175,6 +176,80 @@ export function useMarkRead(): UseMutationResult<void, Error, MarkReadInput> {
     },
 
     onError: (_error, _input, context) => {
+      if (context?.previousCount !== undefined) {
+        queryClient.setQueryData(notificationKeys.unreadCount(), context.previousCount);
+      }
+      void queryClient.invalidateQueries({ queryKey: notificationKeys.inbox() });
+    },
+
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: notificationKeys.all });
+    },
+  });
+}
+
+/**
+ * `POST /api/notifications/unread` — the six-second «Отменить» §G4 requires
+ * behind every gesture action, here behind swipe-left «Прочитано».
+ *
+ * Optimistic in the same shape as `useMarkRead`, and for the same reason: the
+ * undo has to feel like the swipe running backwards, so the dot returns and the
+ * badge climbs under the finger rather than after a round trip.
+ *
+ * ## What this is not
+ *
+ * It is not an acknowledgement being withdrawn. Un-reading moves `readAt` and
+ * nothing else — a row that was «подтверждено» stays acknowledged, its
+ * escalation stays stopped, and its D11 receipts are untouched. The server
+ * enforces that; this hook could not do it if it wanted to.
+ *
+ * A failure quietly restores the cache and invalidates. The row was read, the
+ * user asked for it not to be, and the honest recovery is to show the truth
+ * again rather than to leave an optimistic lie on screen — the toast is already
+ * gone by then, so there is nowhere to hang a retry.
+ */
+export function useMarkUnread(): UseMutationResult<void, Error, string[]> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (ids: string[]) => markUnread(ids),
+
+    onMutate: async (ids) => {
+      await queryClient.cancelQueries({ queryKey: notificationKeys.unreadCount() });
+      const previousCount = queryClient.getQueryData<number>(notificationKeys.unreadCount());
+
+      const affected = new Set(ids);
+      let restored = 0;
+
+      for (const unreadOnly of [false, true]) {
+        queryClient.setQueryData<InfiniteData<InboxPage>>(
+          notificationKeys.list(unreadOnly),
+          (current) => {
+            if (!current) return current;
+            return {
+              ...current,
+              pages: current.pages.map((page) => ({
+                ...page,
+                items: page.items.map((item) => {
+                  if (item.readAt === null || !affected.has(item.id)) return item;
+                  // Count once — the same row is cached under both filters.
+                  if (!unreadOnly) restored += 1;
+                  return { ...item, readAt: null };
+                }),
+              })),
+            };
+          },
+        );
+      }
+
+      if (previousCount !== undefined) {
+        queryClient.setQueryData(notificationKeys.unreadCount(), previousCount + restored);
+      }
+
+      return { previousCount };
+    },
+
+    onError: (_error, _ids, context) => {
       if (context?.previousCount !== undefined) {
         queryClient.setQueryData(notificationKeys.unreadCount(), context.previousCount);
       }

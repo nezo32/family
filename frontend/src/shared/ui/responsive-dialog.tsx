@@ -55,16 +55,23 @@ function useSurface(): { coarse: boolean } {
   return ctx;
 }
 
-/**
- * Top inset for a full-screen sheet (§F3): never flush with the physical edge,
- * and never under the status-bar clock in standalone.
- */
-const SHEET_TOP_INSET = 'max(env(safe-area-inset-top,0px),0.75rem)_+_0.75rem';
-
 const drawerSize: Record<ResponsiveDialogSize, string> = {
   // `dvh`, never `vh` (§F5): `vh` on iOS is the *large* viewport, so a sheet
   // sized in `vh` is taller than the screen it is on whenever the URL bar shows.
-  full: `h-[calc(100dvh_-_(${SHEET_TOP_INSET}))]`,
+  //
+  // Top inset (§F3): never flush with the physical edge, and never under the
+  // status-bar clock in standalone — `max(safe-area-inset-top, 12px) + 12px`.
+  //
+  // **Written out as one literal string on purpose.** This was
+  // `` `h-[calc(100dvh_-_(${SHEET_TOP_INSET}))]` `` — a template literal — and
+  // Tailwind v4 finds classes by *scanning the source text*, so a class that is
+  // only assembled at runtime is never generated. Verified against the built
+  // CSS: `dist/assets/*.css` contained no rule for it at all, the sheet fell
+  // back to content height, and a form long enough to exceed the screen would
+  // have pushed its own header — and «Создать» with it — back off the top. That
+  // is precisely the defect §F3 exists to make impossible, reintroduced by a
+  // string interpolation. Never build a Tailwind class from a variable.
+  full: 'h-[calc(100dvh_-_max(env(safe-area-inset-top,0px),0.75rem)_-_0.75rem)]',
   tall: 'h-[85dvh]',
   auto: 'max-h-[60dvh]',
 };

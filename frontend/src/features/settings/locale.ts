@@ -194,6 +194,17 @@ export const SETTINGS_RU = {
     linkFailed: 'Не удалось начать привязку',
 
     /**
+     * A provider the server cannot start a flow for is misconfigured, not busy.
+     * The generic 503 copy («попробуйте через минуту») would send the user into
+     * a retry loop that cannot succeed — Telegram answering «Bot domain invalid»
+     * because the bot has no BotFather domain is exactly this case, and only the
+     * family admin can fix it.
+     */
+    linkNotConfigured: (provider: string) => `${provider} пока нельзя привязать`,
+    linkNotConfiguredHint:
+      'Этот способ входа не настроен на сервере. Попросите администратора семьи проверить настройки.',
+
+    /**
      * The point of this screen: explain `LAST_LOGIN_METHOD` **before** the user
      * taps, not as an error afterwards.
      */

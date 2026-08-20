@@ -194,7 +194,6 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
     }
 
     case 'chore_swap_requested': {
-      const swapId = id(p, 'swapId', 'entityId');
       return {
         title: 'Просьба подменить',
         body: joinBody(
@@ -202,12 +201,37 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
           text(p, 'title'),
           text(p, 'dueLabel'),
         ),
-        navigate: route(APP_ROUTES.tasks, swapId),
+        /*
+         * The task list, with **no id appended** — because this notification
+         * asks for a decision, and «Помогу»/«Не смогу» only exist there.
+         *
+         * The link used to be `route(APP_ROUTES.tasks, swapId)`. `/tasks/:taskId`
+         * is a real route, so it resolved and `isKnownAppPath` waved it through;
+         * but `:taskId` is an *occurrence* id and a swap id is not one, so
+         * `TaskDetailPage` looked up a row that does not exist and rendered its
+         * error state. The path was right and the id was the wrong kind — which
+         * is why structural validation could not see it, and why the sweep test
+         * now checks the id's provenance as well as the path's shape.
+         *
+         * `/tasks/<occurrenceId>` would at least load: it is the chore the swap
+         * is about. It is still the wrong destination for *this* type. The
+         * detail page carries the outgoing side of a swap (`SwapRequestButton`)
+         * and nothing else; the incoming queue with the accept/decline buttons
+         * is `SwapInbox`, which `TasksPage` renders in the side column — a
+         * column that collapses under the list on a phone rather than
+         * disappearing. So the list is where the asked-for action actually is.
+         */
+        navigate: APP_ROUTES.tasks,
       };
     }
 
     case 'chore_swap_answered': {
-      const swapId = id(p, 'swapId', 'entityId');
+      // The occurrence, not the swap: this one reports an outcome rather than
+      // asking for a decision, and the thing the reader wants to see is the
+      // chore itself — who is carrying it now that the answer landed. The swap
+      // row is finished business by the time this is read (and once
+      // `respondedAt` is set it drops out of every pending list anyway).
+      const occurrenceId = id(p, 'occurrenceId', 'taskId', 'entityId');
       const accepted = p.accepted === true;
       return {
         title: accepted ? 'Обмен принят' : 'Обмен отклонён',
@@ -215,7 +239,7 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
           `${actor(p)} ${accepted ? 'согласился подменить' : 'не может подменить'}`,
           text(p, 'title'),
         ),
-        navigate: route(APP_ROUTES.tasks, swapId),
+        navigate: route(APP_ROUTES.tasks, occurrenceId),
       };
     }
 
@@ -321,7 +345,6 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
     /* ------------------------- membership & admin -------------------------- */
 
     case 'member_pending_approval': {
-      const userId = id(p, 'userId', 'entityId');
       return {
         title: 'Заявка в семью',
         body: joinBody(
@@ -329,7 +352,21 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
           'ждёт подтверждения',
           text(p, 'provider'),
         ),
-        navigate: route(APP_ROUTES.adminMembers, userId),
+        /*
+         * The queue page, with **no applicant id appended**.
+         *
+         * `/admin/members` has no `:id` child route — the approval queue is one
+         * list, and a member is approved from a card in it, not from a detail
+         * page. `route(APP_ROUTES.adminMembers, userId)` produced
+         * `/admin/members/<uuid>`, which the router does not match, so the tap
+         * that was supposed to open the queue landed on the 404 screen instead.
+         *
+         * `isKnownAppPath` did not catch it: it accepts any child of a known
+         * route because that is exactly how `/tasks/<id>` and `/goals/<id>` are
+         * built. The rule only holds for routes that *have* a detail page, and
+         * this one does not — so the link is pinned here rather than derived.
+         */
+        navigate: APP_ROUTES.adminMembers,
       };
     }
 
@@ -347,23 +384,29 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
     /* ------------------------------ family wall ---------------------------- */
 
     case 'announcement_posted': {
-      const postId = id(p, 'postId', 'entityId');
       return {
         title: 'Объявление',
         body: joinBody(text(p, 'title', text(p, 'excerpt', 'Новое объявление')), `— ${actor(p)}`),
-        navigate: route(APP_ROUTES.wall, postId),
+        /*
+         * The wall itself. `/wall/<postId>` was the same 404 as the join
+         * request: `WallPage` is a single feed with no `:postId` child route,
+         * so the deep link fell through to the catch-all. The newest post is at
+         * the top of the feed, which is where this notification is about to
+         * send somebody anyway.
+         */
+        navigate: APP_ROUTES.wall,
       };
     }
 
     case 'kudos_received': {
-      const postId = id(p, 'postId', 'kudosId', 'entityId');
       return {
         title: 'Спасибо от семьи',
         body: joinBody(
           `${actor(p)} сказал${p.actorIsFemale === true ? 'а' : ''} спасибо`,
           text(p, 'reason', text(p, 'message')),
         ),
-        navigate: route(APP_ROUTES.wall, postId),
+        // Same as `announcement_posted`: the wall has no per-post route.
+        navigate: APP_ROUTES.wall,
       };
     }
 

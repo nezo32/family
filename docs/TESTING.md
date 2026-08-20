@@ -120,6 +120,138 @@ one:
 
 ---
 
+## The frontend end-to-end suite
+
+Playwright, in `frontend/e2e/`, against a **running stack**: a real backend, the
+dev Postgres, and the built frontend served by `vite preview`. 88 tests over two
+projects (`desktop-chrome`, `mobile-safari`).
+
+```bash
+# backend
+BACKEND_PORT=3102 APP_PUBLIC_URL=http://localhost:5175 RATE_LIMIT_FACTOR=100 \
+  npx tsx --env-file-if-exists=.env src/main.ts
+
+# frontend
+npx vite build
+VITE_API_PROXY_TARGET=http://localhost:3102 npx vite preview --port 5175 --strictPort
+
+# the suite
+E2E_BASE_URL=http://localhost:5175 E2E_API_URL=http://localhost:5175 npx playwright test
+```
+
+Two things about that command are load-bearing:
+
+- **`localhost`, never `127.0.0.1`.** They are different origins to CORS, and the
+  allow-list is built from `APP_PUBLIC_URL`. Point the suite at the IP form and
+  every POST comes back `403 Origin not allowed`.
+- **`RATE_LIMIT_FACTOR=100`.** Without it the dev backend enforces the production
+  limits — registration 5/hour/IP, login 10/15min/IP, refresh 60/min/IP — and a
+  suite that signs in a few times per run exhausts them in minutes. The symptom
+  is a wall of `429 RATE_LIMITED` from the fixtures, not from anything the tests
+  assert. The factor is forced to 1 in production (`core/config.ts`), so raising
+  it here weakens nothing that ships. If registration is rate-limited anyway,
+  `ensureApprovedOwner` copies an earlier e2e owner's row into this run's email
+  rather than fall back to sharing one account — the suite still runs, but the
+  429 is telling you the backend was started without the factor.
+
+### Two runs at once are fine — unlike the backend suite
+
+Where the integration suite refuses to start a second run (the advisory lock
+above), the end-to-end suite is designed for it: two agents, or a rerun started
+before the first finished, can share one stack. Three things make that true.
+
+**Each run gets its own owner account.** `helpers.ts` derives `RUN_ID` once per
+`playwright test` invocation and registers `e2e-owner-<run id>@example.test`.
+The id comes from `process.env.E2E_RUN_ID` if it is set, and is otherwise minted
+the first time the value is read. That happens in the **runner** process, because
+`playwright.config.ts` imports `RUN_ID`: Playwright evaluates the config in the
+runner before forking any worker, and workers inherit its environment, so the
+`??=` inside a worker only ever reads the value back. Set `E2E_RUN_ID` yourself
+to pin a run (CI job id, say) or to make two invocations deliberately share an
+account.
+
+This matters because a *shared* account is where two runs collide. Refresh-token
+reuse detection revokes a family the other run is still holding, and the
+per-account login throttle (8 attempts / 15 min, `login-throttle.ts`) counts both
+runs' sign-ins together. Both are correct behaviour; both surface as unrelated
+tests failing with the login screen («С возвращением») in the snapshot, which
+reads like a broken app rather than two harnesses fighting.
+
+**Session files are keyed by run and by worker** —
+`frontend/e2e/.auth/run-<run id>/worker-<n>.json` — so concurrent runs cannot
+overwrite each other's saved session with one belonging to a different user.
+
+**A worker's session is handed on, not replayed.** The app keeps its access
+token in memory, so every test's fresh browser context posts `/api/auth/refresh`
+on its first page load and rotates the cookie. If each test replayed the same
+saved token, only the first would rotate; the rest would be answered out of the
+20-second `REFRESH_GRACE_SECONDS` window, and the first test to start after that
+window closed would be treated as reuse — killing the family and every test
+after it in that worker. So `fixtures.ts` writes the context's cookies back
+after each test and hands the next test the generation the last one produced.
+One sign-in per worker covers a whole run, and the grace window stops being
+load-bearing. A run of 44 tests in one worker leaves a single token family 32
+generations long and no `reuse` rows.
+
+One thing is still shared: `test-results/`. Playwright empties its output
+directory when a run starts, so a second run launched mid-flight deletes the
+first one's screenshots and traces — the tests are unaffected, but a failure you
+wanted to look at comes back empty-handed. Pass `--output=<dir>` to one of the
+runs when you care about the artefacts.
+
+### Housekeeping
+
+Every run leaves two kinds of litter — the account it signed in as, and the rows
+its tests wrote — and `ensureApprovedOwner` collects both before it does anything
+else. Every predicate is deliberately timid, because a wrong match deletes
+another agent's fixtures out from under a live run, and both `users` and
+`task_series` cascade.
+
+**Accounts and state files — six hours.**
+
+- users matching `e2e-owner-%@example.test`. Not the seeded family
+  (`@example.com`, and the child with no email at all), not other suites'
+  `@example.test` fixtures, and not the legacy fixed `e2e-owner@example.test`,
+  which has no `-` after `owner` — a suite on the previous code may still use it.
+- `e2e/.auth/run-*` directories untouched for six hours.
+
+Six hours because these are inert: an extra `users` row slows nothing down and
+hides no data, so the cutoff is set for safety rather than tidiness.
+
+**Rows the specs write — thirty minutes.** These are *not* inert, and deleting the
+account does not take them with it: the seeded family owns some of the same
+data, and a task created through the UI outlives its creator. The tasks list
+fetches `limit: 100`, so once ~125 `E2E дело` series had accumulated, the task
+`deep.spec.ts › creating a task through the UI` had just created fell off the end
+of the page and the test failed about one run in three — with nothing wrong in
+the code it was exercising.
+
+- `task_series` whose title starts with `E2E ` (occurrences cascade with them).
+- `shopping_items` whose name ends in a 13-digit `Date.now()`. The seeded items
+  are the bare words — `Молоко`, `Хлеб` — with no suffix, so they never match.
+
+Thirty rather than six hundred minutes because these are what tips a capped list
+over; and thirty rather than five because it is an order of magnitude beyond the
+longest run measured here (2.1 minutes for a full suite, ~3.5 with
+`--workers=1`), which leaves room for a run being stepped through under
+`PWDEBUG` and cannot reach a concurrent one.
+
+The patterns live in `SUITE_DEBRIS` in `e2e/helpers.ts`; add a row when a spec
+starts writing something new. Keep them **ASCII** — they travel through a shell
+into `docker exec psql`, and a Cyrillic literal that survives one machine's
+console codepage can arrive mangled on another's. That fails safe, in that it
+matches nothing, but it also silently stops collecting.
+
+**Better still, do not create the litter.** The sweep is a safety net for a run
+that dies mid-test; the create-flow test deletes its own task when it is done
+(`forgetTaskSeries`), so a healthy run's footprint is zero rows. Note that no
+assertion could have been written to survive the dirty database instead: every
+one of those tasks is due today, so neither narrowing the date window nor
+filtering the list gets under the `limit: 100`. Housekeeping is the fix, and
+prevention is the cheaper half of it.
+
+---
+
 ## Environment the suite sets for itself
 
 `src/test/db.ts` runs at import time, before `core/config.ts` parses anything,

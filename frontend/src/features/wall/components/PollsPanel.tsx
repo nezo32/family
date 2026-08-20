@@ -85,6 +85,12 @@ function PollList(props: {
         icon={Vote}
         title={WALL_RU.polls.empty}
         description={WALL_RU.polls.emptyDescription}
+        /*
+          `null` on purpose, for the same reason as `KudosPanel`: the
+          invitation is `PollComposer`, already on screen in this panel's own
+          header. See the report.
+        */
+        action={null}
       />
     );
   }

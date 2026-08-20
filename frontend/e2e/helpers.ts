@@ -1,6 +1,13 @@
 import { execSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 
-import { expect, type APIRequestContext, type ConsoleMessage, type Page, type Request } from '@playwright/test';
+import {
+  expect,
+  type APIRequestContext,
+  type ConsoleMessage,
+  type Page,
+  type Request,
+} from '@playwright/test';
 
 /**
  * Shared plumbing for the end-to-end suites.
@@ -14,9 +21,6 @@ import { expect, type APIRequestContext, type ConsoleMessage, type Page, type Re
 // allow-list is built from APP_PUBLIC_URL, which uses `localhost`. Pointing the
 // suite at the IP form gets every POST a 403 "Origin not allowed".
 export const API = process.env.E2E_API_URL ?? 'http://localhost:3100';
-
-/** Where `auth.setup.ts` parks the signed-in session for every other project. */
-export const AUTH_STATE = 'e2e/.auth/user.json';
 
 /** An explicitly signed-out context, for the screens that must be anonymous. */
 export const ANONYMOUS = { cookies: [], origins: [] };
@@ -84,17 +88,41 @@ export function assertClean(problems: PageProblems, where: string): void {
   expect(problems.console, `${where}: console errors`).toEqual([]);
 }
 
+/**
+ * Identifier for **this `playwright test` invocation**, shared by every worker.
+ *
+ * Playwright re-evaluates the config module inside each worker process, so
+ * minting an id there would give every worker a different one. What makes this
+ * work is that workers are forked from the runner and inherit its
+ * `process.env`: the runner's evaluation is the only one that finds the
+ * variable unset, and every later `??=` reads the inherited value back. Hence
+ * *one* id per run, and a different id for a run started alongside it.
+ * `playwright.config.ts` imports this so the seeding always happens in the
+ * runner, before any worker exists. Set `E2E_RUN_ID` yourself to pin it.
+ */
+export const RUN_ID: string =
+  (process.env.E2E_RUN_ID ??= `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`);
 
 /**
- * The one account the whole suite runs as.
+ * The owner account this run signs in as — **one per run**, not one fixed
+ * account for all time.
  *
- * Fixed rather than freshly minted per run, because `POST /api/auth/register`
- * is capped at **5 per hour per IP** — a sound production control that a suite
- * re-running all evening would otherwise exhaust, turning every run red for a
- * reason that has nothing to do with the code. Registration itself is still
- * covered, by its own test, once per run.
+ * Do not collapse this back to a constant, however tempting. Two `playwright
+ * test` invocations running side by side (two agents, or a rerun started before
+ * the first finished) then authenticate as the same user, and the identity
+ * layer treats that exactly as it should: refresh-token **reuse detection**
+ * revokes a family the other run is still using, and the per-email login
+ * throttle (8 attempts / 15 min, `login-throttle.ts`) counts both runs' logins
+ * together. Either way the browser lands back on «С возвращением» and a
+ * scattering of unrelated tests fails, which reads as a broken app rather than
+ * as two harnesses colliding.
+ *
+ * The original reason for a fixed account — `POST /api/auth/register` is
+ * capped at 5/hour/IP — no longer bites: the dev backend runs with
+ * `RATE_LIMIT_FACTOR=100` (forced to 1 in production, see `core/config.ts`), so
+ * one registration per run is comfortably affordable.
  */
-const E2E_OWNER_EMAIL = 'e2e-owner@example.test';
+const E2E_OWNER_EMAIL = `e2e-owner-${RUN_ID}@example.test`;
 const E2E_OWNER_PASSWORD = 'E2ePassw0rd!2345';
 
 function psql(sql: string): string {
@@ -104,9 +132,108 @@ function psql(sql: string): string {
   ).trim();
 }
 
+/** Runs at most once per worker process; the sweeps below are idempotent. */
+let swept = false;
+
 /**
- * Registers the shared owner if it does not exist yet, and makes sure it is
- * approved. Idempotent: after the first ever run this costs one `SELECT`.
+ * The rows the suite *writes*, and how to recognise them again.
+ *
+ * Deleting the account a run signed in as does **not** take this with it: the
+ * seeded family owns some of the same data, and a task created through the UI
+ * outlives the user that created it. Left alone it accumulates, and it does not
+ * accumulate harmlessly — the tasks list fetches `limit: 100`, so once ~125
+ * `E2E дело` series had piled up the freshly created one fell off the end of
+ * the page and `deep.spec.ts › creating a task through the UI` failed about one
+ * run in three, for a reason that had nothing to do with the code under test.
+ *
+ * Each predicate must be **ASCII**. These travel through a shell into
+ * `docker exec psql`, and a Cyrillic literal that survives one machine's console
+ * codepage may arrive mangled on another's — which fails safe (matching
+ * nothing) but also silently stops collecting. Hence `title like 'E2E %'` rather
+ * than the full Russian title, and `similar to` — which is anchored at both ends
+ * — rather than a regex needing a `$` the shell might read as a variable.
+ *
+ * Add a row here when a spec starts writing something new.
+ */
+const SUITE_DEBRIS: Array<{ table: string; match: string; from: string }> = [
+  // `E2E дело <run id>-<timestamp>`. Occurrences cascade with the series.
+  { table: 'task_series', match: `title like 'E2E %'`, from: 'deep.spec.ts — creating a task' },
+  // `Молоко <timestamp>` / `Хлеб <timestamp>`. The seeded items are the bare words with
+  // no suffix, so requiring a 13-digit `Date.now()` never touches them.
+  {
+    table: 'shopping_items',
+    match: `name similar to '% [0-9]{13}'`,
+    from: 'gestures.spec.ts — adding an item',
+  },
+];
+
+/**
+ * Drops what earlier runs left in the development database.
+ *
+ * Two cutoffs, because the two kinds of litter cost different things:
+ *
+ * - **Accounts, six hours.** They are inert — an extra `users` row slows nothing
+ *   down and hides no data — so the cutoff is set for safety, not tidiness.
+ * - **Written rows, thirty minutes.** These are what tips a capped list over, so
+ *   they cannot be left for six hours. Thirty minutes is still an order of
+ *   magnitude beyond the longest run measured here (2.1 minutes for a full
+ *   suite, ~3.5 with `--workers=1`), which leaves room for a run being stepped
+ *   through in `PWDEBUG` and never touches a concurrent one.
+ *
+ * Every predicate is deliberately timid, because a wrong match here deletes
+ * another agent's fixtures out from under a live run — and `task_series`
+ * cascades into its occurrences. Nothing seeded can match any of them: the
+ * seeded family is `@example.com` (plus the child with no email at all), its
+ * chores are named in Russian without an `E2E ` prefix, and its shopping items
+ * are bare words with no timestamp. Other suites' `@example.test` fixtures do
+ * not carry the `e2e-owner-` prefix, and the pre-existing fixed
+ * `e2e-owner@example.test` has no `-` after `owner`, so it is left alone — a
+ * suite running the previous code may still be using it.
+ */
+function sweepStaleFixtures(): void {
+  if (swept) return;
+  swept = true;
+
+  psql(
+    `delete from users where email like 'e2e-owner-%@example.test'` +
+      ` and created_at < now() - interval '6 hours'`,
+  );
+
+  for (const debris of SUITE_DEBRIS) {
+    psql(
+      `delete from ${debris.table} where (${debris.match})` +
+        ` and created_at < now() - interval '30 minutes'`,
+    );
+  }
+}
+
+/**
+ * Removes the task a run created, named by the ASCII stamp in its title.
+ *
+ * The sweep above is the safety net for a run that dies mid-test; this is the
+ * ordinary path, and it keeps the suite's footprint at zero rows per run.
+ */
+export function forgetTaskSeries(stamp: string): void {
+  psql(`delete from task_series where title like 'E2E %${stamp}'`);
+}
+
+/**
+ * Removes the shopping items a run created, named by the trailing `Date.now()`.
+ *
+ * The predicate is the timestamp alone, never the item's name: the gesture
+ * suite writes «Молоко …» / «Позиция …», and a Cyrillic literal travelling
+ * through a shell into `docker exec psql` may arrive mangled on a console with
+ * a different codepage — which fails safe but silently stops deleting. Thirteen
+ * digits are unique enough on their own, and nothing seeded carries any.
+ */
+export function forgetShoppingItems(stamp: string): void {
+  psql(`delete from shopping_items where name like '%${stamp}'`);
+}
+
+/**
+ * Registers this run's owner if it does not exist yet, and makes sure it is
+ * approved. Idempotent: the second and later workers of a run find the account
+ * already there and pay one `SELECT`.
  *
  * Registration is admin-gated by design (D3) — there is no self-serve path to
  * an active account, and there should not be one — so approval happens the same
@@ -116,13 +243,42 @@ export async function ensureApprovedOwner(
   request: APIRequestContext,
   api: string,
 ): Promise<{ email: string; password: string }> {
+  sweepStaleFixtures();
+
   const exists = psql(`select 1 from users where email = '${E2E_OWNER_EMAIL}'`) === '1';
 
   if (!exists) {
     const res = await request.post(`${api}/api/auth/register`, {
       data: { email: E2E_OWNER_EMAIL, password: E2E_OWNER_PASSWORD, displayName: 'Тест' },
     });
-    expect(res.ok(), `register failed: ${res.status()} ${await res.text()}`).toBeTruthy();
+
+    // Two workers of the same run can both see the account missing and both
+    // register; the loser gets 409 ALREADY_EXISTS, which is the outcome we
+    // wanted anyway.
+    if (!res.ok() && res.status() !== 409) {
+      // 429 means the dev backend is running **without** `RATE_LIMIT_FACTOR`,
+      // so `POST /api/auth/register` is back to its production 5/hour/IP and a
+      // handful of runs have spent it. Falling back to one shared account is
+      // what caused the flakiness this per-run scheme exists to remove, so copy
+      // an earlier e2e owner's row instead: same password, so the credentials
+      // below still open it, and this run still signs in as nobody else's user.
+      expect(res.status(), `register failed: ${res.status()} ${await res.text()}`).toBe(429);
+      // Wrapped in CTEs so psql prints one number and nothing else: a bare
+      // `insert … returning` also emits its `INSERT 0 1` command tag.
+      const cloned = psql(
+        `with src as (select display_name, password_hash from users` +
+          ` where email like 'e2e-owner%@example.test' and password_hash is not null` +
+          ` order by created_at desc limit 1),` +
+          ` ins as (insert into users (email, display_name, password_hash, role, status)` +
+          ` select '${E2E_OWNER_EMAIL}', display_name, password_hash, 'owner', 'active' from src` +
+          ` returning 1) select count(*) from ins`,
+      );
+      expect(
+        cloned,
+        'registration is rate limited and there is no earlier e2e owner to copy from — ' +
+          'start the dev backend with RATE_LIMIT_FACTOR=100 (see docs/TESTING.md)',
+      ).toBe('1');
+    }
   }
 
   psql(`update users set status='active', role='owner' where email='${E2E_OWNER_EMAIL}'`);

@@ -16,6 +16,7 @@ import { pingDb } from './core/db.js';
 import { buildLoggerOptions } from './core/logger.js';
 import { authPlugin } from './core/plugins/auth.js';
 import { errorHandlerPlugin } from './core/plugins/error-handler.js';
+import { revisionsPlugin } from './core/plugins/revisions.js';
 import { securityPlugin } from './core/plugins/security.js';
 import { pingRedis } from './core/redis.js';
 
@@ -65,6 +66,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(securityPlugin);
   await app.register(errorHandlerPlugin);
   await app.register(authPlugin);
+  // After `authPlugin` so the hook list reads in request order; the change-feed
+  // hook itself runs `onResponse` and only needs the route pattern (D12).
+  await app.register(revisionsPlugin);
 
   await app.register(underPressure, {
     maxEventLoopDelay: 2_000,

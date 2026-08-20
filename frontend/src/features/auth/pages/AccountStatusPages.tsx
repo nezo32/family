@@ -1,4 +1,4 @@
-import { useEffect, type ComponentType, type ReactNode } from 'react';
+import { useEffect, useRef, type ComponentType, type ReactNode } from 'react';
 import { Ban, Clock, Loader2, PauseCircle, RefreshCw } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Button } from '@/shared/ui/button';
@@ -41,7 +41,8 @@ function StatusScreen(props: {
   icon: ComponentType<{ className?: string }>;
   tone: 'neutral' | 'warning' | 'danger';
   title: string;
-  description: string;
+  /** `null` when the title already says everything — see the approved state. */
+  description: string | null;
   greeting?: string | null;
   hint?: string;
   reason?: string | null;
@@ -68,7 +69,9 @@ function StatusScreen(props: {
           <p className="text-sm font-medium text-muted-foreground">{props.greeting}</p>
         ) : null}
         <CardTitle className="text-lg text-balance">{props.title}</CardTitle>
-        <CardDescription className="text-balance">{props.description}</CardDescription>
+        {props.description ? (
+          <CardDescription className="text-balance">{props.description}</CardDescription>
+        ) : null}
       </CardHeader>
 
       <CardContent className="space-y-3 text-center">
@@ -97,6 +100,16 @@ function StatusScreen(props: {
   );
 }
 
+/**
+ * How often the waiting screen asks again, in milliseconds.
+ *
+ * A poll, not a socket: the applicant has no session, so there is nothing to
+ * authenticate a live channel with, and `GET /auth/status` is a single indexed
+ * read behind an HMAC ticket. Six requests a minute from the handful of people
+ * who are ever on this screen is not a load problem.
+ */
+const STATUS_POLL_MS = 10_000;
+
 export function PendingApprovalPage() {
   const ticket = useTicket();
   const status = useAccountStatus(ticket);
@@ -105,14 +118,59 @@ export function PendingApprovalPage() {
   const approved = data?.status === 'active';
   const submitted = data?.submittedAt ? relativeTime(data.submittedAt) : null;
 
+  /*
+   * Ask again by itself, until the answer changes.
+   *
+   * Without this the screen was a photograph: `useAccountStatus` has a 15 s
+   * stale time and refetches on focus, so a tab left open on the phone that
+   * *is* the applicant's only device — never re-focused, never re-mounted —
+   * showed «ожидание решения» for as long as it stayed open, no matter what an
+   * admin did meanwhile. The «Проверить статус» button worked, which is
+   * precisely why nobody noticed: whoever tested it pressed the button.
+   *
+   * `refetch` rather than `refetchInterval` because the query hook is shared
+   * with the rejected and suspended screens, which have nothing to poll for.
+   * Held in a ref so a new query result cannot restart the timer and starve it.
+   */
+  const refetchRef = useRef(status.refetch);
+  refetchRef.current = status.refetch;
+
+  const waiting = Boolean(ticket) && !approved;
+
+  useEffect(() => {
+    if (!waiting) return;
+
+    const id = window.setInterval(() => {
+      // A backgrounded tab gets throttled anyway; skipping the call outright
+      // keeps a phone in a pocket from spending its battery on 404s.
+      if (document.visibilityState === 'hidden') return;
+      void refetchRef.current();
+    }, STATUS_POLL_MS);
+
+    return () => {
+      window.clearInterval(id);
+    };
+  }, [waiting]);
+
+  /*
+   * A decision is a decision, whichever way it went. The applicant who was
+   * declined while watching this screen used to keep waiting for an answer that
+   * had already been given.
+   */
+  if (data?.status === 'rejected') return <RejectedPage />;
+  if (data?.status === 'suspended') return <SuspendedPage />;
+
   return (
     <StatusScreen
       icon={Clock}
       tone="neutral"
       greeting={data?.displayName ? AUTH_RU.status.greeting(data.displayName) : null}
       title={approved ? AUTH_RU.status.pendingApproved : AUTH_RU.status.pendingTitle}
-      description={AUTH_RU.status.pendingDescription}
-      hint={AUTH_RU.status.pendingHint}
+      // Once the answer is «одобрили», «скоро откроет доступ» and «мы сообщим,
+      // как только заявку одобрят» are both stale — and both invite the person
+      // to keep waiting on a screen they are finished with.
+      description={approved ? null : AUTH_RU.status.pendingDescription}
+      {...(approved ? {} : { hint: AUTH_RU.status.pendingHint })}
       action={{
         to: ROUTES.login,
         label: approved ? AUTH_RU.status.backToLogin : AUTH_RU.status.tryAnotherWay,

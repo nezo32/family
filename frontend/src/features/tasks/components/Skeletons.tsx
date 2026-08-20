@@ -1,27 +1,33 @@
 import { Skeleton } from '@/shared/ui/skeleton';
 
-/** Placeholder rows shaped like `TaskCard`, so nothing jumps when data lands. */
-export function TaskListSkeleton(props: { rows?: number }) {
-  const rows = props.rows ?? 5;
+/**
+ * Placeholder rows shaped like the real ones, so nothing jumps when the data
+ * lands (§D common conventions).
+ *
+ * Three groups of 3 / 3 / 5 rows at **56px** — the geometry `TaskCard` actually
+ * produces. The version this replaces drew 96px bordered cards with a 44px
+ * circle, which was the *old* row: the list visibly collapsed by ~400px the
+ * moment the query resolved, which is exactly the jump a skeleton exists to
+ * prevent.
+ */
+export function TaskListSkeleton() {
   return (
-    <div className="space-y-6" aria-hidden>
-      {[0, 1].map((group) => (
-        <div key={group} className="space-y-2">
-          <Skeleton className="h-4 w-32" />
-          <ul className="space-y-2">
-            {Array.from({ length: group === 0 ? rows : 2 }, (_, index) => (
-              <li
-                key={index}
-                className="flex items-start gap-3 rounded-xl border border-border bg-card p-3"
-              >
-                <Skeleton className="size-11 shrink-0 rounded-full" />
-                <div className="min-w-0 flex-1 space-y-2">
-                  <Skeleton className="h-4 w-2/3" />
-                  <Skeleton className="h-3 w-1/3" />
-                </div>
-              </li>
+    <div className="flex flex-col gap-6" aria-hidden>
+      {[3, 3, 5].map((rows, group) => (
+        <div key={group} className="flex flex-col">
+          <div className="flex items-center justify-between px-4 pb-2">
+            <Skeleton className="h-4 w-28" />
+            <Skeleton className="h-4 w-6" />
+          </div>
+          <div className="max-w-row-measure overflow-hidden rounded-xl border border-border bg-card">
+            {Array.from({ length: rows }, (_, index) => (
+              <div key={index} className="flex h-14 items-center gap-3 px-4">
+                <Skeleton className="size-7 shrink-0 rounded-full" />
+                <Skeleton className="h-4 flex-1" />
+                <Skeleton className="size-6 shrink-0 rounded-full" />
+              </div>
             ))}
-          </ul>
+          </div>
         </div>
       ))}
     </div>

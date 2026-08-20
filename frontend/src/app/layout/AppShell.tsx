@@ -4,6 +4,7 @@ import { LoadingScreen } from '@/shared/components/LoadingScreen';
 import { setFamilyTimeZone } from '@/shared/lib/format';
 import { useMe } from '@/shared/auth/use-me';
 import { cn } from '@/shared/lib/utils';
+import { PullToRefresh } from '@/shared/ui/pull-to-refresh';
 import { InstallPrompt } from '@/features/auth/components/InstallPrompt';
 import { PushOnboarding } from '@/features/settings/push/PushOnboarding';
 import { useShoppingSync } from '@/features/shopping/hooks';
@@ -142,9 +143,29 @@ export function AppShell() {
                   that the OS permission prompt can be shown once, ever.
                 */}
                 <PushOnboarding className="mb-4" />
-                <Suspense fallback={<LoadingScreen />}>
-                  <Outlet />
-                </Suspense>
+                {/*
+                  §G6 hosts pull-to-refresh here, and this is the only place it
+                  is mounted. It takes no props and adds no layout: it renders a
+                  fragment, listens on `document` and draws a `position: fixed`
+                  band, so wrapping the routed content leaves the document — not
+                  an inner element — as the scroll container, which is what iOS
+                  needs to collapse the URL bar and to run "tap the status bar
+                  to scroll to top".
+
+                  Outside the `<Suspense>` rather than inside it, so the gesture
+                  survives a lazy route's fallback instead of being unmounted
+                  and remounted on every navigation.
+
+                  It suppresses itself on fine pointers, anywhere but
+                  `scrollY === 0`, and while a modal is open — which is what
+                  keeps it clear of the shopping list's own swipe rows and of a
+                  vaul drawer's drag handle.
+                */}
+                <PullToRefresh>
+                  <Suspense fallback={<LoadingScreen />}>
+                    <Outlet />
+                  </Suspense>
+                </PullToRefresh>
               </div>
 
               {/*

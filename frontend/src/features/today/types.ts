@@ -20,6 +20,7 @@ export type {
   DashboardShoppingItem,
   DashboardTask,
   DashboardTasks,
+  DashboardWeekDay,
   TodayResponse,
   WeekQuery,
   WeekResponse,

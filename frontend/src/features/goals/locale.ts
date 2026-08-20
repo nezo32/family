@@ -31,6 +31,11 @@ export const GOALS_RU = {
   summarySaved: 'Накоплено',
   summaryGoals: 'Целей в работе',
   summaryReached: 'Достигнуто',
+  groupOpen: 'Копим',
+  groupReached: 'Собрано',
+  reachedShort: 'собрана',
+  inProgressSuffix: 'в работе',
+  reachedSuffix: 'собрано',
 
   // ---- card / detail ----------------------------------------------------
   of: 'из',
@@ -67,6 +72,12 @@ export const GOALS_RU = {
 
   // ---- ledger -----------------------------------------------------------
   contribute: 'Пополнить',
+  /**
+   * The long-press sheet on a goal row (§G5). Every entry in it is also a
+   * control on the goal's own screen, which is one tap away — the row *is* that
+   * tap — so nothing here is reachable only by gesture (§G1).
+   */
+  rowSheet: 'Действия с копилкой',
   withdraw: 'Снять',
   contributeTitle: 'Пополнить копилку',
   withdrawTitle: 'Снять из копилки',
@@ -135,6 +146,12 @@ export const GOALS_RU = {
   formKindPersonal: 'Личная — только моя',
   formPrivate: 'Скрыть от остальных',
   formPrivateHint: 'Личную копилку увидите только вы.',
+  /* ---- the §D-forms sheet --------------------------------------------- */
+  /** Section label above everything that is optional by construction (§F7). */
+  formDetails: 'Подробнее',
+  formSubmitCreate: 'Создать',
+  formSubmitEdit: 'Сохранить',
+  formDeadlineClear: 'Без срока',
   goalCreated: 'Копилка создана',
   goalUpdated: 'Изменения сохранены',
   goalDeleted: 'Копилка удалена',
@@ -198,3 +215,20 @@ export function daysLeftLabel(days: number): string {
 export function contributorsLabel(count: number): string {
   return pluralize(count, PLURALS.member);
 }
+
+/**
+ * «2 в работе» / «1 собрано» — the meta line under the display figure (§D4).
+ *
+ * Two counts of *goals*, not of people, which is why they are safe: nothing
+ * here accumulates against a name (D5).
+ */
+export const activeCountLabel = (n: number): string =>
+  `${pluralize(n, PLURALS.goal)} ${GOALS_RU.inProgressSuffix}`;
+
+/**
+ * «собрано 1» — impersonal predicate first, which is the natural Russian order
+ * for a count of finished things and sidesteps needing a fourth adjective form
+ * («готова / готовы / готовых») for a number nobody reads aloud.
+ */
+export const reachedCountLabel = (n: number): string =>
+  `${GOALS_RU.reachedSuffix} ${String(n)}`;

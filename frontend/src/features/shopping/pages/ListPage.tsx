@@ -11,6 +11,7 @@ import { Skeleton } from '@/shared/ui/skeleton';
 import { Switch } from '@/shared/ui/switch';
 import { Label } from '@/shared/ui/label';
 import { ROUTES } from '@/shared/lib/routes';
+import { useLiveScreen } from '@/shared/sync';
 import { cn } from '@/shared/lib/utils';
 import { SHOPPING_RU } from '../locale';
 import {
@@ -78,6 +79,14 @@ export default function ListPage() {
   const [shopMode, setShopMode] = useShopMode();
   useWakeLock(shopMode);
 
+  /**
+   * Two people in a shop with the same list open is the case the whole change
+   * feed was written for (D12), so this screen — and only this screen — asks
+   * for the 5-second poll instead of the usual 15. It costs battery, which is
+   * why it is opt-in and why it ends when the page unmounts.
+   */
+  useLiveScreen();
+
   const navigate = useNavigate();
   /*
    * `includeArchived: true` on purpose. The overview asks for the active lists
@@ -120,6 +129,13 @@ export default function ListPage() {
         icon={ShoppingCart}
         title={SHOPPING_RU.listsEmptyTitle}
         description={SHOPPING_RU.listsEmptyDescription}
+        // No list id in the URL: there is no list to fill, so the only useful
+        // move is back to the ones that exist.
+        action={
+          <Button asChild variant="outline" className="h-11">
+            <Link to={ROUTES.shopping}>{SHOPPING_RU.backToLists}</Link>
+          </Button>
+        }
       />
     );
   }
@@ -227,6 +243,16 @@ export default function ListPage() {
             icon={ShoppingCart}
             title={SHOPPING_RU.itemsEmptyTitle}
             description={canWrite ? SHOPPING_RU.itemsEmptyDescription : SHOPPING_RU.noWriteAccess}
+            /*
+              Deliberately `null`, and the one place in the app where that is
+              the right answer: §D6 — "Do not render an `EmptyState`
+              illustration above a composer that is already the invitation."
+              `QuickAddBar` is on screen directly below this, focused and
+              waiting; a button here would be a second invitation to do the
+              thing the reader is already looking at. Without write access
+              there is nothing to offer either.
+            */
+            action={null}
           />
         ) : (
           <AisleList

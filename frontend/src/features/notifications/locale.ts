@@ -1,4 +1,9 @@
-import type { DeliveryStatus, EscalationState, NotificationPriority } from '@family/shared';
+import type {
+  DeliveryStatus,
+  EscalationState,
+  NotificationPriority,
+  NotificationType,
+} from '@family/shared';
 
 /**
  * Every user-facing string of the «Уведомления» inbox (D7 — Russian copy lives
@@ -24,6 +29,18 @@ export const NOTIFICATIONS_RU = {
   unreadAria: (count: number) => `Уведомления: ${String(count)} непрочитанных`,
   markAllRead: 'Прочитать все',
   marking: 'Отмечаем…',
+
+  /**
+   * The swipe (§C-gestures/G4). One word for an 88px button and for the toast.
+   *
+   * The toast carries «Отменить» like every other gesture's does. It did not
+   * used to: the API offered `POST /notifications/read` and nothing that
+   * reversed it, so the row shipped with a toast that stated what had happened
+   * and offered no control — the honest reading of §G4 rather than a button
+   * that would 404. `POST /notifications/unread` is the counterpart, and the
+   * undo label is `COMMON.undo`, the same word the shopping and task rows use.
+   */
+  swipeRead: 'Прочитано',
   onlyUnread: 'Только непрочитанные',
   showAll: 'Показать все',
   loadMore: 'Показать ещё',
@@ -35,8 +52,17 @@ export const NOTIFICATIONS_RU = {
   emptyText: 'Здесь появятся напоминания о задачах, событиях и делах семьи.',
   emptyUnreadTitle: 'Всё прочитано',
   emptyUnreadText: 'Непрочитанных уведомлений нет.',
+  /** An inbox that has never had anything in it is a settings question. */
+  emptySettingsAction: 'Настроить уведомления',
   loadFailed: 'Не удалось загрузить уведомления',
   markReadFailed: 'Не удалось отметить прочитанным',
+  /**
+   * The undo failed. Deliberately says what is now true rather than "попробуйте
+   * ещё раз": the six-second toast is gone by the time this appears, so there
+   * is no control left to retry with, and the row is about to show its real
+   * state again anyway.
+   */
+  markUnreadFailed: 'Не удалось вернуть в непрочитанные',
 
   /* --- acknowledgement (D11) ---------------------------------------------- */
 
@@ -44,14 +70,25 @@ export const NOTIFICATIONS_RU = {
    * The only signal that stops a `critical` intent walking up the escalation
    * ladder to another family member. Everything else — arriving on the device,
    * being tapped — counts as `delivered`/`interacted` and does not stop it.
+   *
+   * **Every string here names its object: «получение».** The bare verb was an
+   * incident. On «Заявка в семью — дарья ждёт подтверждения» the row's only
+   * button read «Подтвердить» and the receipt beneath it «Подтверждено 20
+   * августа в 08:09» — so the owner tapped it, read the receipt as "заявка
+   * подтверждена", and told the applicant she was in. Nothing had happened to
+   * her account: the tap confirmed that the *notification* had reached a human,
+   * which is all this control has ever meant. A delivery receipt must never be
+   * readable as a decision about the thing the notification is about.
    */
-  acknowledge: 'Подтвердить',
-  acknowledging: 'Подтверждаем…',
-  acknowledged: 'Подтверждено',
-  acknowledgeHint: 'Пока никто не подтвердил, уведомление уйдёт следующему в семье.',
-  acknowledgeFailed: 'Не удалось подтвердить',
-  acknowledgeQueued: 'Подтверждение сохранено — отправим, как появится сеть.',
-  acknowledgedAt: (when: string) => `Подтверждено ${when}`,
+  acknowledge: 'Подтвердить получение',
+  acknowledging: 'Подтверждаем получение…',
+  acknowledged: 'Получение подтверждено',
+  acknowledgeHint:
+    'Это отметка «я увидел» — она ничего не решает по существу, а только останавливает ' +
+    'напоминание. Пока никто не подтвердил получение, уведомление уйдёт следующему в семье.',
+  acknowledgeFailed: 'Не удалось подтвердить получение',
+  acknowledgeQueued: 'Подтверждение получения сохранено — отправим, как появится сеть.',
+  acknowledgedAt: (when: string) => `Получение подтверждено ${when}`,
 
   /* --- the pushHealthy === false banner ----------------------------------- */
 
@@ -74,6 +111,28 @@ export const NOTIFICATIONS_RU = {
   escalation: 'Эскалация',
 } as const;
 
+/**
+ * What a notification's *own* action is, when it has one.
+ *
+ * A `high`/`critical` row already carries the D11 «Подтвердить получение»
+ * button, and for a while that was the only button on the card. On a join
+ * request that is a trap: the one thing an owner wants to do from
+ * «Заявка в семью» is decide it, and the only control offered confirmed
+ * delivery instead. So a row whose `link` goes somewhere actionable gets a
+ * **primary** button that says what is actually waiting there, and the receipt
+ * button is demoted beside it.
+ *
+ * Keyed by type rather than derived from `link`, because the label has to name
+ * the destination — «Открыть» would be no clearer than the tappable body text
+ * that already exists. Types absent from this map render no action button, so
+ * a type is added here only once its `navigate` target has been checked against
+ * the router; promising «Открыть обмен» and landing on a 404 is the same bug
+ * one screen further along.
+ */
+export const NOTIFICATION_ACTION_RU: Partial<Record<NotificationType, string>> = {
+  member_pending_approval: 'Рассмотреть заявку',
+};
+
 /** `DeliveryStatus` → what the receipts list shows next to a member. */
 export const DELIVERY_STATUS_RU: Record<DeliveryStatus, string> = {
   pending: 'В очереди',
@@ -84,7 +143,7 @@ export const DELIVERY_STATUS_RU: Record<DeliveryStatus, string> = {
   read: 'Прочитано',
   delivered: 'Доставлено',
   interacted: 'Открыто',
-  acknowledged: 'Подтверждено',
+  acknowledged: 'Получение подтверждено',
 };
 
 /** `EscalationState` → a short Russian phrase for the receipts header. */
@@ -93,7 +152,7 @@ export const ESCALATION_STATE_RU: Record<EscalationState, string> = {
   redelivered: 'Отправлено повторно',
   channel_fallback: 'Отправлено другим способом',
   person_escalated: 'Передано другому участнику',
-  exhausted: 'Никто не подтвердил',
+  exhausted: 'Никто не подтвердил получение',
 };
 
 /** Priority → the tone of the row. Only `high`/`critical` are ever labelled. */

@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test';
 
 import { expect, test } from './fixtures';
 
-import { ANONYMOUS, assertClean, firstId, watch } from './helpers';
+import { ANONYMOUS, RUN_ID, assertClean, firstId, forgetTaskSeries, watch } from './helpers';
 
 /**
  * Deep end-to-end coverage — the routes and interactions `smoke.spec.ts` does
@@ -131,7 +131,11 @@ test.describe('a form actually writes', () => {
   test('creating a task through the UI puts it on the list', async ({ page }) => {
     const problems = watch(page);
 
-    const title = `E2E дело ${Date.now()}`;
+    // The stamp is ASCII and carries the run id, so two runs started in the same
+    // millisecond cannot collide and the row can be deleted again from a shell
+    // without pushing Cyrillic through it.
+    const stamp = `${RUN_ID}-${String(Date.now())}`;
+    const title = `E2E дело ${stamp}`;
 
     await page.goto('/tasks');
     const trigger = page
@@ -155,6 +159,13 @@ test.describe('a form actually writes', () => {
     await expect(page.locator('body')).toContainText(title, { timeout: 15_000 });
 
     assertClean(problems, 'create task');
+
+    // Take it back out. The list this asserts against is capped at `limit: 100`
+    // and every one of these tasks is due today, so nothing about the query can
+    // be narrowed enough to survive a database full of them — a run that leaves
+    // its task behind is a run that makes the next one flakier. `helpers.ts`
+    // sweeps up after a run that dies before reaching this line.
+    forgetTaskSeries(stamp);
   });
 });
 

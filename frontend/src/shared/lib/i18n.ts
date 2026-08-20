@@ -25,6 +25,8 @@ export const COMMON = {
   next: 'Далее',
   done: 'Готово',
   retry: 'Повторить',
+  /** The word on every swipe's undo toast (§C-gestures/G4). */
+  undo: 'Отменить',
   refresh: 'Обновить',
   search: 'Поиск',
   filter: 'Фильтр',

@@ -39,11 +39,18 @@ export function EventChip(props: {
   );
 }
 
-/** The phone-sized version of the same information: colour only. */
+/**
+ * The phone-sized version of the same information: a **3px tick**, not a dot
+ * (§D3).
+ *
+ * It is the same 3px mark the day rail uses on every other list in the app, at
+ * the one size a 45px month cell can afford — so a colour a reader learned on
+ * the agenda still means the same thing in the grid.
+ */
 export function EventDot(props: { occurrence: EventOccurrenceResponse }) {
   return (
     <span
-      className="size-1.5 rounded-full"
+      className="h-3 w-[3px] shrink-0 rounded-full"
       style={{ backgroundColor: occurrenceColor(props.occurrence) }}
       aria-hidden
     />

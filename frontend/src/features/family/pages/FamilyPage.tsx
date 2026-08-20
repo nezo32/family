@@ -1,11 +1,19 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Users } from 'lucide-react';
+import { SideColumn } from '@/app/layout/SideColumn';
 import { PageHeader } from '@/shared/components/PageHeader';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
+import { Button } from '@/shared/ui/button';
+import { Section } from '@/shared/ui/section';
+import { ROUTES } from '@/shared/lib/routes';
+import { COMMON, NAV_LABELS } from '@/shared/lib/i18n';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { useCan } from '@/shared/auth/use-can';
 import { useMe } from '@/shared/auth/use-me';
+import { useFairness, useMembers } from '@/features/tasks/hooks';
+import { WeeklyLoad } from '@/features/tasks/components/WeeklyLoad';
 import { FAMILY_RU, memberCount } from '../locale';
 import { useRoster } from '../hooks';
 import type { RosterMember } from '../api';
@@ -13,19 +21,27 @@ import { MemberCard } from '../components/MemberCard';
 import { MemberSheet } from '../components/MemberSheet';
 
 /**
- * `/family` — the roster.
+ * `/family` — the roster (§D9).
+ *
+ * **What the user came for:** "who is in the family and who is carrying what."
  *
  * ### Not a leaderboard (D5)
  *
  * The list order is `sortOrder`, then name. It is **never** sorted by completed
- * chores or by anything else a child could read as a placing, and no card shows
+ * chores or by anything else a child could read as a placing, and no row shows
  * a number.
  *
- * Every member's card used to carry a little load bar. It went with the score
- * system: one bar per person, stacked down a roster of siblings, *is* the
- * comparison, however carefully each individual bar is worded. The week's split
- * of the housework lives on the chores screen instead, where it reads as one
- * family-level picture rather than a mark against each name.
+ * Every member's card used to carry a little load bar. That went with the score
+ * system, and it went for a reason worth keeping written down: one bar per
+ * person, stacked down a roster of siblings, *is* the comparison, however
+ * carefully each individual bar is worded.
+ *
+ * The load comes back in the side column (§D9) as one **family-level** picture
+ * — `WeeklyLoad`, the same component Задачи uses, which compares each person to
+ * their own rotation weight, lists everybody alphabetically and prints no
+ * rankable number anywhere, including in its `aria-label`. It is imported from
+ * `features/tasks` rather than copied: two implementations of "how did the
+ * housework split" is two places for a number to creep back in.
  *
  * ### Permissions
  *
@@ -39,6 +55,11 @@ export default function FamilyPage() {
   const { data: me } = useMe();
 
   const roster = useRoster();
+  const fairness = useFairness(7);
+  // `WeeklyLoad` resolves names against the task roster, which is the same
+  // `GET /members` payload under a different query key — the request is shared,
+  // not doubled.
+  const taskRoster = useMembers();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -51,7 +72,7 @@ export default function FamilyPage() {
   if (!isReady) {
     return (
       <>
-        <PageHeader title={FAMILY_RU.title} description={FAMILY_RU.description} />
+        <PageHeader title={FAMILY_RU.title} />
         <RosterSkeleton />
       </>
     );
@@ -68,6 +89,13 @@ export default function FamilyPage() {
           icon={Users}
           title={FAMILY_RU.noAccessTitle}
           description={FAMILY_RU.noAccessDescription}
+          // There is nothing to do on a screen you may not read, so the action
+          // is the way off it — back to the one screen everybody can see.
+          action={
+            <Button asChild variant="outline" className="h-11">
+              <Link to={ROUTES.today}>{NAV_LABELS.today}</Link>
+            </Button>
+          }
         />
       </>
     );
@@ -76,7 +104,7 @@ export default function FamilyPage() {
   if (roster.isPending) {
     return (
       <>
-        <PageHeader title={FAMILY_RU.title} description={FAMILY_RU.description} />
+        <PageHeader title={FAMILY_RU.title} />
         <RosterSkeleton />
       </>
     );
@@ -97,21 +125,28 @@ export default function FamilyPage() {
 
   return (
     <>
-      <PageHeader
-        title={FAMILY_RU.title}
-        description={
-          members.length > 0 ? memberCount(members.length) : undefined
-        }
-      />
+      <PageHeader title={FAMILY_RU.title} />
 
       {members.length === 0 ? (
         <EmptyState
           icon={Users}
           title={FAMILY_RU.emptyTitle}
           description={FAMILY_RU.emptyDescription}
+          // A roster that does not even contain the reader is a stale cache far
+          // more often than it is a real answer.
+          action={
+            <Button
+              variant="outline"
+              className="h-11"
+              disabled={roster.isFetching}
+              onClick={() => void roster.refetch()}
+            >
+              {COMMON.refresh}
+            </Button>
+          }
         />
       ) : (
-        <ul className="flex flex-col gap-3 pb-safe">
+        <Section label={FAMILY_RU.rosterLabel} count={memberCount(members.length)}>
           {members.map((member) => (
             <MemberCard
               key={member.id}
@@ -122,8 +157,20 @@ export default function FamilyPage() {
               }}
             />
           ))}
-        </ul>
+        </Section>
       )}
+
+      {/* §D9: the load, family-level and neutral by construction, beside the
+          roster on a wide screen and under it on a phone. */}
+      <SideColumn>
+        {fairness.isSuccess ? (
+          <WeeklyLoad
+            members={fairness.data.members}
+            roster={taskRoster.data ?? members}
+            imbalance={fairness.data.imbalance}
+          />
+        ) : null}
+      </SideColumn>
 
       <MemberSheet
         member={selected}
@@ -151,21 +198,21 @@ function sortRoster(items: readonly RosterMember[]): RosterMember[] {
   });
 }
 
+/** 56px rows on one surface — the geometry `MemberCard` actually produces. */
 function RosterSkeleton() {
   return (
-    <ul className="flex flex-col gap-3" aria-hidden>
-      {[0, 1, 2, 3].map((n) => (
-        <li key={n} className="rounded-2xl border border-border p-3">
-          <div className="flex items-start gap-3">
-            <Skeleton className="size-10 rounded-full" />
-            <div className="flex-1 space-y-2">
-              <Skeleton className="h-4 w-32" />
-              <Skeleton className="h-3 w-20" />
-              <Skeleton className="h-2 w-full" />
-            </div>
+    <div className="flex flex-col" aria-hidden>
+      <div className="px-4 pb-2">
+        <Skeleton className="h-4 w-24" />
+      </div>
+      <div className="max-w-row-measure overflow-hidden rounded-xl border border-border bg-card">
+        {[0, 1, 2, 3].map((n) => (
+          <div key={n} className="flex h-14 items-center gap-3 px-4">
+            <Skeleton className="size-8 shrink-0 rounded-full" />
+            <Skeleton className="h-4 w-32" />
           </div>
-        </li>
-      ))}
-    </ul>
+        ))}
+      </div>
+    </div>
   );
 }

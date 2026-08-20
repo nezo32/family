@@ -34,7 +34,7 @@ export function MonthGrid(props: {
   const today = todayKey(props.timeZone);
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-border bg-border">
+    <div className="max-w-row-measure overflow-hidden rounded-xl border border-border bg-border">
       <div className="grid grid-cols-7 gap-px">
         {weeks[0]?.map((dateKey) => (
           <div
@@ -88,12 +88,23 @@ export function MonthGrid(props: {
                 </span>
               </span>
 
-              {/* Phones: colour dots only. */}
-              <span className="flex flex-wrap items-center gap-0.5 sm:hidden">
-                {items.slice(0, 4).map((occurrence) => (
-                  <EventDot key={occurrence.id} occurrence={occurrence} />
-                ))}
-              </span>
+              {/*
+                Phones: **up to two 3px ticks and a count** (§D3). A 45px column
+                cannot show a title, and it could not show four dots either —
+                four 6px dots with gaps is 30px of the 45, which is why the row
+                wrapped and the cell grew. Two ticks say "something, and it is
+                these colours"; the number says how much.
+              */}
+              {items.length > 0 ? (
+                <span className="flex items-center gap-1 sm:hidden">
+                  {items.slice(0, 2).map((occurrence) => (
+                    <EventDot key={occurrence.id} occurrence={occurrence} />
+                  ))}
+                  <span className="text-[10px] leading-none font-medium text-muted-foreground tabular-nums">
+                    {items.length}
+                  </span>
+                </span>
+              ) : null}
 
               {/* ≥ sm: real chips with time and title. */}
               <span className="hidden min-w-0 flex-col gap-0.5 sm:flex">

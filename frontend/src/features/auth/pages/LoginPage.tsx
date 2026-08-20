@@ -53,9 +53,10 @@ function SignIn({ next }: { next: string | null }) {
     mutation.mutate(values);
   });
 
-  // A failed OAuth round trip comes back as `/login?error=<ErrorCode>`. Only
-  // codes we have a Russian sentence for are shown — never free-form text.
-  const callbackError = translateErrorCode(params.get('error'));
+  // A failed OAuth round trip comes back as
+  // `/login?error=<ErrorCode>&provider=<provider>`. Only codes we have a
+  // Russian sentence for are shown — never free-form text from the query.
+  const callbackError = callbackAlertFrom(params);
 
   return (
     <Card>
@@ -70,8 +71,8 @@ function SignIn({ next }: { next: string | null }) {
       <CardContent className="space-y-4">
         {callbackError ? (
           <Alert variant="destructive">
-            <AlertTitle>{AUTH_RU.errors.formTitle}</AlertTitle>
-            <AlertDescription>{callbackError}</AlertDescription>
+            <AlertTitle>{callbackError.title}</AlertTitle>
+            <AlertDescription>{callbackError.text}</AlertDescription>
           </Alert>
         ) : null}
 
@@ -203,4 +204,44 @@ function translateErrorCode(code: string | null): string | null {
   if (!code) return null;
   if (!Object.prototype.hasOwnProperty.call(ERROR_MESSAGES_RU, code)) return null;
   return ERROR_MESSAGES_RU[code as keyof typeof ERROR_MESSAGES_RU];
+}
+
+const PROVIDER_NAMES = AUTH_RU.errors.providerNames;
+
+function isKnownProvider(value: string | null): value is keyof typeof PROVIDER_NAMES {
+  return value !== null && Object.prototype.hasOwnProperty.call(PROVIDER_NAMES, value);
+}
+
+interface CallbackAlert {
+  title: string;
+  text: string;
+}
+
+/**
+ * Turns `/login?error=<ErrorCode>&provider=<provider>` into an alert.
+ *
+ * `GET /api/auth/:provider/start` redirects here when the flow dies before the
+ * user ever reaches the provider — which is the only chance we get to say
+ * anything at all when the provider's own failure page is a bare English line
+ * on its domain, as Telegram's «Bot domain invalid» is.
+ *
+ * A 5xx from a *named* provider is a configuration fault, not a blip, so it
+ * gets copy the user can act on instead of the generic «попробуйте через
+ * минуту». Anything else falls back to the shared `ErrorCode` catalogue, and an
+ * unrecognised code renders nothing — never free-form text from a query string.
+ */
+function callbackAlertFrom(params: URLSearchParams): CallbackAlert | null {
+  const code = params.get('error');
+  const provider = params.get('provider');
+
+  if (isKnownProvider(provider) && (code === 'SERVICE_UNAVAILABLE' || code === 'INTERNAL_ERROR')) {
+    const name = PROVIDER_NAMES[provider];
+    return {
+      title: AUTH_RU.errors.providerUnavailableTitle(name),
+      text: AUTH_RU.errors.providerUnavailableText(name),
+    };
+  }
+
+  const text = translateErrorCode(code);
+  return text ? { title: AUTH_RU.errors.formTitle, text } : null;
 }

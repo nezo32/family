@@ -1,0 +1,126 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Family App — backup pull.
+#
+# This file does NOT belong to the production stack. It runs on the OWNER'S PC,
+# not on the VDI, which is why it is a separate compose project in its own
+# directory rather than another service in infra/docker-compose.yml: bringing
+# up the production stack must never try to start this, and starting this must
+# never require the production stack's .env, images or networks.
+#
+#     docker compose -f infra/backup-pull/docker-compose.yml up -d
+#
+# That is the whole setup. No host cron, no scheduled task, no PowerShell.
+# Docker Desktop starts the container when the PC starts; the container checks
+# hourly whether a backup is due and pulls one when it is.
+#
+# The one thing you must do by hand, once, is create an SSH key and install its
+# public half on the server. The container tells you exactly how if it is
+# missing — see docs/DEPLOYMENT.md §8, or just start it and read the logs.
+#
+# Configuration, if you want any (create a `.env` beside this file):
+#
+#   BACKUP_DEST         where backups land on this PC
+#                       default: %USERPROFILE%\Backups\family   (~/Backups/family)
+#   BACKUP_SSH_KEY      private key trusted by familybackup@nezo.su
+#                       default: %USERPROFILE%\.ssh\family_backup
+#   TZ                  the timezone PREFERRED_HOUR is measured in
+#   GENERATIONS         rotating slots; 7 = one per weekday, each overwritten
+#                       weekly. 1 = a single file, overwritten every run.
+#   MIN_INTERVAL_HOURS  never back up more often than this
+#   PREFERRED_HOUR      the hour a routine day's backup lands on
+#   MAX_INTERVAL_HOURS  past this age, back up immediately whatever the clock says
+# ─────────────────────────────────────────────────────────────────────────────
+name: family-backup-pull
+
+services:
+  backup-pull:
+    # A stock image, not one we build. It is Alpine + openssh-client + rsync,
+    # 25 MB, and already contains everything this needs: ssh, scp, sha256sum,
+    # gzip, tar, crond and tzdata. Building a custom image to install what is
+    # already here would add a Dockerfile, a build step and a rebuild-on-deploy
+    # to a thing whose entire job is to be reliable and boring.
+    image: instrumentisto/rsync-ssh:alpine
+    container_name: family-backup-pull
+
+    # `unless-stopped`, so Docker Desktop starts it with the PC and it comes
+    # back after a crash — but an explicit `docker compose stop` stays stopped.
+    # This is what makes "runs when the machine runs" true without a scheduler.
+    restart: unless-stopped
+
+    environment:
+      # Where PREFERRED_HOUR is measured. Change this if you are not in Moscow.
+      TZ: ${TZ:-Europe/Moscow}
+
+      SERVER_HOST: ${SERVER_HOST:-nezo.su}
+      SERVER_USER: ${SERVER_USER:-familybackup}
+      REMOTE_DIR: ${REMOTE_DIR:-/opt/family/backups}
+      PREFIX: ${PREFIX:-family}
+
+      # Rotation: overwrite, never accumulate. Seven weekday slots.
+      GENERATIONS: ${GENERATIONS:-7}
+
+      # The schedule, such as it is. See pull.sh's `is_due`.
+      MIN_INTERVAL_HOURS: ${MIN_INTERVAL_HOURS:-20}
+      MAX_INTERVAL_HOURS: ${MAX_INTERVAL_HOURS:-26}
+      PREFERRED_HOUR: ${PREFERRED_HOUR:-14}
+
+      # How often to wake up and ask. Not how often to back up.
+      CHECK_CRON: ${CHECK_CRON:-7 * * * *}
+
+      CONNECT_TIMEOUT: ${CONNECT_TIMEOUT:-20}
+
+      # The container reports itself unhealthy once the newest good backup is
+      # older than this, so `docker compose ps` answers "is this still working"
+      # without anyone reading a log.
+      STALE_HOURS: ${STALE_HOURS:-48}
+
+    volumes:
+      # Where the backups land on this PC. A real, findable folder — not a
+      # Docker volume you would need docker to read.
+      - ${BACKUP_DEST:-${USERPROFILE:-${HOME}}/Backups/family}:/backups
+
+      # The private key, read-only. Never generated into the repo, never baked
+      # into the image: it lives in your ~/.ssh and is mounted at runtime.
+      # If this path does not exist Docker creates an empty directory there —
+      # the container detects exactly that and says so.
+      - ${BACKUP_SSH_KEY:-${USERPROFILE:-${HOME}}/.ssh/family_backup}:/run/backup-key:ro
+
+      # The scripts, read-only, straight from the repo. Bind-mounted rather
+      # than baked so that a fix is `restart`, not `build && push && pull`.
+      - ./:/opt/backup-pull:ro
+
+    entrypoint: ["/bin/sh", "/opt/backup-pull/entrypoint.sh"]
+
+    healthcheck:
+      test: ["CMD", "/bin/sh", "/opt/backup-pull/pull.sh", "--health"]
+      # Once a minute: it is a `stat` and a `cat`, and the point of the check
+      # is to notice quickly, not to be frugal.
+      interval: 1m
+      timeout: 30s
+      retries: 3
+      start_period: 2m
+
+    # Bounded logs. This container runs forever and talks every hour.
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "5"
+
+    # It reads one directory over ssh and writes to a bind mount, so it can
+    # give up essentially every capability.
+    #
+    # SETGID/SETUID are the exception, and they are not optional: busybox crond
+    # calls setgroups()/setuid() before running each job even when the job's
+    # user is already root. Without them it forks, the child dies, and NOTHING
+    # RUNS — with no error in the log, which is the worst possible way for a
+    # backup system to fail. This was found by watching a `cap_drop: ALL`
+    # container tick past its schedule doing nothing; the healthcheck now also
+    # watches for it (see TICK_STALE_HOURS in pull.sh).
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID

@@ -7,6 +7,7 @@ import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { Can } from '@/shared/auth/Can';
 import { Button } from '@/shared/ui/button';
+import { Section, SectionStack } from '@/shared/ui/section';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { indexByDay, monthGridRange, monthKeyOf, todayKey, type DateKey } from '../calendar-model';
 import {
@@ -19,18 +20,33 @@ import {
   useMemberIndex,
   useMonthNavigation,
 } from '../hooks';
-import { CALENDAR_RU } from '../locale';
+import { CALENDAR_RU, eventCount } from '../locale';
 import { AgendaList } from '../components/AgendaList';
-import { CalendarToolbar } from '../components/CalendarToolbar';
+import { MonthStepper, ViewSwitch } from '../components/CalendarToolbar';
 import { DayHeading } from '../components/DayHeading';
 import { EventDetailSheet } from '../components/EventDetailSheet';
 import { EventFormDialog } from '../components/EventFormDialog';
 import { EventRow } from '../components/EventRow';
 import { MonthGrid } from '../components/MonthGrid';
-import { SubscribeCard, SubscribeDialog } from '../components/SubscribePanel';
+import { SubscribeCard } from '../components/SubscribePanel';
 
 /**
- * Календарь — the family's shared month / agenda view.
+ * Календарь — the family's shared month / agenda view (§D3).
+ *
+ * **What the user came for:** "what is happening, and when."
+ *
+ * ## What changed
+ *
+ * The month moved into the page title (`MonthStepper`), which `PageHeader`
+ * hoists into the app bar from `md` up. That collapses five rows of chrome —
+ * title, subtitle, a full-width «+ Событие», a month stepper, a view switch —
+ * into one 44px control row above the first event. On a 390px phone that was
+ * ~370px, or 44 % of the viewport, spent before anything the reader came for.
+ *
+ * `SubscribePanel` is off the page proper. It is a once-per-device setup that
+ * was sitting as a loose paragraph under the agenda, pushing next month below
+ * the fold — and it is duplicated in Настройки. It survives here as side-column
+ * content at ≥ 1088px only (§C4), where there is room and no cost.
  *
  * The agenda is the default on a phone (see `useCalendarView`), the month grid
  * on a desktop, and an explicit choice is remembered. Both views read the same
@@ -65,7 +81,7 @@ export default function CalendarPage() {
    *
    * The month filter is not redundant. `monthGridRange` fetches the whole 6×7
    * grid, so the window spills a few days either side — and the agenda used to
-   * list them, which is how a toolbar reading «Август 2026» ended up with
+   * list them, which is how a heading reading «Август 2026» ended up with
    * «четверг, 3 сентября» as its only entry. The neighbouring month is one tap
    * on the arrow; a heading that lies is not fixable by the reader.
    */
@@ -94,6 +110,7 @@ export default function CalendarPage() {
   };
 
   const selectedItems = byDay.get(selectedDay) ?? [];
+  const onCurrentMonth = monthKeyOf(today) === monthKey;
 
   const createButton = (
     <Can perm="event:create">
@@ -107,43 +124,35 @@ export default function CalendarPage() {
   return (
     <>
       <PageHeader
-        title={CALENDAR_RU.title}
-        description={CALENDAR_RU.description}
-        actions={
-          <>
-            {/*
-              Desktop only. On a phone this button, the card at the bottom of the
-              page and that card's own button put «Подписаться» on screen three
-              times at once; the card is the discoverable one, so the header
-              action stands down where space is tight.
-            */}
-            <div className="hidden sm:block">
-              <SubscribeDialog />
-            </div>
-            {createButton}
-          </>
+        title={
+          <MonthStepper
+            monthKey={monthKey}
+            onPrevious={goToPrevious}
+            onNext={goToNext}
+            // Dead for eleven months out of twelve, so it only exists when it
+            // can actually do something.
+            onToday={
+              onCurrentMonth
+                ? undefined
+                : () => {
+                    goToToday();
+                    setSelectedDay(today);
+                  }
+            }
+          />
         }
+        actions={createButton}
       />
 
-      <div className="flex flex-col gap-4 pb-6">
-        <CalendarToolbar
-          view={view}
-          onViewChange={setView}
-          monthKey={monthKey}
-          onPrevious={goToPrevious}
-          onNext={goToNext}
-          onToday={() => {
-            goToToday();
-            setSelectedDay(today);
-          }}
-        />
+      <div className="flex flex-col gap-4">
+        <ViewSwitch view={view} onViewChange={setView} />
 
         {occurrencesQuery.isPending ? (
-          <div className="space-y-2" aria-busy="true">
-            <Skeleton className="h-8 w-40" />
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-16 w-full" />
+          <div className="flex max-w-row-measure flex-col gap-2" aria-busy="true">
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-14 w-full rounded-xl" />
+            <Skeleton className="h-14 w-full rounded-xl" />
+            <Skeleton className="h-14 w-full rounded-xl" />
           </div>
         ) : occurrencesQuery.isError ? (
           <ErrorState
@@ -154,7 +163,7 @@ export default function CalendarPage() {
             }}
           />
         ) : view === 'month' ? (
-          <>
+          <SectionStack>
             <MonthGrid
               monthKey={monthKey}
               byDay={byDay}
@@ -163,18 +172,22 @@ export default function CalendarPage() {
               timeZone={timeZone}
             />
 
-            <section className="flex flex-col gap-1.5">
-              <DayHeading dateKey={selectedDay} timeZone={timeZone} />
-              {selectedItems.length === 0 ? (
+            {selectedItems.length === 0 ? (
+              <Section label={<DayHeading dateKey={selectedDay} timeZone={timeZone} />}>
                 <EmptyState
                   compact
                   icon={CalendarDays}
-                  title={CALENDAR_RU.emptyMonthTitle}
-                  description={CALENDAR_RU.emptyMonthDescription}
+                  title={CALENDAR_RU.emptyDayTitle}
+                  description={CALENDAR_RU.emptyDayDescription}
                   action={createButton}
                 />
-              ) : (
-                selectedItems.map((occurrence) => (
+              </Section>
+            ) : (
+              <Section
+                label={<DayHeading dateKey={selectedDay} timeZone={timeZone} />}
+                count={eventCount(selectedItems.length)}
+              >
+                {selectedItems.map((occurrence) => (
                   <EventRow
                     key={occurrence.id}
                     occurrence={occurrence}
@@ -183,10 +196,10 @@ export default function CalendarPage() {
                     age={ageForOccurrence(occurrence, birthdayAnchors)}
                     onSelect={openDetail}
                   />
-                ))
-              )}
-            </section>
-          </>
+                ))}
+              </Section>
+            )}
+          </SectionStack>
         ) : (
           <AgendaList
             occurrences={agendaOccurrences}
@@ -200,13 +213,17 @@ export default function CalendarPage() {
       </div>
 
       {/*
-        §C4: «Подписаться на календарь» is side-column content — it is the
-        thing you do once and never again, and it has been sitting under the
-        agenda pushing the next month off the fold. Below 1088px the shell
-        drops it back to the bottom of the page, exactly where it is now.
+        §C4: «Подписаться на календарь» is side-column content — the thing you
+        do once and never again. Hidden below the two-column breakpoint rather
+        than collapsed to the bottom of the page: on a phone it was a loose
+        paragraph under the agenda, and the same setup already lives in
+        Настройки → «Календарь на телефоне», which is where a once-per-device
+        step belongs (§D3).
       */}
       <SideColumn>
-        <SubscribeCard />
+        <div className="hidden min-[1088px]:block">
+          <SubscribeCard />
+        </div>
       </SideColumn>
 
       <EventDetailSheet

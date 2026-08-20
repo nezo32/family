@@ -77,6 +77,37 @@ describe.skipIf(!hasTestDb)('ICS feed (integration)', () => {
     return (response.json<{ id: string }>()).id;
   }
 
+  /** A single, non-recurring event — what "I just added something" looks like. */
+  async function createOneOff(title: string, dtstartLocal: string): Promise<string> {
+    const response = await request(h.app, {
+      method: 'POST',
+      url: '/api/events/series',
+      token: adult.accessToken,
+      payload: {
+        title,
+        durationMinutes: 60,
+        recurrence: {
+          mode: 'once',
+          dtstartLocal,
+          timezone: 'Europe/Moscow',
+          rdatesLocal: [],
+          exdatesLocal: [],
+        },
+        attendeeIds: [],
+      },
+    });
+    expect([200, 201]).toContain(response.statusCode);
+    return response.json<{ id: string }>().id;
+  }
+
+  async function fetchFeed(token: string, headers?: Record<string, string>) {
+    return request(h.app, {
+      method: 'GET',
+      url: `/api/events/feed.ics?token=${encodeURIComponent(token)}`,
+      ...(headers ? { headers } : {}),
+    });
+  }
+
   /* -------------------------- a tiny ICS reader ------------------------- */
 
   /**
@@ -230,6 +261,124 @@ describe.skipIf(!hasTestDb)('ICS feed (integration)', () => {
       });
       expect({ candidate, status: response.statusCode }).toEqual({ candidate, status: 404 });
     }
+  });
+
+  /**
+   * The bug this block exists to prevent recurring.
+   *
+   * "I created an event and it never showed up on my iPhone" has two possible
+   * causes and they need opposite fixes: the event is missing from the document
+   * (a feed bug) or the phone never asked again (a freshness bug). These tests
+   * pin the second one down, because it is the one that looks like nothing is
+   * wrong — a 304 is a *correct-looking* response right up until the content it
+   * claims is unchanged has in fact changed.
+   */
+  describe('freshness — what makes the phone come back', () => {
+    it('changes the ETag and carries the new VEVENT once an event is added', async () => {
+      const { token } = await feedToken(adult);
+
+      const before = await fetchFeed(token);
+      expectStatus(before, 200);
+      const firstEtag = before.headers.etag as string;
+      const firstModified = before.headers['last-modified'] as string;
+      expect(firstEtag).toBeTruthy();
+      expect(firstModified).toBeTruthy();
+      expect(before.body).not.toContain('Внезапный ужин');
+
+      await createOneOff('Внезапный ужин', '2026-09-12T19:00:00');
+
+      const after = await fetchFeed(token);
+      expectStatus(after, 200);
+
+      // The two things the phone needs: a validator that says "different", and
+      // the event itself in the body.
+      expect(after.headers.etag).not.toBe(firstEtag);
+      expect(parseIcs(after.body).entries.get('SUMMARY')?.join('\n') ?? '').toContain(
+        'Внезапный ужин',
+      );
+
+      // `Last-Modified` must move forward too, or a client that validates on
+      // dates rather than entity tags is told the calendar is unchanged.
+      const secondModified = after.headers['last-modified'] as string;
+      expect(Date.parse(secondModified)).toBeGreaterThan(Date.parse(firstModified));
+    });
+
+    it('answers the iPhone’s If-Modified-Since: 304 while unchanged, 200 once it changed', async () => {
+      await createOneOff('Плавание', '2026-09-14T08:00:00');
+      const { token } = await feedToken(adult);
+
+      const first = await fetchFeed(token);
+      expectStatus(first, 200);
+      const lastModified = first.headers['last-modified'] as string;
+      expect(lastModified).toBeTruthy();
+
+      // iOS `dataaccessd` sends this header and never `If-None-Match`. Before
+      // the feed emitted `Last-Modified` there was nothing here to answer.
+      const unchanged = await fetchFeed(token, { 'if-modified-since': lastModified });
+      expect(unchanged.statusCode).toBe(304);
+      expect(unchanged.headers.etag).toBe(first.headers.etag);
+
+      await createOneOff('Родительское собрание', '2026-09-15T18:30:00');
+
+      const changed = await fetchFeed(token, { 'if-modified-since': lastModified });
+      expectStatus(changed, 200);
+      expect(parseIcs(changed.body).entries.get('SUMMARY')?.join('\n') ?? '').toContain(
+        'Родительское собрание',
+      );
+    });
+
+    it('does not serve a stale 304 after an event is deleted', async () => {
+      await createOneOff('Останется', '2026-09-16T10:00:00');
+      const doomed = await createOneOff('Исчезнет', '2026-09-17T10:00:00');
+      const { token } = await feedToken(adult);
+
+      const first = await fetchFeed(token);
+      expectStatus(first, 200);
+      const lastModified = first.headers['last-modified'] as string;
+
+      const removed = await request(h.app, {
+        method: 'DELETE',
+        url: `/api/events/series/${doomed}`,
+        token: adult.accessToken,
+        payload: { scope: 'all' },
+      });
+      expectStatus(removed, 200);
+
+      // A `Last-Modified` derived from "the newest event still in the document"
+      // would move *backwards* here, the phone's If-Modified-Since would look
+      // newer than it, and the deleted event would stay on the phone forever.
+      const after = await fetchFeed(token, { 'if-modified-since': lastModified });
+      expectStatus(after, 200);
+      const summaries = parseIcs(after.body).entries.get('SUMMARY')?.join('\n') ?? '';
+      expect(summaries).toContain('Останется');
+      expect(summaries).not.toContain('Исчезнет');
+    });
+
+    it('advertises a poll interval a subscribing client can act on', async () => {
+      const { token } = await feedToken(adult);
+      const { entries } = parseIcs((await fetchFeed(token)).body);
+
+      // Apple reads REFRESH-INTERVAL, Outlook and friends read X-PUBLISHED-TTL.
+      // Both must be present and both must say the same thing, or the feed
+      // advertises two schedules and gets whichever one the reader parsed.
+      const refresh = entries.get('REFRESH-INTERVAL')?.[0];
+      const ttl = entries.get('X-PUBLISHED-TTL')?.[0];
+      expect(refresh).toBeTruthy();
+      expect(ttl).toBe(refresh);
+
+      // Minutes or whole hours, and no slower than hourly — beyond that the
+      // calendar stops feeling like it belongs to the family.
+      const match = /^PT(?:(\d+)H|(\d+)M)$/.exec(refresh ?? '');
+      expect({ refresh, parsed: match !== null }).toEqual({ refresh, parsed: true });
+      const minutes = match?.[1] !== undefined ? Number(match[1]) * 60 : Number(match?.[2]);
+      expect(minutes).toBeGreaterThan(0);
+      expect(minutes).toBeLessThanOrEqual(60);
+
+      // A subscribing client needs these to treat the document as a feed at
+      // all rather than as a one-off import.
+      expect(entries.get('METHOD')).toEqual(['PUBLISH']);
+      expect(entries.get('CALSCALE')).toEqual(['GREGORIAN']);
+    });
   });
 
   it('gives every member their own feed, and one member cannot read another’s', async () => {

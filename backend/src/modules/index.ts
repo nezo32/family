@@ -28,6 +28,7 @@ const MODULE_LOADERS: ModuleLoader[] = [
   () => import('./chores/chores.routes.js'),
   () => import('./notifications/notifications.routes.js'),
   () => import('./dashboard/dashboard.routes.js'),
+  () => import('./changes/changes.routes.js'),
 ];
 
 export const registerModules: FastifyPluginAsync = async (app) => {

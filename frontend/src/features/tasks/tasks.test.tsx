@@ -31,7 +31,7 @@ vi.mock('@/shared/api/client', () => ({ api: apiMock }));
 
 import { ApiError } from '@/shared/api/errors';
 import { RecurrenceBuilder } from './components/RecurrenceBuilder';
-import { ScheduleField } from './components/ScheduleField';
+import { ScheduleRepeatRow } from './components/ScheduleField';
 import { TaskEditor } from './components/TaskEditor';
 import { AssigneeControl } from './components/AssigneeControl';
 import { useCompleteOccurrence } from './hooks';
@@ -268,16 +268,19 @@ describe('recurrence builder', () => {
 
 function ScheduleHarness(props: { view: RecurrenceView }) {
   const [value, setValue] = useState<ScheduleValue>(ONCE);
-  const [dtstart, setDtstart] = useState(DTSTART);
   return (
-    <ScheduleField
-      dtstartLocal={dtstart}
-      onDtstartChange={setDtstart}
+    <ScheduleRepeatRow
+      dtstartLocal={DTSTART}
       value={value}
       onChange={setValue}
       view={props.view}
     />
   );
+}
+
+/** The builder now lives behind «Повторение ›» (§F5), so tests open it first. */
+function openRecurrenceSheet(): void {
+  fireEvent.click(screen.getByRole('button', { name: /Повторение/ }));
 }
 
 describe('a rule that does not decompile', () => {
@@ -301,13 +304,17 @@ describe('a rule that does not decompile', () => {
   it('reveals the builder only after an explicit «Заменить расписание»', () => {
     render(<ScheduleHarness view={imported} />);
     fireEvent.click(screen.getByRole('button', { name: 'Заменить расписание' }));
+    openRecurrenceSheet();
     expect(screen.getByRole('radio', { name: 'Ежедневно' })).toBeInTheDocument();
   });
 
   it('still builds normally for a rule that does decompile', () => {
     render(<ScheduleHarness view={recurrenceView()} />);
-    expect(screen.getByRole('radio', { name: 'По дням недели' })).toBeInTheDocument();
+    // The row states the rule in words and offers no replacement…
     expect(screen.queryByRole('button', { name: 'Заменить расписание' })).toBeNull();
+    // …and the full grammar is one tap away, not gone.
+    openRecurrenceSheet();
+    expect(screen.getByRole('radio', { name: 'По дням недели' })).toBeInTheDocument();
   });
 });
 

@@ -1,25 +1,50 @@
-import { useState } from 'react';
-import { Archive, PiggyBank, Plus } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { PiggyBank, Plus } from 'lucide-react';
+import type { GoalResponse } from '@family/shared';
+import { SideColumn } from '@/app/layout/SideColumn';
 import { Button } from '@/shared/ui/button';
 import { Skeleton } from '@/shared/ui/skeleton';
-import { Tabs, TabsList, TabsTrigger } from '@/shared/ui/tabs';
+import { Section, SectionStack } from '@/shared/ui/section';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { PageHeader } from '@/shared/components/PageHeader';
 import { formatMoney } from '@/shared/lib/format';
-import { GOALS_RU } from '../locale';
+import { cn } from '@/shared/lib/utils';
+import { GOALS_RU, activeCountLabel, reachedCountLabel } from '../locale';
 import type { GoalScope } from '../api';
 import { useGoalAbilities, useGoals, useRoster } from '../hooks';
 import { GoalCard } from '../components/GoalCard';
 import { GoalFormDialog } from '../components/GoalFormDialog';
 
 /**
- * «Копилки» — the goal grid.
+ * «Копилки» — the goal list (§D4).
+ *
+ * **What the user came for:** "how close are we."
+ *
+ * ## What changed
+ *
+ * Rows instead of cards. The old grid gave three cards 570 of 900px of height
+ * and each of them carried two indicators for one number — a percentage ring at
+ * the top-left and a progress bar glued to the bottom edge — with «Пополнить»
+ * floating at a different height in every card because the titles wrapped
+ * differently. Five goals now read as one object with five bars down a single
+ * left edge.
+ *
+ * The «Накоплено» figure is the screen's **one** display element (§B2: max one
+ * per screen). It is the answer to the question the screen exists for, so it
+ * goes first on a phone and into the side column on a desktop, where §C4 puts
+ * the summary. Those are two renders of one block with one hidden at each
+ * width, rather than a single instance in a slot that is right at one size and
+ * wrong at the other — the block is static, has no state, and the hidden copy
+ * leaves the accessibility tree with `display: none`.
+ *
+ * Reached goals drop to a `--surface-calm` group under «Собрано»: finished work
+ * stays visible without competing with the goals still being saved for.
  *
  * Access is decided entirely by `useCan()` (D4): a child holds no `goal:*`
  * permission and never reaches this route, a teen holds `goal:read` only and so
- * sees every card with no write affordance at all, and an adult gets the create
- * and contribute buttons. Nothing here branches on `role`.
+ * sees every row with no write affordance at all. Nothing here branches on
+ * `role`.
  */
 export default function GoalsPage() {
   const [scope, setScope] = useState<GoalScope>('all');
@@ -30,128 +55,111 @@ export default function GoalsPage() {
   const { byId: roster } = useRoster();
   const { data, isPending, isError, error, refetch } = useGoals({ scope, includeArchived });
 
-  const goals = data?.items ?? [];
+  const goals = useMemo(() => data?.items ?? [], [data]);
   const totalSaved = goals.reduce((sum, goal) => sum + goal.currentAmount, 0);
-  const reachedCount = goals.filter((goal) => goal.status === 'reached').length;
-  const activeCount = goals.filter((goal) => goal.status === 'active').length;
+  const reached = goals.filter(isReached);
+  const open = goals.filter((goal) => !isReached(goal));
+
+  const createButton = abilities.canCreate ? (
+    <Button
+      className="h-11"
+      onClick={() => {
+        setCreateOpen(true);
+      }}
+    >
+      <Plus className="size-4" aria-hidden />
+      {GOALS_RU.createGoal}
+    </Button>
+  ) : null;
+
+  const summary =
+    goals.length > 0 ? (
+      <Section label={GOALS_RU.summarySaved} divided={false} surface="none" bodyClassName="px-4">
+        <p className="font-display text-[28px] leading-[34px] font-bold text-foreground tabular-nums">
+          {formatMoney(totalSaved)}
+        </p>
+        <p className="text-[13px] leading-[18px] font-medium text-muted-foreground">
+          {[
+            activeCountLabel(open.length),
+            reached.length > 0 ? reachedCountLabel(reached.length) : null,
+          ]
+            .filter((part): part is string => part !== null)
+            .join(' · ')}
+        </p>
+      </Section>
+    ) : null;
 
   return (
     <>
-      <PageHeader
-        title={GOALS_RU.title}
-        description={GOALS_RU.subtitle}
-        actions={
-          abilities.canCreate ? (
-            <Button
-              className="h-11 gap-1.5"
-              onClick={() => {
-                setCreateOpen(true);
-              }}
-            >
-              <Plus className="size-4" aria-hidden />
-              {GOALS_RU.createGoal}
-            </Button>
-          ) : null
-        }
-      />
+      <PageHeader title={GOALS_RU.title} actions={createButton} />
 
-      {/* Summary strip: the family's combined progress, before any single goal. */}
-      {goals.length > 0 ? (
-        <dl className="mb-5 grid grid-cols-3 gap-3 rounded-2xl border bg-card p-4">
-          <div className="min-w-0">
-            <dt className="truncate text-xs text-muted-foreground">{GOALS_RU.summarySaved}</dt>
-            <dd className="truncate text-lg font-semibold tabular-nums text-primary">
-              {formatMoney(totalSaved)}
-            </dd>
-          </div>
-          <div className="min-w-0">
-            <dt className="truncate text-xs text-muted-foreground">{GOALS_RU.summaryGoals}</dt>
-            <dd className="text-lg font-semibold tabular-nums">{activeCount}</dd>
-          </div>
-          <div className="min-w-0">
-            <dt className="truncate text-xs text-muted-foreground">{GOALS_RU.summaryReached}</dt>
-            <dd className="text-lg font-semibold tabular-nums text-success">{reachedCount}</dd>
-          </div>
-        </dl>
-      ) : null}
+      <div className="flex flex-col gap-6">
+        {/* Phone: the display figure leads, because it is the answer. */}
+        {summary ? <div className="min-[1088px]:hidden">{summary}</div> : null}
 
-      <div className="mb-5 flex flex-wrap items-center gap-2">
-        <Tabs
-          value={scope}
-          onValueChange={(value) => {
-            setScope(value as GoalScope);
-          }}
-        >
-          <TabsList className="h-11">
-            <TabsTrigger value="all" className="min-h-11 px-3">
-              {GOALS_RU.scopeAll}
-            </TabsTrigger>
-            <TabsTrigger value="family" className="min-h-11 px-3">
-              {GOALS_RU.scopeFamily}
-            </TabsTrigger>
-            <TabsTrigger value="mine" className="min-h-11 px-3">
-              {GOALS_RU.scopeMine}
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <ScopeBar value={scope} onChange={setScope} />
 
-        <Button
+        {isPending ? (
+          <GoalListSkeleton />
+        ) : isError ? (
+          <ErrorState
+            error={error}
+            onRetry={() => {
+              void refetch();
+            }}
+          />
+        ) : goals.length === 0 ? (
+          <EmptyState
+            icon={PiggyBank}
+            title={scope === 'all' ? GOALS_RU.emptyTitle : GOALS_RU.emptyFiltered}
+            description={
+              scope !== 'all'
+                ? GOALS_RU.emptyFilteredDescription
+                : abilities.canCreate
+                  ? GOALS_RU.emptyDescription
+                  : GOALS_RU.emptyReadOnlyDescription
+            }
+            action={createButton}
+          />
+        ) : (
+          <SectionStack>
+            {open.length > 0 ? (
+              <Section label={GOALS_RU.groupOpen} count={open.length}>
+                {open.map((goal) => (
+                  <GoalCard key={goal.id} goal={goal} roster={roster} />
+                ))}
+              </Section>
+            ) : null}
+
+            {reached.length > 0 ? (
+              <Section label={GOALS_RU.groupReached} count={reached.length} surface="calm">
+                {reached.map((goal) => (
+                  <GoalCard key={goal.id} goal={goal} roster={roster} />
+                ))}
+              </Section>
+            ) : null}
+          </SectionStack>
+        )}
+
+        {/* Band 4: quiet, meta, no box. The archive is history, and history
+            belongs at the bottom of the page, not above the first row. */}
+        <button
           type="button"
-          variant="ghost"
-          className="h-11 gap-1.5 text-muted-foreground"
           aria-pressed={includeArchived}
+          className="max-w-row-measure self-start rounded-sm px-4 text-[13px] leading-[18px] font-medium text-muted-foreground underline-offset-4 hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
           onClick={() => {
             setIncludeArchived((value) => !value);
           }}
         >
-          <Archive className="size-4" aria-hidden />
           {includeArchived ? GOALS_RU.hideArchived : GOALS_RU.showArchived}
-        </Button>
+        </button>
       </div>
 
-      {isPending ? (
-        <GoalGridSkeleton />
-      ) : isError ? (
-        <ErrorState
-          error={error}
-          onRetry={() => {
-            void refetch();
-          }}
-        />
-      ) : goals.length === 0 ? (
-        <EmptyState
-          icon={PiggyBank}
-          title={scope === 'all' ? GOALS_RU.emptyTitle : GOALS_RU.emptyFiltered}
-          description={
-            scope !== 'all'
-              ? GOALS_RU.emptyFilteredDescription
-              : abilities.canCreate
-                ? GOALS_RU.emptyDescription
-                : GOALS_RU.emptyReadOnlyDescription
-          }
-          action={
-            abilities.canCreate ? (
-              <Button
-                className="h-11 gap-1.5"
-                onClick={() => {
-                  setCreateOpen(true);
-                }}
-              >
-                <Plus className="size-4" aria-hidden />
-                {GOALS_RU.createGoal}
-              </Button>
-            ) : null
-          }
-        />
-      ) : (
-        <ul className="grid grid-cols-1 gap-4 pb-4 sm:grid-cols-2">
-          {goals.map((goal) => (
-            <li key={goal.id} className="min-w-0">
-              <GoalCard goal={goal} roster={roster} canContribute={abilities.canContribute} />
-            </li>
-          ))}
-        </ul>
-      )}
+      {/* §C4: Сводка. Desktop only — on a phone it is already at the top,
+          which is where a display figure that answers the screen belongs. */}
+      <SideColumn>
+        {summary ? <div className="hidden min-[1088px]:block">{summary}</div> : null}
+      </SideColumn>
 
       {abilities.canCreate ? (
         <GoalFormDialog open={createOpen} onOpenChange={setCreateOpen} />
@@ -160,22 +168,75 @@ export default function GoalsPage() {
   );
 }
 
-function GoalGridSkeleton() {
+function isReached(goal: GoalResponse): boolean {
+  return goal.status === 'reached' || goal.currentAmount >= goal.targetAmount;
+}
+
+/**
+ * Все / Семейные / Мои — three short, mutually-exclusive options used daily,
+ * which is exactly the case §F5 keeps as a single-row segmented control. It
+ * never wraps.
+ */
+function ScopeBar(props: { value: GoalScope; onChange: (value: GoalScope) => void }) {
+  const options: { value: GoalScope; label: string }[] = [
+    { value: 'all', label: GOALS_RU.scopeAll },
+    { value: 'family', label: GOALS_RU.scopeFamily },
+    { value: 'mine', label: GOALS_RU.scopeMine },
+  ];
+
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-      {[0, 1, 2, 3].map((card) => (
-        <div key={card} className="space-y-4 rounded-2xl border p-5">
-          <div className="flex items-start gap-4">
-            <Skeleton className="size-22 rounded-full" />
-            <div className="flex-1 space-y-2">
-              <Skeleton className="h-4 w-3/4" />
-              <Skeleton className="h-6 w-1/2" />
-              <Skeleton className="h-3 w-2/3" />
+    <div
+      role="radiogroup"
+      aria-label={GOALS_RU.title}
+      className="flex h-11 w-fit items-center gap-1 rounded-lg bg-muted p-1"
+    >
+      {options.map((option) => {
+        const selected = option.value === props.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            onClick={() => {
+              props.onChange(option.value);
+            }}
+            className={cn(
+              'flex h-9 items-center justify-center rounded-md px-3 text-[15px] leading-[22px] transition-colors',
+              'focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none',
+              selected
+                ? 'bg-card font-medium text-foreground'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Rows at 76px — the geometry `GoalCard` actually produces, title + bar + meta. */
+function GoalListSkeleton() {
+  return (
+    <div className="flex flex-col" aria-hidden>
+      <div className="flex items-center justify-between px-4 pb-2">
+        <Skeleton className="h-4 w-24" />
+      </div>
+      <div className="max-w-row-measure overflow-hidden rounded-xl border border-border bg-card">
+        {[0, 1, 2].map((row) => (
+          <div key={row} className="flex flex-col gap-2 px-4 py-3">
+            <div className="flex items-center gap-3">
+              <Skeleton className="size-8 shrink-0 rounded-lg" />
+              <Skeleton className="h-4 flex-1" />
+              <Skeleton className="h-4 w-10 shrink-0" />
             </div>
+            <Skeleton className="h-1.5 w-full rounded-full" />
+            <Skeleton className="h-3 w-2/5" />
           </div>
-          <Skeleton className="h-8 w-full" />
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }

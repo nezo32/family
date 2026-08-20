@@ -23,6 +23,9 @@ export const CALENDAR_RU = {
   /* ---- lists ---------------------------------------------------------- */
   emptyMonthTitle: 'В этом месяце пусто',
   emptyMonthDescription: 'Добавьте событие — его увидят все в семье.',
+  /** The *selected day* in the month view — not the month, which may be full. */
+  emptyDayTitle: 'В этот день ничего не запланировано',
+  emptyDayDescription: 'Выберите другой день или добавьте событие.',
   emptyAgendaTitle: 'Ближайших событий нет',
   emptyAgendaDescription:
     'Здесь появятся встречи, праздники и дни рождения. Соседние месяцы — стрелками выше.',
@@ -89,8 +92,31 @@ export const CALENDAR_RU = {
   fieldAttendees: 'Участники',
   fieldReminders: 'Напоминания',
   remindersHint: 'Не больше пяти напоминаний.',
-  saveCreate: 'Создать событие',
-  saveEdit: 'Сохранить изменения',
+  saveCreate: 'Создать',
+  saveEdit: 'Сохранить',
+
+  /* ---- the §D-forms sheet --------------------------------------------- */
+  /** Section label above everything that is optional by construction (§F7). */
+  formDetails: 'Подробнее',
+  /** The disclosure that reveals the rarely-touched rows. */
+  formMore: 'Ещё',
+  formAttendeesNobody: 'Вся семья',
+  formRemindersNone: 'Без напоминаний',
+  formRemindersCount: (n: number) => `${String(n)} шт.`,
+  formColorAutoShort: 'Авто',
+  formLoading: 'Загружаем событие…',
+  /**
+   * The chip that stays under the sheet header once the scope is chosen (§F6).
+   */
+  scopeChip: {
+    prefix: 'Меняем',
+    // Lower-cased because the label lands mid-sentence: «Меняем: только
+    // сегодня», not «Меняем: только Сегодня».
+    this: (date: string) => `только ${date.toLocaleLowerCase('ru')}`,
+    thisAndFuture: (date: string) => `${date.toLocaleLowerCase('ru')} и все следующие`,
+    all: 'всю серию',
+    change: 'сменить',
+  },
   createdToast: 'Событие создано',
   updatedToast: 'Событие обновлено',
   deletedToast: 'Событие удалено',
@@ -155,7 +181,8 @@ export const CALENDAR_RU = {
 
     endsLegend: 'Заканчивается',
     endsNever: 'Никогда',
-    endsAfter: 'После N повторений',
+    /** Short: it sits in a three-way segmented row that must never wrap. */
+    endsAfter: 'После',
     endsUntil: 'До даты',
     endsAfterUnit: 'раз',
     endsUntilLabel: 'Последняя дата',
@@ -207,16 +234,32 @@ export const CALENDAR_RU = {
     privacy: 'Ссылка личная: у каждого участника своя. Не пересылайте её посторонним.',
     loadFailed: 'Не удалось получить ссылку на календарь',
     iphoneTitle: 'Как добавить на iPhone',
+    /**
+     * The last step is not decoration. iOS copies the feed's refresh interval
+     * into the subscription record **at subscribe time**, so shortening it
+     * server-side does nothing for anyone who is already subscribed — including
+     * whoever set the family up. Without this step they keep the old interval
+     * for good.
+     */
     iphoneSteps: [
       'Скопируйте ссылку кнопкой выше.',
       'Откройте «Настройки» → «Приложения» → «Календарь» → «Учётные записи».',
       'Нажмите «Добавить учётную запись» → «Другое» → «Подписной календарь».',
       'Вставьте ссылку, нажмите «Далее», затем «Сохранить».',
+      'Откройте этот календарь ещё раз и выберите «Обновление» → «Каждые 15 мин.».',
     ],
     otherTitle: 'Android и компьютер',
     otherSteps:
       'В Google Календаре: «Другие календари» → «Добавить по URL». В Outlook: «Добавить календарь» → «Подписаться из Интернета».',
+    /**
+     * States a capability rather than apologising for one. The feed now
+     * advertises 15 minutes and answers `If-Modified-Since`, which is the only
+     * conditional header iOS `dataaccessd` ever sends.
+     */
     refreshNote:
-      'Календарь обновляется не мгновенно — телефон проверяет подписку раз в несколько часов.',
+      'Телефон проверяет подписку примерно раз в 15 минут. Если событие нужно увидеть сразу — потяните календарь вниз, чтобы обновить.',
   },
 } as const;
+
+/** «3 события» — the count beside a day's label in the agenda (§C3). */
+export const eventCount = (n: number): string => pluralize(n, PLURALS.event);

@@ -257,7 +257,7 @@ describe('TodayPage', () => {
     stubApi({ permissions: CHILD_PERMISSIONS });
     renderToday();
 
-    // The tasks widget proves the screen rendered at all.
+    // The «Мои дела» section proves the screen rendered at all.
     await screen.findByText(TODAY_RU.tasksTitle);
 
     // No `goal:read` — no goal card and no rouble figure anywhere.
@@ -273,8 +273,9 @@ describe('TodayPage', () => {
     renderToday();
 
     expect(await screen.findByText(TODAY_RU.goalTitle)).toBeInTheDocument();
+    // The pending signup is the *attention* block here (nothing is overdue in
+    // the fixture), so its heading is what proves the section reached the DOM.
     expect(screen.getByText(TODAY_RU.approvalsTitle)).toBeInTheDocument();
-    expect(screen.getByText(TODAY_RU.loadTitle)).toBeInTheDocument();
   });
 
   it('rolls the optimistic completion back and explains the failure in Russian', async () => {

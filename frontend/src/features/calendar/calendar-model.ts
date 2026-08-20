@@ -7,6 +7,7 @@ import type {
   Weekday,
 } from '@family/shared';
 import { formatTime, toLocalDateKey } from '@/shared/lib/format';
+import { memberSlot } from '@/shared/ui/member-disc';
 
 /**
  * Pure calendar logic. No React, no network — everything here is unit testable
@@ -291,17 +292,30 @@ export function occurrenceColor(
 ): string {
   if (occurrence.color) return occurrence.color;
   if (occurrence.sourceKind === 'user_birthday') return BIRTHDAY_COLOR;
-  return hueColor(occurrence.category ?? occurrence.seriesId);
+  return rampColor(occurrence.category ?? occurrence.seriesId);
 }
 
-const BIRTHDAY_COLOR = '#d9a441';
+/**
+ * Honey, from the five-colour ramp — not the `#d9a441` literal it used to be.
+ * §B1 keeps the palette whole: a colour picked outside the theme cannot follow
+ * the light/dark ramps, and this one sat a visible step off the warm ground in
+ * dark mode.
+ */
+const BIRTHDAY_COLOR = 'var(--chart-3)';
 
-function hueColor(seed: string): string {
-  let hash = 0;
-  for (let index = 0; index < seed.length; index += 1) {
-    hash = (hash * 31 + seed.charCodeAt(index)) % 360;
-  }
-  return `oklch(0.62 0.13 ${String(hash)})`;
+/**
+ * A series with no colour of its own gets one of the theme's five, keyed on its
+ * category (so «школа» is one colour everywhere) or, failing that, on its id.
+ *
+ * What this replaces was a hash over **all 360 hues** rendered as
+ * `oklch(0.62 0.13 <hash>)` — which is how a cold periwinkle event bar ended up
+ * next to a clay «Пополнить» button on a sand card, and how the same event
+ * changed nothing at all between light and dark mode. Five perceptually-spaced
+ * colours that were chosen against this ground is the whole point of §B4's
+ * ramp; the calendar is simply another consumer of it.
+ */
+function rampColor(seed: string): string {
+  return `var(--chart-${String(memberSlot(seed))})`;
 }
 
 /* -------------------------------------------------------------------------- */

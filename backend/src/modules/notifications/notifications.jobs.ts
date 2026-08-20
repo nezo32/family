@@ -23,7 +23,6 @@ import {
  * | `notification.deliver`  | only `pending`/`scheduled` rows do anything; status moves forward first |
  * | `notification.escalate` | the ladder advances via `UPDATE ... WHERE escalation_state = <expected>` |
  * | `maintenance.push-health-check` | conditional counters and re-enqueues with stable job ids |
- * | `scheduler.weekly-digest` | `claimDigestSend` stamps `last_sent_at` conditionally |
  *
  * Retries use the queue's own exponential backoff (`attempts: 5`,
  * `backoff: exponential`, configured in `core/queue/queues.ts`). A handler
@@ -86,13 +85,33 @@ export function registerNotificationJobs(): void {
     logger.info(result, 'push health check complete');
   });
 
-  /**
-   * `scheduler.weekly-digest` is deliberately NOT registered here. The dashboard
-   * module owns it (`dashboard.jobs.ts`): its send-once claim is keyed on the
-   * ISO week rather than a date plus a 23-hour window, so editing your preferred
-   * weekday cannot produce two digests in one week, and a worker that misses a
-   * tick does not silently skip the week. `registerJobHandler` throws on
-   * duplicates, so registering it in both places would kill the worker at boot.
+  /*
+   * ## `scheduler.weekly-digest` is NOT ours — and must never be added back
+   *
+   * `dashboard/dashboard.jobs.ts` owns it, deliberately and exclusively. The
+   * two modules each had a full implementation of the weekly digest and both
+   * registered this name, which made the winner a function of module import
+   * order in `modules/jobs.ts` — the loser logs and does nothing, so the
+   * observable symptom is "the digest stopped going out" with a green worker.
+   *
+   * The dashboard version wins on the merits, not on seniority:
+   *
+   * | | dashboard | this module (deleted) |
+   * |---|---|---|
+   * | send-once claim | the ISO week | a date + trailing 23 h |
+   * | due check | "the slot has passed, this week" | a one-hour window |
+   * | body | composed Russian prose, with agreement | headlines joined by `·` |
+   *
+   * A date-keyed claim sends twice in one week when somebody edits their
+   * preferred weekday; a one-hour window skips the week outright whenever a
+   * worker misses its tick. Both are exactly what D10/D11 spend their length
+   * preventing.
+   *
+   * So the sweep that used to live in `notifications.service.ts` is **deleted**,
+   * not commented out and not left exported — see the note above
+   * `getDigestSubscription`. `notifications.jobs.test.ts` asserts that no job
+   * name is claimed by two modules, so re-introducing the registration here
+   * fails a test rather than a family's Sunday evening.
    */
 }
 

@@ -9,9 +9,17 @@ import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { InlineSpinner } from '@/shared/components/LoadingScreen';
 import { notify } from '@/shared/lib/toast';
+import { ROUTES } from '@/shared/lib/routes';
 import { COMMON } from '@/shared/lib/i18n';
 import { cn } from '@/shared/lib/utils';
-import { inboxItems, useAcknowledge, useInbox, useMarkRead, useUnreadCount } from '../hooks';
+import {
+  inboxItems,
+  useAcknowledge,
+  useInbox,
+  useMarkRead,
+  useMarkUnread,
+  useUnreadCount,
+} from '../hooks';
 import { NOTIFICATIONS_RU } from '../locale';
 import { NotificationItem } from './NotificationItem';
 import { PushHealthBanner } from './PushHealthBanner';
@@ -27,7 +35,9 @@ import { PushHealthBanner } from './PushHealthBanner';
  * Three behaviours here are the point of the whole feature:
  *
  *  1. **The badge is real.** `unread-count` drives it, and «Прочитать все»
- *     clears it optimistically so the number never lags the finger.
+ *     clears it optimistically so the number never lags the finger. The swipe's
+ *     «Отменить» runs the same write backwards (§G4), so an accidental swipe
+ *     costs nothing and the badge climbs straight back.
  *  2. **«Подтвердить» exists.** Per D11 it is the only signal that stops a
  *     `critical` intent escalating to another family member — opening the row
  *     is `interacted` and does not count. A failed tap is queued in IndexedDB
@@ -51,6 +61,7 @@ export function NotificationsPanel(props: {
   // one that stays warm in the background.
   const inbox = useInbox(unreadOnly, props.open);
   const markRead = useMarkRead();
+  const markUnread = useMarkUnread();
   const acknowledge = useAcknowledge();
 
   const [acknowledgingId, setAcknowledgingId] = useState<string | null>(null);
@@ -80,6 +91,46 @@ export function NotificationsPanel(props: {
       }
     },
     [close, markRead, navigate],
+  );
+
+  /**
+   * The swipe's action (§G4): mark read *without* opening. Same mutation the
+   * tap uses, so there is one path to "прочитано" and the badge cannot
+   * disagree with the list.
+   */
+  const onMarkRead = useCallback(
+    (notification: InAppNotification) => {
+      if (notification.readAt !== null) return;
+      markRead.mutate(
+        { ids: [notification.id] },
+        {
+          onError: (error) => {
+            notify.error(error, NOTIFICATIONS_RU.markReadFailed);
+          },
+        },
+      );
+    },
+    [markRead],
+  );
+
+  /**
+   * The swipe's undo (§G4): put the row back to unread, straight from the
+   * six-second toast that `SwipeRow` raises.
+   *
+   * It reverses «Прочитано» and only that. A row that had been acknowledged
+   * keeps its acknowledgement and its stopped escalation ladder — the server
+   * moves `readAt` and leaves every D11 receipt where it was, which is the one
+   * property that made this safe to expose at all.
+   */
+  const onUnread = useCallback(
+    (notification: InAppNotification) => {
+      markUnread.mutate([notification.id], {
+        onError: (error) => {
+          notify.error(error, NOTIFICATIONS_RU.markUnreadFailed);
+        },
+      });
+    },
+    [markUnread],
   );
 
   const onAcknowledge = useCallback(
@@ -179,6 +230,36 @@ export function NotificationsPanel(props: {
               description={
                 unreadOnly ? NOTIFICATIONS_RU.emptyUnreadText : NOTIFICATIONS_RU.emptyText
               }
+              /*
+                Two different kinds of empty, so two different ways out. "Всё
+                прочитано" is the filter's doing and the filter is what to
+                undo; a genuinely empty inbox is usually a *настройки* problem
+                — nothing was ever subscribed to.
+              */
+              action={
+                unreadOnly ? (
+                  <Button
+                    variant="outline"
+                    className="h-11"
+                    onClick={() => {
+                      setUnreadOnly(false);
+                    }}
+                  >
+                    {NOTIFICATIONS_RU.showAll}
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    className="h-11"
+                    onClick={() => {
+                      close();
+                      void navigate(ROUTES.settingsNotifications);
+                    }}
+                  >
+                    {NOTIFICATIONS_RU.emptySettingsAction}
+                  </Button>
+                )
+              }
             />
           ) : (
             <>
@@ -188,6 +269,8 @@ export function NotificationsPanel(props: {
                     key={notification.id}
                     notification={notification}
                     onOpen={onOpen}
+                    onMarkRead={onMarkRead}
+                    onUnread={onUnread}
                     onAcknowledge={onAcknowledge}
                     acknowledging={acknowledgingId === notification.id}
                   />

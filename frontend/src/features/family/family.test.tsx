@@ -87,6 +87,22 @@ function installFetch(scenario: Scenario) {
         return Promise.resolve(json(200, { items: [], nextCursor: null }));
       }
 
+      // The side column's family-level load (§D9). Deliberately non-trivial:
+      // the assertion below is that this data reaches the screen **without**
+      // any rankable number surviving the render.
+      if (url.includes('/api/chores/fairness')) {
+        return Promise.resolve(
+          json(200, {
+            windowDays: 7,
+            imbalance: 0.1,
+            members: [
+              { userId: CHILD_ID, doneCount: 7, actualShare: 0.7, fairShare: 0.5, coveredForOthers: 0 },
+              { userId: TEEN_ID, doneCount: 3, actualShare: 0.3, fairShare: 0.5, coveredForOthers: 0 },
+            ],
+          }),
+        );
+      }
+
       if (url.includes('/suspend')) {
         return Promise.resolve(json(200, member({ status: 'suspended' })));
       }
@@ -131,24 +147,52 @@ describe('family roster', () => {
     });
     const { container } = renderPage();
 
-    expect(await screen.findByText('Петя')).toBeInTheDocument();
-    expect(await screen.findByText('Лиза')).toBeInTheDocument();
+    // `findAllBy`: each member legitimately appears twice — once as a roster
+    // row, once as a bar in the side column's family-level load (§D9).
+    expect((await screen.findAllByText('Петя')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('Лиза')).length).toBeGreaterThan(0);
 
     // Roster order is sortOrder — never load, never anything a child could read
     // as a placing.
-    const names = [...container.querySelectorAll('li')].map(
+    const names = [...container.querySelectorAll('[data-slot="section-body"] > button')].map(
       (item) => item.textContent?.slice(0, 40) ?? '',
     );
     expect(names[0]).toContain('Петя');
     expect(names[1]).toContain('Лиза');
 
-    // The roster does not ask for the family's load at all any more. One bar
-    // per person, stacked down a list of siblings, is the comparison the score
-    // removal was about — the week's split lives on the chores screen instead.
-    expect(calls.some((call) => call.url.includes('/chores/fairness'))).toBe(false);
-
     // No placing, no ranking vocabulary, no score anywhere on the screen.
     expect(screen.queryByText(/место|рейтинг|лучш|больше всех|балл/i)).not.toBeInTheDocument();
+  });
+
+  it('shows the week’s split without putting a number against a name (D5, §D9)', async () => {
+    installFetch({
+      me: meBody(ADMIN_PERMISSIONS),
+      members: [
+        member({ id: CHILD_ID, displayName: 'Петя', sortOrder: 0 }),
+        member({ id: TEEN_ID, displayName: 'Лиза', role: 'teen', sortOrder: 1 }),
+      ],
+    });
+    const { container } = renderPage();
+
+    await screen.findAllByText('Петя');
+
+    // The load *is* on this screen now — §D9 puts it in the side column, as one
+    // family-level picture rather than a bar glued to every member's row.
+    await waitFor(() => {
+      expect(calls.some((call) => call.url.includes('/chores/fairness'))).toBe(true);
+    });
+
+    // …and it is neutral by construction. `doneCount` 7 vs 3 and shares of 70 %
+    // vs 30 % reached the client; **none** of those numbers may reach the DOM,
+    // including through an `aria-label`, which is how a screen-reader user used
+    // to be handed the exact scoreboard the sighted design refuses to draw.
+    await waitFor(() => {
+      expect(container.querySelectorAll('[role="img"]').length).toBeGreaterThan(0);
+    });
+    for (const bar of container.querySelectorAll('[role="img"]')) {
+      expect(bar.getAttribute('aria-label') ?? '').not.toMatch(/\d/);
+    }
+    expect(screen.queryByText(/\d+\s*%/)).not.toBeInTheDocument();
   });
 
   it('offers only the roles the current user may assign', async () => {

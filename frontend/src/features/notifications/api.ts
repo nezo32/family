@@ -19,7 +19,8 @@ import { api } from '@/shared/api/client';
  *    `undefined` three components deep. The `/api/me` incident is the reason
  *    this file parses.
  * 2. **Acknowledgement is not "mark read".** `POST /notifications/read` clears
- *    the badge; `POST /notifications/deliveries/:id/acknowledge` is the D11
+ *    the badge and `POST /notifications/unread` puts it back (§G4's undo);
+ *    `POST /notifications/deliveries/:id/acknowledge` is the D11
  *    receipt, and for a `critical` intent it is the *only* signal that stops the
  *    escalation ladder handing the notification to another family member.
  *    Reading the row does not stop it. Tapping it does not stop it.
@@ -135,6 +136,22 @@ export function fetchNotificationChannels(signal?: AbortSignal): Promise<Prefere
  */
 export function markRead(input: { ids?: string[]; all?: boolean; before?: string }): Promise<void> {
   return api.post<void>('/notifications/read', input);
+}
+
+/**
+ * `POST /api/notifications/unread` — the undo behind §G4's «Отменить».
+ *
+ * Ids only, and deliberately so: there is no `all` counterpart, because
+ * "unread my entire inbox" is a bulk write nobody asked for. See
+ * `markUnreadRequestSchema` in `@family/shared`.
+ *
+ * Server-side this touches `readAt` and nothing else — the D11 receipt columns
+ * (`deliveredAt`, `interactedAt`, `acknowledgedAt`) are the record of whether a
+ * notification actually reached a human, and an undo on the bell says nothing
+ * about that.
+ */
+export function markUnread(ids: string[]): Promise<void> {
+  return api.post<void>('/notifications/unread', { ids });
 }
 
 /**

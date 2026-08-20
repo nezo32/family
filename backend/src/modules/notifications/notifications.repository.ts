@@ -910,6 +910,10 @@ export async function countUnread(x: Executor, userId: string): Promise<number> 
  * Marks in-app rows read. Scoped to `userId` on purpose — `readAt` is per-user
  * state and a delivery id from another family member must be a silent no-op,
  * not a 403 that leaks the row's existence (D4).
+ *
+ * `markUnread` below is its inverse, and the two are written to be read
+ * together: anything this adds to the `set` needs a decision there about how,
+ * or whether, it comes back off.
  */
 export async function markRead(
   x: Executor,
@@ -934,6 +938,62 @@ export async function markRead(
       status: sql`(case when ${statusRanksBelow('read')} then 'read' else ${notificationDeliveries.status}::text end)::delivery_status`,
     })
     .where(and(...predicates))
+    .returning({ id: notificationDeliveries.id });
+  return rows.length;
+}
+
+/**
+ * The exact inverse of `markRead`, and nothing more (§G4's six-second undo).
+ *
+ * Scoped to `userId` for the same reason `markRead` is, and it matters more
+ * here: this is a write that makes a row *reappear* on somebody's bell. An id
+ * belonging to another family member matches nothing and the call reports 0 —
+ * a silent no-op rather than a 403 that would confirm the row exists (D4). The
+ * IDOR found on the receipt endpoints earlier is the precedent; the fix there
+ * and the shape here are the same one.
+ *
+ * ## The D11 receipt columns are not touched
+ *
+ * `readAt` is the in-app inbox's own state. `deliveredAt`, `interactedAt` and
+ * `acknowledgedAt` are the delivery-confirmation record that answers "did this
+ * actually reach them", and no amount of un-reading changes the answer — so
+ * they are absent from the `set` on purpose.
+ *
+ * `status` is the one field that has to move, because `markRead` moved it. It
+ * is restored from the receipts rather than guessed: `delivered` when the row
+ * has a `deliveredAt` to prove it, otherwise `sent` (which every in-app row is
+ * written as at fan-out), otherwise `pending`. And it moves **only** from
+ * exactly `read` — a row that has since been opened or acknowledged is past
+ * `read` on the D11 ladder, and dragging it back down is precisely the
+ * regression `DELIVERY_STATUS_RANK` exists to forbid. Such a row loses its
+ * `readAt` and keeps its status.
+ */
+export async function markUnread(x: Executor, userId: string, ids: string[]): Promise<number> {
+  if (ids.length === 0) return 0;
+
+  const rows = await x
+    .update(notificationDeliveries)
+    .set({
+      readAt: null,
+      status: sql`(case
+        when ${notificationDeliveries.status} = 'read' then (
+          case
+            when ${notificationDeliveries.deliveredAt} is not null then 'delivered'
+            when ${notificationDeliveries.sentAt} is not null then 'sent'
+            else 'pending'
+          end
+        )
+        else ${notificationDeliveries.status}::text
+      end)::delivery_status`,
+    })
+    .where(
+      and(
+        eq(notificationDeliveries.userId, userId),
+        eq(notificationDeliveries.channel, 'in_app'),
+        isNotNull(notificationDeliveries.readAt),
+        inArray(notificationDeliveries.id, ids),
+      ),
+    )
     .returning({ id: notificationDeliveries.id });
   return rows.length;
 }
@@ -1032,48 +1092,20 @@ export async function upsertDigestSubscription(
   return row;
 }
 
-export async function listEnabledDigestSubscriptions(
-  x: Executor,
-): Promise<Array<DigestSubscriptionRow & { timezone: string | null }>> {
-  return x
-    .select({
-      userId: digestSubscriptions.userId,
-      weekday: digestSubscriptions.weekday,
-      timeOfDay: digestSubscriptions.timeOfDay,
-      sections: digestSubscriptions.sections,
-      enabled: digestSubscriptions.enabled,
-      lastSentAt: digestSubscriptions.lastSentAt,
-      createdAt: digestSubscriptions.createdAt,
-      updatedAt: digestSubscriptions.updatedAt,
-      timezone: users.timezone,
-    })
-    .from(digestSubscriptions)
-    .innerJoin(users, eq(digestSubscriptions.userId, users.id))
-    .where(and(eq(digestSubscriptions.enabled, true), eq(users.status, 'active')));
-}
-
-/**
- * Conditional stamp: only sets `lastSentAt` when it is still older than
- * `notAfter`. Two digest jobs in the same hour produce one send.
+/*
+ * `listEnabledDigestSubscriptions` and `claimDigestSend` used to live here.
+ *
+ * They were the data access behind this module's own weekly-digest sweep, which
+ * competed with `dashboard/dashboard.jobs.ts` for the `scheduler.weekly-digest`
+ * job name and lost. The sweep is gone (see the note above
+ * `getDigestSubscription` in the service), and these went with it rather than
+ * staying as two exported, tested-looking functions that make the next person
+ * to touch the digest believe this is where it lives. The dashboard reads the
+ * same table through its own port in `dashboard/digest.service.ts`.
+ *
+ * `getDigestSubscription` / `upsertDigestSubscription` above stay: the digest
+ * *preference* is a notification setting and is served by this module's routes.
  */
-export async function claimDigestSend(
-  x: Executor,
-  userId: string,
-  notAfter: Date,
-  at: Date,
-): Promise<boolean> {
-  const rows = await x
-    .update(digestSubscriptions)
-    .set({ lastSentAt: at })
-    .where(
-      and(
-        eq(digestSubscriptions.userId, userId),
-        or(isNull(digestSubscriptions.lastSentAt), lt(digestSubscriptions.lastSentAt, notAfter)),
-      ),
-    )
-    .returning({ userId: digestSubscriptions.userId });
-  return rows.length > 0;
-}
 
 /* -------------------------------------------------------------------------- */
 /* Cleanup                                                                     */

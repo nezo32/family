@@ -8,6 +8,9 @@ import { isApiError } from '@/shared/api/errors';
 import { onAccessTokenChange } from '@/shared/api/token-store';
 import { meKeys } from '@/shared/auth/use-me';
 import { recordEngagement } from '@/features/auth/components/install';
+import { registerSyncActivitySource } from '@/shared/sync';
+import { useChangeFeed } from '@/shared/sync/use-change-feed';
+import { getOutboxState, subscribeOutbox } from '@/features/shopping/outbox';
 import { AppErrorBoundary } from './ErrorBoundary';
 import { ThemeProvider } from './theme-provider';
 import { createAppRouter } from './router';
@@ -84,17 +87,52 @@ function useResetCacheOnSignOut(client: QueryClient): void {
   );
 }
 
+/**
+ * The shopping outbox, told to the change feed (D12).
+ *
+ * Every other write in the app is a `useMutation`, so `isMutating()` sees it and
+ * the feed holds its invalidations back until it settles. The outbox is not: it
+ * is a durable IndexedDB queue, and a tick sitting in it is invisible to the
+ * mutation cache. Registering it here — rather than importing a feature from
+ * `shared/sync` — keeps the sync module a leaf.
+ *
+ * "Busy" is `flushing || pending > 0` and not merely `flushing`, because the
+ * dangerous window opens the moment the optimistic row is written to the cache,
+ * which is before the flush starts.
+ */
+const shoppingOutboxActivity = {
+  subscribe: subscribeOutbox,
+  isBusy: () => {
+    const state = getOutboxState();
+    return state.flushing || state.pending > 0;
+  },
+};
+
+/**
+ * The cross-client change feed, mounted once.
+ *
+ * It lives in a component of its own so the poll's re-renders (visibility,
+ * live-screen, every 15 s tick) stay inside a node that renders nothing, rather
+ * than re-rendering the router on every tick.
+ */
+function ChangeFeed(): null {
+  useChangeFeed();
+  return null;
+}
+
 export function Providers(props: { children?: ReactNode }) {
   const queryClient = useMemo(() => createClient(), []);
   const router = useMemo(() => createAppRouter(), []);
 
   useResetCacheOnSignOut(queryClient);
+  useEffect(() => registerSyncActivitySource(shoppingOutboxActivity), []);
 
   return (
     <AppErrorBoundary>
       <ThemeProvider>
         <QueryClientProvider client={queryClient}>
           <TooltipProvider delayDuration={300}>
+            <ChangeFeed />
             <RouterProvider router={router} />
             <Toaster richColors closeButton />
             {props.children}

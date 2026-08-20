@@ -71,6 +71,8 @@ vi.mock('./notifications.repository.js', async (importOriginal) => {
 });
 
 import {
+  APP_ROUTES,
+  APP_ROUTES_WITH_DETAIL,
   DELIVERY_STATUS_RANK,
   ESCALATION_DEADLINE_MINUTES,
   NOTIFICATION_LIMITS,
@@ -1037,6 +1039,85 @@ function quietRow(overrides: { startsAt: string; endsAt: string }) {
   };
 }
 
+/*
+ * The deep-link fixture: **one distinct id per payload key**, so a rendered
+ * link's id segment can be traced back to the key it came from. That
+ * traceability is the whole point -- see `wrongKindOfId` below.
+ */
+const LINK_IDS = {
+  userId: '00000000-0000-4000-8000-000000000001',
+  taskId: '00000000-0000-4000-8000-000000000002',
+  eventId: '00000000-0000-4000-8000-000000000003',
+  goalId: '00000000-0000-4000-8000-000000000004',
+  listId: '00000000-0000-4000-8000-000000000005',
+  postId: '00000000-0000-4000-8000-000000000006',
+  occurrenceId: '00000000-0000-4000-8000-000000000007',
+  swapId: '00000000-0000-4000-8000-000000000008',
+  entityId: '00000000-0000-4000-8000-000000000009',
+} as const;
+
+type LinkIdKey = keyof typeof LINK_IDS;
+
+const LINK_ID_KEY_BY_VALUE = new Map<string, LinkIdKey>(
+  (Object.keys(LINK_IDS) as LinkIdKey[]).map((key) => [LINK_IDS[key], key]),
+);
+
+const LINK_FIXTURE = {
+  ...LINK_IDS,
+  displayName: 'Тест',
+  title: 'Тест',
+};
+
+/**
+ * Which payload ids each detail route's `:param` is allowed to be.
+ *
+ * A route is not just a shape, it is a *lookup*: `/tasks/:taskId` loads a task
+ * occurrence, `/goals/:goalId` loads a goal. Pointing a route at an id of the
+ * wrong kind produces a link that resolves perfectly and then renders the
+ * page's error state, because the record it asks for does not exist.
+ *
+ * `entityId` is accepted everywhere on purpose: it is the intent's generic
+ * entity pointer, and its kind lives in the sibling `entityType` column rather
+ * than in the value, so this table cannot judge it. Every other key is judged.
+ */
+const ROUTE_ACCEPTS_IDS: Record<string, readonly LinkIdKey[]> = {
+  // Both of these load an *occurrence*; `taskId`/`eventId` are the older
+  // payload spellings producers still emit for the same thing.
+  [APP_ROUTES.tasks]: ['occurrenceId', 'taskId'],
+  [APP_ROUTES.calendar]: ['occurrenceId', 'eventId'],
+  [APP_ROUTES.goals]: ['goalId'],
+  [APP_ROUTES.shopping]: ['listId'],
+};
+
+const ALWAYS_ACCEPTED_ID: LinkIdKey = 'entityId';
+
+/**
+ * `null` when `navigate` carries an id the destination route can actually load,
+ * otherwise a human-readable reason.
+ *
+ * Only links of the form `<known detail route>/<segment>` are judged; a pinned
+ * route such as `/tasks` or `/wall` has no id to get wrong.
+ */
+function wrongKindOfId(navigate: string): string | null {
+  const [pathname = ''] = navigate.split(/[?#]/);
+  const base = APP_ROUTES_WITH_DETAIL.find((route) => pathname.startsWith(`${route}/`));
+  if (base === undefined) return null;
+
+  const segment = pathname.slice(base.length + 1);
+  if (segment.length === 0 || segment.includes('/')) return null; // `isKnownAppPath`'s job
+
+  const accepted = ROUTE_ACCEPTS_IDS[base] ?? [];
+  const key = LINK_ID_KEY_BY_VALUE.get(segment);
+
+  if (key === undefined) {
+    return `${base}/<id> carries "${segment}", which is not any id from the payload`;
+  }
+  if (key === ALWAYS_ACCEPTED_ID) return null;
+  if (accepted.includes(key)) return null;
+
+  return `${base}/<id> carries the ${key} -- it can only load ${accepted.join(' or ')}`;
+}
+
 describe('notification deep links', () => {
   it('every rendered link resolves to a real route', () => {
     // The regression this exists for: `member_pending_approval` pointed at
@@ -1046,23 +1127,112 @@ describe('notification deep links', () => {
     const unknown: Array<{ type: string; navigate: string }> = [];
 
     for (const type of NOTIFICATION_TYPES) {
-      const rendered = renderNotification(type, {
-          userId: '00000000-0000-4000-8000-000000000001',
-        taskId: '00000000-0000-4000-8000-000000000002',
-        eventId: '00000000-0000-4000-8000-000000000003',
-        goalId: '00000000-0000-4000-8000-000000000004',
-        listId: '00000000-0000-4000-8000-000000000005',
-        postId: '00000000-0000-4000-8000-000000000006',
-        occurrenceId: '00000000-0000-4000-8000-000000000007',
-        swapId: '00000000-0000-4000-8000-000000000008',
-        displayName: 'Тест',
-        title: 'Тест',
-      });
+      const rendered = renderNotification(type, LINK_FIXTURE);
       if (rendered.navigate && !isKnownAppPath(rendered.navigate)) {
         unknown.push({ type, navigate: rendered.navigate });
       }
     }
 
     expect(unknown).toEqual([]);
+  });
+
+  it('every rendered link carries an id the destination can actually load', () => {
+    /*
+     * The third bug in this family, and the first one `isKnownAppPath` was
+     * structurally incapable of seeing.
+     *
+     * Both swap notifications linked to `route(APP_ROUTES.tasks, swapId)`.
+     * `/tasks/:taskId` is a real route, so the path resolved, the guard passed
+     * and CI stayed green -- but `:taskId` is a task *occurrence* id and a swap
+     * id is not one, so `TaskDetailPage` looked up a record that does not exist
+     * and rendered its error state. Every swap notification the family ever
+     * received went nowhere useful.
+     *
+     * The first two (`/admin/members/<uuid>`, `/wall/<postId>`) were caught by
+     * tightening the *path* rules. No amount of path tightening reaches this
+     * one, because the path was never wrong. So this check reads the id
+     * instead: the fixture gives every payload key its own uuid, which makes
+     * the id segment of any rendered link traceable back to the key that
+     * produced it, and `ROUTE_ACCEPTS_IDS` says which keys each route can load.
+     *
+     * A future notification that points a route at the wrong kind of id fails
+     * here, in CI, instead of in somebody's hand.
+     */
+    const mismatched: Array<{ type: string; navigate: string; problem: string }> = [];
+
+    for (const type of NOTIFICATION_TYPES) {
+      const rendered = renderNotification(type, LINK_FIXTURE);
+      if (!rendered.navigate) continue;
+      const problem = wrongKindOfId(rendered.navigate);
+      if (problem) mismatched.push({ type, navigate: rendered.navigate, problem });
+    }
+
+    expect(mismatched).toEqual([]);
+  });
+
+  it('declares an accepted id kind for every route that has a detail page', () => {
+    // Otherwise a new detail route silently opts out of the check above: an
+    // undeclared route has an empty accept list, so `wrongKindOfId` would have
+    // nothing to compare against and would wave every id through. Keeping the
+    // two lists in step is what makes the guard hold for routes that do not
+    // exist yet.
+    expect(Object.keys(ROUTE_ACCEPTS_IDS).sort()).toEqual([...APP_ROUTES_WITH_DETAIL].sort());
+    for (const [route, keys] of Object.entries(ROUTE_ACCEPTS_IDS)) {
+      expect(keys.length, `${route} accepts no id at all`).toBeGreaterThan(0);
+    }
+  });
+
+  it('sends a swap request to the queue that has the accept and decline buttons', () => {
+    /*
+     * `chore_swap_requested` asks for a decision, and the only place that
+     * decision can be taken is `SwapInbox`, which `TasksPage` renders.
+     * `TaskDetailPage` carries the *outgoing* half of a swap and no accept
+     * button, so `/tasks/<occurrenceId>` -- while it loads a real record --
+     * would show the reader a chore assigned to somebody else and no way to
+     * answer the question the notification just asked.
+     */
+    const rendered = renderNotification('chore_swap_requested', {
+      ...LINK_FIXTURE,
+      actorName: 'Миша',
+    });
+
+    expect(rendered.navigate).toBe(APP_ROUTES.tasks);
+  });
+
+  it('sends a swap answer to the chore itself, not to the finished swap', () => {
+    // The outcome is news about the chore -- who is carrying it now that the
+    // answer landed. The occurrence id is what `/tasks/:taskId` can load; the
+    // swap id is what it used to carry, and could not.
+    const rendered = renderNotification('chore_swap_answered', {
+      ...LINK_FIXTURE,
+      accepted: true,
+      actorName: 'Лиза',
+    });
+
+    expect(rendered.navigate).toBe(`${APP_ROUTES.tasks}/${LINK_IDS.occurrenceId}`);
+    expect(rendered.navigate).not.toContain(LINK_IDS.swapId);
+  });
+
+  it('sends the join request to the approval queue, not to a member page that does not exist', () => {
+    /*
+     * `isKnownAppPath` above cannot catch this one, and that is the point.
+     *
+     * It accepts any child of a known route, because that is exactly how
+     * `/tasks/<id>` and `/goals/<id>` are built — routes that *have* a detail
+     * page. `/admin/members` does not: the approval queue is a single list, and
+     * a member is approved from a card in it. So `/admin/members/<uuid>` passed
+     * the guard, matched nothing in the router, and rendered the 404 screen.
+     *
+     * That left the owner's join-request notification with no working way
+     * through to the queue at all — the body tap 404'd, and the only button on
+     * the card was the D11 delivery receipt.
+     */
+    const rendered = renderNotification('member_pending_approval', {
+      userId: '00000000-0000-4000-8000-000000000001',
+      displayName: 'дарья кислякова',
+      provider: 'google',
+    });
+
+    expect(rendered.navigate).toBe(APP_ROUTES.adminMembers);
   });
 });

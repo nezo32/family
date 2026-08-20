@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, eq, gt, gte, isNull, lt, or, sql } from 'drizzle-orm';
 
 import {
   DEFAULT_DIGEST_SECTIONS,
@@ -15,6 +15,7 @@ import type { DigestBlock, DigestPreviewResponse } from '@family/shared/contract
 import type { Executor } from '../../core/db.js';
 import { notFound } from '../../core/errors.js';
 import { logger } from '../../core/logger.js';
+import { ts } from '../../core/sql.js';
 import { kudos } from '../chores/chores.schema.js';
 import { goalTransactions } from '../goals/goals.schema.js';
 import { users } from '../identity/users.schema.js';
@@ -434,18 +435,27 @@ export function createDigestPort(exec: Executor): DigestPort {
     async loadWallCounts(range) {
       // Two counts, one round trip. `UNION ALL` over two aggregates beats two
       // queries for a job that runs once per subscriber per week.
+      //
+      // `ts()` on every bound instant, never a bare `${range.fromUtc}`: this is
+      // a **raw** template, so a `Date` reaches postgres.js unconverted and
+      // throws at bind time (see `core/sql.ts`). It did — and because
+      // `runWeeklyDigestSweep` catches per subscriber so one bad row cannot
+      // cost the rest of the family their digest, the throw was swallowed for
+      // *every* subscriber and the sweep returned an empty result set that
+      // looked exactly like "nobody was due". **No weekly digest had ever been
+      // sent.**
       const rows = await exec.execute(sql`
         select 'announcements' as kind, count(*)::text as n
           from ${posts}
-         where ${posts.createdAt} >= ${range.fromUtc}
-           and ${posts.createdAt} < ${range.toUtc}
+         where ${posts.createdAt} >= ${ts(range.fromUtc)}
+           and ${posts.createdAt} < ${ts(range.toUtc)}
            and ${posts.deletedAt} is null
            and ${posts.type} = 'announcement'
         union all
         select 'kudos' as kind, count(*)::text as n
           from ${kudos}
-         where ${kudos.createdAt} >= ${range.fromUtc}
-           and ${kudos.createdAt} < ${range.toUtc}
+         where ${kudos.createdAt} >= ${ts(range.fromUtc)}
+           and ${kudos.createdAt} < ${ts(range.toUtc)}
       `);
 
       const counts: WallCounts = { announcements: 0, kudos: 0 };
@@ -463,8 +473,12 @@ export function createDigestPort(exec: Executor): DigestPort {
         .where(
           and(
             gt(goalTransactions.delta, 0),
-            sql`${goalTransactions.occurredAt} >= ${range.fromUtc}`,
-            sql`${goalTransactions.occurredAt} < ${range.toUtc}`,
+            // Typed comparisons, not `sql`${col} >= ${range.fromUtc}``: a raw
+            // template hands the `Date` straight to postgres.js, which cannot
+            // encode it (see `core/sql.ts`). `gte`/`lt` go through the column's
+            // own serializer, so there is no binding left to get wrong.
+            gte(goalTransactions.occurredAt, range.fromUtc),
+            lt(goalTransactions.occurredAt, range.toUtc),
           ),
         );
       return row ? toInt(row.total) : 0;

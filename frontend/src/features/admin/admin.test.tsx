@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Permission, Role } from '@family/shared';
 import { clearAccessToken } from '@/shared/api/token-store';
@@ -156,7 +157,11 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={client}>
-      <MembersPage />
+      {/* The no-access state links to /family (§E: every empty state has a way
+          out), so the page needs a router around it. */}
+      <MemoryRouter>
+        <MembersPage />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }

@@ -62,6 +62,15 @@ export function KudosPanel() {
           title={WALL_RU.kudos.empty}
           description={WALL_RU.kudos.emptyDescription}
           compact
+          /*
+            `null` on purpose. §E wants every empty state to invite, and this
+            one does — but the invitation is `GiveKudosDialog`, which this panel
+            already renders in its own header ~60px above. A second «Сказать
+            спасибо» here would be the same button twice, and two `Dialog`
+            instances for one flow. The panel's shape is the thing to fix, not
+            this prop; see the report.
+          */
+          action={null}
         />
       ) : (
         <>
@@ -69,7 +78,7 @@ export function KudosPanel() {
             {rows.map((row) => (
               <li
                 key={row.userId}
-                className="flex items-center gap-3 rounded-xl border border-border bg-card p-3"
+                className="flex min-h-14 items-center gap-3 rounded-xl border border-border bg-card px-4 py-1.5"
               >
                 <UserAvatar
                   user={{
@@ -79,20 +88,27 @@ export function KudosPanel() {
                   }}
                   size="sm"
                 />
-                <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                <span className="min-w-0 flex-1 truncate text-[17px] leading-6 font-medium text-foreground">
                   {row.displayName}
                 </span>
+                {/*
+                  D5, and the hard rule of this whole screen: **no growing
+                  per-person total.** This used to print «7 спасибо» beside every
+                  name — alphabetical order does not stop seven next to two from
+                  being a scoreboard, and a family member reading the smaller
+                  number learns exactly the wrong thing. The chip says whether
+                  somebody was thanked this month; the stream below says by whom
+                  and what for, which is the part that is actually warm.
+                */}
                 <span
                   className={cn(
-                    'shrink-0 rounded-full px-3 py-1 text-xs',
+                    'shrink-0 rounded-full px-3 py-1 text-[13px] leading-[18px] font-medium',
                     row.received > 0
-                      ? 'bg-primary/10 text-foreground'
+                      ? 'bg-surface-calm text-surface-calm-foreground'
                       : 'bg-muted text-muted-foreground',
                   )}
                 >
-                  {row.received > 0
-                    ? WALL_RU.kudos.received(row.received)
-                    : WALL_RU.kudos.receivedNone}
+                  {row.received > 0 ? WALL_RU.kudos.receivedSome : WALL_RU.kudos.receivedNone}
                 </span>
               </li>
             ))}
@@ -163,7 +179,10 @@ function GiveKudosDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button type="button" className="min-h-11">
+        {/* `secondary`, not filled: Стена's one filled primary is «Написать»
+            in the app bar (§B4), and two clay buttons on one screen is the
+            "nothing was decided" look the direction is trying to remove. */}
+        <Button type="button" variant="secondary" className="min-h-11">
           <Heart className="size-4" aria-hidden />
           {WALL_RU.kudos.give}
         </Button>

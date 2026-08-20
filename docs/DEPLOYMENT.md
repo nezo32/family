@@ -59,13 +59,60 @@ each person — treat a rotation as a migration, not a config tweak.
 
 1. Message **@BotFather** → `/newbot` → pick a name and a username.
 2. `/setdomain` → select the bot → send `nezo.su`.
-3. For the OIDC flow, BotFather's **Bot Settings → Web Login / OAuth** section
-   issues the client secret. If your BotFather build does not expose it, the app
-   falls back to the Login Widget and Mini App flows, which need only the bot
-   token — `TELEGRAM_CLIENT_SECRET` may be left empty in that case.
+
+   **Not optional, and it is the step everyone skips.** Without it every sign-in
+   attempt dies on a bare white page reading **«Bot domain invalid»**, served
+   from `oauth.telegram.org` — our callback is never reached, so nothing shows
+   up in our logs unless we go looking. Send the **host only**: no `https://`,
+   no `www.`, no port, no trailing slash, and it must equal the host of
+   `APP_PUBLIC_URL` exactly. Since the app preflights this,
+   `/api/auth/telegram/start` now logs the origin it sent and bounces the user
+   back to `/login` with a Russian explanation instead.
+
+   To check the current state without a browser:
+
+   ```sh
+   curl -s "https://oauth.telegram.org/auth?bot_id=<token prefix before the colon>&origin=https://nezo.su&embed=1" | head -c 60
+   ```
+
+   `Bot domain invalid` means unregistered or registered to a different domain;
+   an HTML page means it is set correctly.
+3. **Client Secret — open @BotFather _as a mini app_, not as a chat.** Tap the
+   menu/attachment button on the @BotFather chat to launch the mini app, select
+   the bot, then select **Login Widget**. That screen is the only place the
+   **Client ID** and **Client Secret** are shown. There is no
+   `Bot Settings → Web Login / OAuth` menu item — that path is from an older
+   BotFather and no longer exists.
+
+   Copy the Client Secret into `TELEGRAM_CLIENT_SECRET`. It is **not** the bot
+   token and is not derivable from it.
+
+   **`TELEGRAM_CLIENT_SECRET` is required, not optional.** `/auth/:provider/start`
+   is OIDC-only — it does **not** fall back to the Login Widget or Mini App
+   flows. Those two live behind their own endpoints
+   (`POST /api/auth/telegram/widget`, `POST /api/auth/telegram/init-data`) and
+   nothing routes a browser sign-in into them. Telegram's discovery document
+   advertises only `client_secret_basic` and `client_secret_post` — never
+   `none` — so a token exchange without a secret cannot succeed. With the
+   variable empty the app now refuses at `/start`, before the redirect, rather
+   than after the user has already approved the login.
+
+4. **Allowed URLs — on the same Login Widget screen, register both:**
+
+   ```
+   https://nezo.su
+   https://nezo.su/api/auth/telegram/callback
+   ```
+
+   The origin alone is not enough. Telegram happily serves the consent page for
+   an **unregistered `redirect_uri`** and only rejects it *after* the user taps
+   «Accept», so the symptom is a login that looks fine right up until the last
+   step. Register the redirect URI byte-for-byte as the app sends it — scheme,
+   host and path all exactly as above, no trailing slash. If you change
+   `APP_PUBLIC_URL`, both entries have to be re-registered.
 
 **You get:** `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME` (without the `@`),
-optionally `TELEGRAM_CLIENT_SECRET`.
+and `TELEGRAM_CLIENT_SECRET`.
 
 The bot doubles as the **second notification channel**, and it is the more
 reliable of the two — `sendMessage` returns a real delivery confirmation, which
@@ -211,9 +258,13 @@ docker image prune -af --filter "until=720h"   # monthly
 df -h /
 ```
 
-The backup script keeps 7 rotated dumps on the server; a family-sized dump is a
-few MB gzipped, so that is negligible. The real consumer is old image layers
-after many deploys — `docker.yml` tags by SHA, so they accumulate.
+The backup script keeps the newest `BACKUP_KEEP` dumps on the server (default
+14); a family-sized dump is a few MB gzipped, so that is negligible. Note that
+it does **not** yet rotate the `*-objects.tar.gz` avatar archives — those
+accumulate until `BACKUP_KEEP` is extended to cover them.
+
+The real consumer of disk is old image layers after many deploys —
+`docker.yml` tags by SHA, so they accumulate.
 
 ---
 
@@ -247,50 +298,250 @@ night simply catches up on the next run. It also means the VDI never holds a
 route into your home network, which is the right way round if the VDI is ever
 compromised.
 
+The pull runs in a **container on your PC**, started by Docker Desktop. Not a
+scheduled task, not a script you have to remember to run. The container is up
+whenever the machine is up, and it decides for itself when a backup is due.
+
 ```
-VDI  03:30 nightly  ->  pg_dump | gzip | sha256  ->  /opt/family/backups (keeps 7)
-PC   09:00/14:00/21:00/logon  ->  scp down, verify gzip, keep 180 days
+VDI  03:17 nightly   pg_dump | gzip | sha256   ->  /opt/family/backups
+                     tar the avatar volume     ->  latest.sql.gz, latest-objects.tar.gz
+
+PC   container       every hour: "has it been 20h since the last good backup?"
+                     if yes:  scp both files down
+                              check sha256 against the server's sidecar
+                              check the gzip
+                              check the payload is real
+                              ONLY THEN overwrite this weekday's slot
 ```
 
-### Set it up (once, on the PC, elevated PowerShell)
+### Set it up — one command, plus a key
+
+```bash
+docker compose -f infra/backup-pull/docker-compose.yml up -d
+```
+
+That is the whole installation. Start it now, before you have a key: it will
+stop and print a banner telling you exactly what to do. Then do this once:
+
+**1. Create a key on your PC.** No passphrase — it has to run unattended.
 
 ```powershell
-cd <repo>\infra\scripts
-.\install-backup-pull.ps1
+ssh-keygen -t ed25519 -f $env:USERPROFILE\.ssh\family_backup -N '""' -C family-backup
 ```
 
-It generates a dedicated `family_backup` SSH key, prints the one command to
-authorise it on the server, creates `%USERPROFILE%\Backupsamily`, and
-registers a scheduled task.
+```bash
+# or, from bash
+ssh-keygen -t ed25519 -f ~/.ssh/family_backup -N '' -C family-backup
+```
 
-The task uses **`StartWhenAvailable`**, so a run missed while the PC was off
-happens as soon as it wakes — without that, a machine that is rarely on at 09:00
-would back up almost nothing.
+> If you started the container before creating the key, Docker will have made an
+> empty **directory** at `~/.ssh/family_backup`. Delete it (`rm -rf`) before
+> running `ssh-keygen`, or the key will not be created.
+
+**2. Install the public half on the server**, from a machine that has root there:
+
+```bash
+ssh root@nezo.su "install -d -m700 -o familybackup -g familybackup /home/familybackup/.ssh"
+cat ~/.ssh/family_backup.pub | ssh root@nezo.su "cat >> /home/familybackup/.ssh/authorized_keys"
+ssh root@nezo.su "chown familybackup:familybackup /home/familybackup/.ssh/authorized_keys && chmod 600 /home/familybackup/.ssh/authorized_keys"
+```
+
+**3. Let `familybackup` read the dumps — and nothing else.** `/opt/family` is
+`deploy:deploy 0750`, so without this the key authenticates and then every copy
+fails with `Permission denied`. An ACL grants exactly the backups directory
+rather than putting the account in the `deploy` group, which would also hand it
+`.env`:
+
+```bash
+ssh root@nezo.su "apt-get install -y acl"
+ssh root@nezo.su "setfacl -m u:familybackup:--x /opt/family"          # traverse, not list
+ssh root@nezo.su "setfacl -m u:familybackup:r-x /opt/family/backups"  # read the dumps
+ssh root@nezo.su "setfacl -d -m u:familybackup:r-- /opt/family/backups"  # …and future ones
+```
+
+Check it landed correctly — this should list the dumps and refuse everything else:
+
+```bash
+ssh root@nezo.su "su -s /bin/sh familybackup -c 'ls /opt/family/backups; ls /opt/family'"
+```
+
+**4. Restart and watch it work:**
+
+```bash
+docker compose -f infra/backup-pull/docker-compose.yml restart
+docker compose -f infra/backup-pull/docker-compose.yml logs -f
+```
+
+### Where the files land
+
+`%USERPROFILE%\Backups\family` by default — a real folder you can open in
+Explorer, not a Docker volume. Override it with `BACKUP_DEST` in a `.env` beside
+`infra/backup-pull/docker-compose.yml` (see `.env.example` there).
+
+```
+Backups\family\
+  family-db-mon.sql.gz            the database, one file per weekday
+  family-db-mon.sql.gz.sha256
+  family-objects-mon.tar.gz       the avatars, same weekday slot
+  family-objects-mon.tar.gz.sha256
+  …tue, wed, thu, fri, sat, sun
+  LATEST.txt                      what was pulled last, and when
+  _state\status.txt               last run, last result, last success
+  _log\pull-2026-08.log           one line per decision, kept per month
+```
+
+**New backups overwrite old ones.** The filename is the weekday, so the set is
+exactly seven database files and seven avatar files, each replaced once a week.
+Disk use is constant; there is no cleanup to remember.
+
+Seven rather than one is deliberate. With a single overwritten file, the moment
+a dump arrives truncated — or the database was already corrupt when it was
+taken — the last good copy is gone and the backup has destroyed the thing it
+exists to protect. Set `GENERATIONS=1` if you truly want exactly one file.
+
+### When it runs
+
+Around **14:00 local**, roughly daily — but driven by *when the last backup
+actually happened*, never by the clock alone. The container wakes every hour and
+asks one question:
+
+| Since the last good backup | What happens |
+|---|---|
+| less than 20 h | nothing |
+| 20–26 h, before 14:00 | wait for 14:00 |
+| 20–26 h, at or after 14:00 | back up now — this is the normal case |
+| more than 26 h | back up now, whatever time it is |
+
+That last row is the one that matters. If the PC was off at 14:00 — or off for
+three days — the backup happens within an hour of it next coming on, rather than
+being skipped until tomorrow. Container start counts as a wake-up too, so
+switching the machine on triggers the check immediately, not up to an hour later.
+
+### Is it working?
+
+```bash
+docker compose -f infra/backup-pull/docker-compose.yml ps
+```
+
+`Up … (healthy)` means a good backup arrived within the last 48 hours **and**
+the internal schedule is still firing. `(unhealthy)` says which of the two
+broke. This is the check that does not require you to read anything.
+
+```bash
+docker compose -f infra/backup-pull/docker-compose.yml logs --tail 30
+type %USERPROFILE%\Backups\family\_state\status.txt
+```
+
+Every run logs its decision — including "not due", so silence means the
+container is not running, not that everything is fine. Failures that need you
+(a refused key, a corrupt download) are printed as a hash-bordered banner rather
+than a line you can scroll past.
 
 ### Why a separate `familybackup` user
 
-The pull account can read the dump directory and nothing else. If the PC is ever
-compromised, the key it holds is worth far less than a root key — and the VDI
-also hosts your WireGuard setup, which has nothing to do with this app.
+The pull account can read the dump directory and nothing else — not `.env`, not
+even a listing of `/opt/family`. If the PC is ever compromised, the key it holds
+is worth far less than a root key, and the VDI also hosts your WireGuard setup,
+which has nothing to do with this app.
 
 ### Verify it, because an unverified backup is not a backup
 
-Each archive is gzip-verified on arrival before it is allowed to count, and a
-partial transfer is written to `.partial` so it can never be mistaken for a
-finished one. Beyond that, actually restore one now and then:
+Three things are checked on arrival, **before** the new file is allowed to
+replace last week's copy in that slot:
+
+1. the sha256 matches the sidecar the server wrote next to the dump,
+2. the gzip stream decompresses cleanly end to end,
+3. the contents are real — `CREATE TABLE`/`COPY` statements in the dump, actual
+   entries in the avatar archive.
+
+If any of them fails, the download is deleted, the existing local backup is left
+exactly as it was, and the run is retried on the next tick. A corrupt fetch can
+never take out a good copy.
+
+Beyond that, actually restore one now and then. This runs on **your PC**, on the
+file the container pulled:
 
 ```bash
-ssh root@nezo.su 'cd /opt/family && ./infra/scripts/restore-check.sh'
+./infra/scripts/restore-check.sh "$HOME/Backups/family/family-db-thu.sql.gz"
 ```
 
-That loads the newest dump into a throwaway container and asserts the schema is
-present. Do it after the first deploy and then occasionally — a restore you have
-never rehearsed is the one that fails.
+It loads the dump into a throwaway `postgres:17.7-alpine` on a tmpfs and asserts
+the sha256 matches, the gzip is intact, the schema is there, the drizzle
+migration ledger survived, the extensions came back and `users` is non-empty.
+It never touches anything real.
+
+> **Pass the filename.** Run with no argument and it picks the
+> lexicographically last `*.sql.gz`, which for weekday slots is `wed` — not the
+> newest. `LATEST.txt` names the one that was pulled most recently.
+>
+> If your PC has a repo `.env` with different `POSTGRES_USER`/`POSTGRES_DB` than
+> production, pass `ENV_FILE=/dev/null` so the check uses the dump's own role
+> names.
+
+### Restoring for real
+
+This is the part that matters, and it is worth reading before you need it.
+
+**1. Prove the backup first.** Run `restore-check.sh` on it, as above.
+Discovering the dump is bad *after* step 3 turns a bad afternoon into a bad week.
+
+**2. Copy the file up to the server.**
+
+```bash
+scp -i ~/.ssh/family_backup "$HOME/Backups/family/family-db-thu.sql.gz" root@nezo.su:/tmp/
+```
+
+**3. Stop the writers, recreate the database, replay.**
+
+```bash
+ssh root@nezo.su
+cd /opt/family
+set -a && . ./.env && set +a
+
+docker compose -f infra/docker-compose.yml --env-file .env stop backend
+
+docker compose -f infra/docker-compose.yml --env-file .env exec -T postgres \
+  psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 \
+  -c "DROP DATABASE IF EXISTS \"$POSTGRES_DB\" WITH (FORCE);" \
+  -c "CREATE DATABASE \"$POSTGRES_DB\" OWNER \"$POSTGRES_USER\";"
+
+gzip -cd /tmp/family-db-thu.sql.gz | \
+  docker compose -f infra/docker-compose.yml --env-file .env exec -T postgres \
+  psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1
+
+docker compose -f infra/docker-compose.yml --env-file .env start backend
+```
+
+**4. Restore the avatars too, or every member gets a broken face.**
+`users.avatar_url` points into the RustFS bucket; a database restored without it
+keeps the rows and loses the images, with no way to tell whose photo was whose.
+
+```bash
+scp -i ~/.ssh/family_backup "$HOME/Backups/family/family-objects-thu.tar.gz" root@nezo.su:/tmp/
+
+ssh root@nezo.su
+cd /opt/family
+VOL=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' \
+      "$(docker compose -f infra/docker-compose.yml --env-file .env ps -q rustfs)")
+
+docker compose -f infra/docker-compose.yml --env-file .env stop rustfs
+docker run --rm -v "$VOL:/data" -v /tmp:/backup:ro postgres:17.7-alpine \
+  sh -c 'rm -rf /data/* /data/..?* /data/.[!.]* 2>/dev/null; tar -xzf /backup/family-objects-thu.tar.gz -C /data'
+docker compose -f infra/docker-compose.yml --env-file .env start rustfs
+```
+
+The archive stores paths relative to the volume root (`./family-media/…`), so it
+extracts into any volume, not only one called `/data`. It is a plain `tar.gz` —
+`tar -tzf` lists it, no special tooling.
+
+**5. Redis is not backed up and does not need to be.** It holds only BullMQ
+queue state; the nightly job re-materializes the rolling recurrence window after
+a restore.
 
 ### What is and is not covered
 
 Covered: the entire Postgres database — every task, event, goal, list, message
-and account.
+and account — and the avatar objects.
 
 **Not covered:** the `.env` file. It lives only on the server, it is the one
 thing that is not in git, and losing `COOKIE_SECRET` invalidates every calendar

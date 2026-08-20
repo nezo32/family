@@ -24,6 +24,9 @@ import { notificationDeliveries, notificationIntents } from './notifications.sch
  * channel), that the in-app row is written *regardless* of preferences and
  * quiet hours, that quiet hours produce a `scheduled` row rather than dropping
  * one, and that a replayed ack is a genuine no-op rather than a second write.
+ *
+ * Since D12 it also covers the change-feed bump: fan-out is what makes an
+ * in-app notification exist, so fan-out is what has to tell the feed.
  */
 describe.skipIf(!hasTestDb)('notification fan-out (integration)', () => {
   let h: Harness;
@@ -406,5 +409,84 @@ describe.skipIf(!hasTestDb)('notification fan-out (integration)', () => {
     });
     expectStatus(after, 200);
     expect((after.json<{ unread: number }>()).unread).toBe(0);
+  });
+
+  /* ====================================================================== */
+  /* the change feed (D12)                                                  */
+  /* ====================================================================== */
+
+  /**
+   * What a client would see in `GET /api/changes`.
+   *
+   * Read through the endpoint rather than out of Redis, so the assertion covers
+   * the whole chain a user depends on — the worker's bump, the shared hash, and
+   * the feed that serves it. `notifications` is ungated (your own inbox is
+   * always yours to read), so any member sees its counter.
+   *
+   * `GET` never bumps anything, so reading the feed cannot disturb what it is
+   * measuring.
+   */
+  async function notificationsRev(user: TestUser): Promise<number> {
+    const response = await request(h.app, {
+      method: 'GET',
+      url: '/api/changes',
+      token: user.accessToken,
+    });
+    expectStatus(response, 200);
+    return response.json<{ rev: { notifications?: number } }>().rev.notifications ?? 0;
+  }
+
+  it('moves the notifications revision when a fan-out writes an inbox row', async () => {
+    /*
+     * The bell was the last surface in the app still waiting for a window focus
+     * to notice anything. Everything else refreshes within seconds — and the
+     * bell is what tells an owner that somebody is waiting to be let into the
+     * family, a flow where a delay has already caused real confusion.
+     */
+    const before = await notificationsRev(adult);
+
+    const intentId = await emitAndDispatch({ actorId: owner.id, audience: { everyone: true } });
+
+    const rows = await deliveriesOf(intentId);
+    expect(rows.some((r) => r.channel === 'in_app')).toBe(true);
+    expect(await notificationsRev(adult)).toBe(before + 1);
+  });
+
+  it('moves it exactly once, however many times the intent is dispatched', async () => {
+    // A retried BullMQ job, a duplicated `dispatch()` and the recovery sweep all
+    // re-enter `dispatchIntent`. Fan-out is idempotent, and the bump has to be
+    // too: a second increment costs every client in the family a second refetch
+    // of an inbox that did not change.
+    const service = await import('./notifications.service.js');
+
+    const intentId = await emitAndDispatch({ actorId: owner.id, audience: { everyone: true } });
+    const afterFirst = await notificationsRev(adult);
+
+    await service.dispatchIntent(h.db, intentId);
+    await service.dispatchIntent(h.db, intentId);
+
+    expect(await notificationsRev(adult)).toBe(afterFirst);
+  });
+
+  it('leaves it alone when the fan-out reaches nobody', async () => {
+    /*
+     * The negative case, in the only shape that is reachable today.
+     *
+     * §3.7 writes an in-app row for *every* recipient, unconditionally — so
+     * there is no such thing as a push-or-telegram-only fan-out to contrast
+     * with. What there is: a fan-out that produces no delivery rows at all.
+     * Here the only addressee is the actor, and §3.4 self-suppression removes
+     * them, so `dispatchIntent` returns before it inserts anything.
+     *
+     * The guard is written as "did this produce an in-app row" rather than
+     * "did this produce any row", so it stays correct if the in-app row ever
+     * becomes suppressible.
+     */
+    const before = await notificationsRev(owner);
+
+    const intentId = await emitAndDispatch({ actorId: owner.id, audience: { users: [owner.id] } });
+
+    expect(await deliveriesOf(intentId)).toHaveLength(0);
+    expect(await notificationsRev(owner)).toBe(before);
   });
 });

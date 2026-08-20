@@ -1,61 +1,52 @@
-import { SideColumn } from '@/app/layout/SideColumn';
-import { Card } from '@/shared/ui/card';
+import type { ReactNode } from 'react';
+import { PageHeader } from '@/shared/components/PageHeader';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { TODAY_RU } from '../locale';
 
 /**
- * The loading state of the home screen.
+ * The loading state of the home screen (§D common conventions).
  *
- * A skeleton and not a spinner, because this screen is opened dozens of times a
- * day: the layout must not jump when the data lands, and a centred spinner on
- * the app's first paint reads as "the app is broken" on a slow cell. The shapes
- * below deliberately match the real cards' geometry.
+ * Two rules, both of which the previous version broke:
+ *
+ * 1. **The greeting does not get a skeleton.** It comes from `useMe`, which has
+ *    already resolved by the time this renders — putting a grey bar where the
+ *    reader's own name is about to appear is a placeholder for information we
+ *    are not waiting for. The title node is passed straight through.
+ * 2. **The shapes match the real content**: one attention-shaped block and
+ *    three 56px rows, not two cards with an icon tile and a 44px avatar each.
+ *    A skeleton whose geometry differs from the content is just a different
+ *    layout that then jumps.
+ *
+ * No shimmer. A static `--muted` block is calmer, cheaper, and does not animate
+ * on the first paint of a cold PWA start (§G8).
  */
-export function TodaySkeleton() {
+export function TodaySkeleton(props: { title?: ReactNode }) {
   return (
     <div role="status" aria-busy="true" aria-live="polite">
       <span className="sr-only">{TODAY_RU.loadingLabel}</span>
 
-      <div className="space-y-2 pb-4">
-        <Skeleton className="h-8 w-56 max-w-full" />
-        <Skeleton className="h-4 w-40 max-w-full" />
-      </div>
+      {props.title ? <PageHeader displayTitle title={props.title} /> : null}
 
-      {/* Same two-column split as the loaded page, so nothing jumps sideways
-          when the data lands (§C1: the shell owns the grid, not this file). */}
-      <div className="flex flex-col gap-4">
-        <CardSkeleton rows={3} />
-        <CardSkeleton rows={2} />
-      </div>
+      <div className="flex flex-col gap-6">
+        {/* Band 2: one attention-shaped block, ~120px. */}
+        <Skeleton className="h-[120px] w-full max-w-row-measure rounded-xl" />
 
-      <SideColumn>
-        <div className="flex flex-col gap-4 min-[1088px]:gap-6">
-          <CardSkeleton rows={2} />
-          <CardSkeleton rows={1} />
-        </div>
-      </SideColumn>
-    </div>
-  );
-}
-
-function CardSkeleton(props: { rows: number }) {
-  return (
-    <Card className="gap-0 py-4">
-      <div className="flex items-center gap-3 px-4 sm:px-5">
-        <Skeleton className="size-8 rounded-lg" />
-        <Skeleton className="h-4 w-32" />
-      </div>
-      <div className="space-y-3 px-4 pt-4 sm:px-5">
-        {Array.from({ length: props.rows }, (_, index) => (
-          <div key={index} className="flex items-center gap-3">
-            <Skeleton className="size-11 shrink-0 rounded-full" />
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <Skeleton className="h-4 w-3/5" />
-              <Skeleton className="h-3 w-2/5" />
-            </div>
+        {/* Band 3: a section header, then three 56px rows on one surface. */}
+        <div className="flex flex-col">
+          <div className="flex items-center justify-between px-4 pb-2">
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="h-4 w-14" />
           </div>
-        ))}
+          <div className="max-w-row-measure overflow-hidden rounded-xl border border-border bg-card">
+            {[0, 1, 2].map((row) => (
+              <div key={row} className="flex h-14 items-center gap-3 px-4">
+                <Skeleton className="size-7 shrink-0 rounded-full" />
+                <Skeleton className="h-4 w-2/5" />
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
-    </Card>
+    </div>
   );
 }

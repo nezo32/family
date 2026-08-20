@@ -14,6 +14,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card';
+import { isApiError } from '@/shared/api/errors';
 import { notify } from '@/shared/lib/toast';
 import { formatDateTime } from '@/shared/lib/format';
 import { ROUTES } from '@/shared/lib/routes';
@@ -85,6 +86,12 @@ export default function AccountsPage() {
       })
       .catch((linkError: unknown) => {
         setPendingLink(null);
+        // A provider the server refuses to start is misconfigured, not busy —
+        // the generic 503 sentence would just invite a retry that cannot work.
+        if (isApiError(linkError) && linkError.code === 'SERVICE_UNAVAILABLE') {
+          notify.warning(T.linkNotConfigured(PROVIDER_LABELS[provider]), T.linkNotConfiguredHint);
+          return;
+        }
         notify.error(linkError, T.linkFailed);
       });
   };

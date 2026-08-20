@@ -1,12 +1,16 @@
 import { useState } from 'react';
 import { Info, ShieldCheck, UserCheck } from 'lucide-react';
 import type { Role } from '@family/shared';
+import { Link } from 'react-router-dom';
 import { PageHeader } from '@/shared/components/PageHeader';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { ConfirmDialog } from '@/shared/components/ConfirmDialog';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { Badge } from '@/shared/ui/badge';
+import { Button } from '@/shared/ui/button';
+import { ROUTES } from '@/shared/lib/routes';
+import { COMMON } from '@/shared/lib/i18n';
 import { useCan } from '@/shared/auth/use-can';
 import { useMe } from '@/shared/auth/use-me';
 import { ADMIN_RU, requestCount } from '../locale';
@@ -111,6 +115,13 @@ export default function MembersPage() {
           icon={ShieldCheck}
           title={ADMIN_RU.noAccessTitle}
           description={ADMIN_RU.noAccessDescription}
+          // The roster itself is not privileged — only deciding who joins is.
+          // So the way out of this screen is the same list without the verbs.
+          action={
+            <Button asChild variant="outline" className="h-11">
+              <Link to={ROUTES.family}>{ADMIN_RU.noAccessAction}</Link>
+            </Button>
+          }
         />
       </>
     );
@@ -180,6 +191,20 @@ export default function MembersPage() {
               icon={UserCheck}
               title={ADMIN_RU.queueEmptyTitle}
               description={ADMIN_RU.queueEmptyDescription}
+              // An admin lands here *because* somebody said they had applied.
+              // Re-asking the server is the only thing that can change the
+              // answer, and it is the thing they would otherwise do by pulling
+              // the page down and hoping.
+              action={
+                <Button
+                  variant="outline"
+                  className="h-11"
+                  disabled={pending.isFetching}
+                  onClick={() => void pending.refetch()}
+                >
+                  {COMMON.refresh}
+                </Button>
+              }
             />
           ) : (
             <>
@@ -230,6 +255,16 @@ export default function MembersPage() {
                 compact
                 title={ADMIN_RU.membersEmptyTitle}
                 description={ADMIN_RU.membersEmptyDescription}
+                action={
+                  <Button
+                    variant="outline"
+                    className="h-11"
+                    disabled={members.isFetching}
+                    onClick={() => void members.refetch()}
+                  >
+                    {COMMON.refresh}
+                  </Button>
+                }
               />
             ) : (
               <>

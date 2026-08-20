@@ -195,6 +195,39 @@ describe('LoginPage — providers', () => {
   });
 });
 
+describe('LoginPage \u2014 a provider that failed before the user got there', () => {
+  /**
+   * `GET /api/auth/:provider/start` bounces back here when the flow dies before
+   * the redirect. It is the only chance the app gets to say anything: Telegram's
+   * own failure page for an unregistered BotFather domain is a bare English
+   * line, «Bot domain invalid», served from Telegram's origin, so nothing of
+   * ours ever runs on it.
+   */
+  it('names the provider and says it is misconfigured, not busy', () => {
+    renderWithProviders(<LoginPage />, '/login?error=SERVICE_UNAVAILABLE&provider=telegram');
+
+    expect(
+      screen.getByText(AUTH_RU.errors.providerUnavailableTitle('Telegram')),
+    ).toBeInTheDocument();
+    expect(screen.getByText(AUTH_RU.errors.providerUnavailableText('Telegram'))).toBeInTheDocument();
+    // «Попробуйте через минуту» would send the user into a retry loop that
+    // cannot succeed - only the family admin can fix a bot domain.
+    expect(screen.queryByText(ERROR_MESSAGES_RU.SERVICE_UNAVAILABLE)).not.toBeInTheDocument();
+  });
+
+  it('falls back to the shared catalogue when no provider is named', () => {
+    renderWithProviders(<LoginPage />, '/login?error=SERVICE_UNAVAILABLE');
+    expect(screen.getByText(ERROR_MESSAGES_RU.SERVICE_UNAVAILABLE)).toBeInTheDocument();
+  });
+
+  it('renders nothing at all for an unknown code or provider', () => {
+    renderWithProviders(<LoginPage />, '/login?error=Bot%20domain%20invalid&provider=evil');
+    // Never free-form text out of a query string.
+    expect(screen.queryByText(/Bot domain invalid/)).not.toBeInTheDocument();
+    expect(screen.queryByText(AUTH_RU.errors.formTitle)).not.toBeInTheDocument();
+  });
+});
+
 /* -------------------------------------------------------------------------- */
 /* install funnel                                                              */
 /* -------------------------------------------------------------------------- */

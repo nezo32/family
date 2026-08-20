@@ -218,8 +218,41 @@ export interface IcsCalendar {
   readonly timezone: string;
   readonly description?: string;
   readonly events: readonly IcsEvent[];
-  /** How often a subscribing client should poll. */
+  /** How often a subscribing client should poll. Defaults to {@link FEED_REFRESH_MINUTES}. */
   readonly refreshIntervalMinutes?: number;
+}
+
+/**
+ * How often a subscribed client is asked to re-poll.
+ *
+ * **Fifteen minutes, not sixty.** iOS reads `REFRESH-INTERVAL` /
+ * `X-PUBLISHED-TTL` when the subscription is *created* and uses it to pick the
+ * calendar's «Обновление» (Auto-Refresh) bucket — and its buckets are 5 min,
+ * 15 min, 30 min, hourly, daily, weekly, so the value should land on one of
+ * them rather than between two. An hour is the difference between "I put the
+ * dentist in the calendar" and "my wife's phone knew about it before she left
+ * the house"; fifteen minutes is the first bucket that is both quick enough to
+ * feel live and slow enough to be free.
+ *
+ * It is only *safe* to ask for fifteen minutes because the route now answers
+ * `If-Modified-Since` with a 304 (see {@link isNotModifiedSince}). Before that,
+ * every poll re-rendered and re-sent the whole document; four times an hour,
+ * times one feed per family member, is real work for no new information.
+ */
+export const FEED_REFRESH_MINUTES = 15;
+
+/**
+ * Minutes → the RFC 5545 duration a calendar client expects.
+ *
+ * Whole hours are emitted as `PT1H` rather than `PT60M`. Both are legal and
+ * both mean the same thing, but the hour form is what Apple's own published
+ * feeds use, and a client that pattern-matches instead of parsing (there are
+ * several) recognises it.
+ */
+export function formatRefreshDuration(minutes: number): string {
+  const total = Math.max(1, Math.trunc(minutes));
+  if (total % 60 === 0) return `PT${total / 60}H`;
+  return `PT${total}M`;
 }
 
 /** `-//Family//Календарь//RU` — identifies the product that wrote the file. */
@@ -338,9 +371,13 @@ export function buildIcsCalendar(calendar: IcsCalendar): string {
     lines.push(`X-WR-CALDESC:${escapeText(calendar.description)}`);
   }
 
-  const refresh = calendar.refreshIntervalMinutes ?? 60;
-  lines.push(`REFRESH-INTERVAL;VALUE=DURATION:PT${refresh}M`);
-  lines.push(`X-PUBLISHED-TTL:PT${refresh}M`);
+  // The two properties that tell a subscribing client how often to come back.
+  // They must agree: Apple reads `REFRESH-INTERVAL`, Outlook and several others
+  // read only the older `X-PUBLISHED-TTL`, and a feed that advertises two
+  // different periods gets whichever one the reader happened to implement.
+  const refresh = formatRefreshDuration(calendar.refreshIntervalMinutes ?? FEED_REFRESH_MINUTES);
+  lines.push(`REFRESH-INTERVAL;VALUE=DURATION:${refresh}`);
+  lines.push(`X-PUBLISHED-TTL:${refresh}`);
 
   for (const event of calendar.events) lines.push(...eventLines(event));
   lines.push('END:VCALENDAR');
@@ -353,6 +390,109 @@ export function buildIcsCalendar(calendar: IcsCalendar): string {
 /** Weak ETag over the rendered body, for `If-None-Match` (304) support. */
 export function icsEtag(body: string): string {
   return `W/"${createHash('sha256').update(body, 'utf8').digest('hex').slice(0, 32)}"`;
+}
+
+/* -------------------------------------------------------------------------- */
+/* HTTP freshness — what the phone actually sends                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * ## Why there is a second validator
+ *
+ * The feed was built around `ETag` / `If-None-Match`, which is the modern and
+ * obviously-correct choice. It is also the one iOS does not use.
+ *
+ * Apple's subscribed-calendar fetcher identifies itself as
+ * `iOS/26.x (…) dataaccessd/1.0`, and on the production access log **every**
+ * conditional request it makes carries `If-Modified-Since` and **none** carries
+ * `If-None-Match`. Worse, because we sent no `Last-Modified` at all, the value
+ * it echoed back was our own `Date` response header — the client was inventing
+ * a validator because we had not given it one. The result: the ETag path never
+ * ran for the only client that matters, and every poll re-downloaded a document
+ * that had not changed.
+ *
+ * So the feed now emits both validators and honours both requests. See
+ * `docs/research/ios-calendar-subscriptions.md`.
+ *
+ * ## Why `Last-Modified` cannot simply be «the newest event in the document»
+ *
+ * That value is not monotonic. Delete the most recently edited event and the
+ * maximum jumps *backwards*, the phone's `If-Modified-Since` is then newer than
+ * it, we answer 304, and the deleted event stays on the phone forever. A
+ * content-derived date is only safe for a document that grows.
+ *
+ * {@link createFeedFreshness} therefore times the *change* rather than the
+ * content: it remembers the last ETag it saw for a user and the moment it first
+ * saw it. A new ETag — added, edited or deleted event alike — mints a new
+ * timestamp, at least one second after the previous one so the two can never
+ * collide inside HTTP's one-second date resolution. Restarting the process
+ * loses the memory and costs exactly one unnecessary 200; it can never produce
+ * a wrongful 304, which is the only direction that hurts.
+ */
+export interface FeedFreshness {
+  /** The `Last-Modified` to advertise for `key`'s feed at its current `etag`. */
+  stamp(key: string, etag: string, now?: Date): Date;
+}
+
+/** Whole seconds — HTTP dates have no sub-second resolution. */
+function floorToSecond(ms: number): number {
+  return Math.floor(ms / 1000) * 1000;
+}
+
+export function createFeedFreshness(): FeedFreshness {
+  const seen = new Map<string, { etag: string; lastModifiedMs: number }>();
+
+  return {
+    stamp(key, etag, now = new Date()) {
+      const previous = seen.get(key);
+      if (previous !== undefined && previous.etag === etag) {
+        return new Date(previous.lastModifiedMs);
+      }
+      // Strictly later than the previous stamp for this feed, so two revisions
+      // never share a second and an `If-Modified-Since` for the older one can
+      // never be read as covering the newer one.
+      const lastModifiedMs = Math.max(
+        floorToSecond(now.getTime()),
+        previous === undefined ? 0 : previous.lastModifiedMs + 1000,
+      );
+      seen.set(key, { etag, lastModifiedMs });
+      return new Date(lastModifiedMs);
+    },
+  };
+}
+
+/** One per process. Keyed by user id, so it holds one entry per family member. */
+export const feedFreshness = createFeedFreshness();
+
+/**
+ * RFC 9110 §8.8.3.2 weak comparison for `If-None-Match`.
+ *
+ * `W/"abc"` and `"abc"` are the same entity here — an intermediary that strips
+ * or adds the weakness prefix (Caddy does this when it compresses) must not
+ * turn a 304 into a 200 forever.
+ */
+export function matchesEtag(header: string | string[] | undefined, etag: string): boolean {
+  if (typeof header !== 'string') return false;
+  if (header.trim() === '*') return true;
+  const strip = (value: string): string => value.trim().replace(/^W\//, '');
+  const wanted = strip(etag);
+  return header.split(',').some((candidate) => strip(candidate) === wanted);
+}
+
+/**
+ * `If-Modified-Since` → true when the client's copy is still current.
+ *
+ * An unparseable date is "not fresh": RFC 9110 §13.1.3 says an invalid
+ * `If-Modified-Since` is ignored, and ignoring it means sending the body.
+ */
+export function isNotModifiedSince(
+  header: string | string[] | undefined,
+  lastModified: Date,
+): boolean {
+  if (typeof header !== 'string') return false;
+  const since = Date.parse(header);
+  if (Number.isNaN(since)) return false;
+  return floorToSecond(lastModified.getTime()) <= since;
 }
 
 /* -------------------------------------------------------------------------- */

@@ -43,18 +43,60 @@ export type AppRoute = (typeof APP_ROUTES)[keyof typeof APP_ROUTES];
 export const APP_ROUTE_PATHS: readonly string[] = Object.values(APP_ROUTES);
 
 /**
- * True when `path` is a canonical route or a detail page beneath one
- * (`/tasks/<id>`, `/goals/<id>`), which is how deep links are built.
+ * The routes that serve a **detail page** under a single child segment.
  *
- * Deliberately rejects a bare prefix match against `/`: every path starts with
- * a slash, so treating `today` as a prefix would make this assert nothing.
+ * This list is the difference between `/tasks/<id>` and `/admin/members/<id>`,
+ * and it has to be declared rather than inferred. `isKnownAppPath` used to
+ * accept *any* child of *any* known route, on the reasoning that deep links are
+ * built as `<list>/<id>` — true for the four routes below, and false for every
+ * other entry in the table.
+ *
+ * It cost a family a signup. The join-request notification pointed at
+ * `/admin/members/<uuid>`; the approval queue is a single list with no `:id`
+ * child, so the router fell through to the catch-all and the owner's tap landed
+ * on the 404 screen. The guard whose entire job is to prevent exactly that
+ * waved it through, because `/admin/members` is a known route. The same hole
+ * was hiding a second one: `/wall/<postId>`, for a screen that has no detail
+ * page either.
+ *
+ * So: add a route here only when the router really serves a child under it.
+ * `frontend/src/app/router.test.tsx` checks this list against the router in
+ * both directions — a flagged route must have a child route, and an unflagged
+ * one must not — so the router stays the source of truth and drift is a test
+ * failure rather than a 404 in somebody's hand.
+ */
+export const APP_ROUTES_WITH_DETAIL: readonly AppRoute[] = [
+  APP_ROUTES.tasks,
+  APP_ROUTES.calendar,
+  APP_ROUTES.goals,
+  APP_ROUTES.shopping,
+];
+
+/**
+ * True when `path` is a canonical route, or a detail page beneath one of the
+ * routes that actually has detail pages (`/tasks/<id>`, `/goals/<id>`).
+ *
+ * Two things it deliberately refuses:
+ *
+ *  - a child of a route not in `APP_ROUTES_WITH_DETAIL` — see the note there;
+ *  - a *grandchild* of anything (`/tasks/<id>/edit`). Detail routes are one
+ *    `:param` segment deep, so a second segment is as unroutable as an unknown
+ *    prefix and must not inherit its parent's blessing.
+ *
+ * A query string or fragment is stripped first: `/shopping/<id>?focus=milk` is
+ * the same route as `/shopping/<id>`.
  */
 export function isKnownAppPath(path: string): boolean {
   const [pathname] = path.split(/[?#]/);
   if (!pathname || !pathname.startsWith('/')) return false;
-  if (pathname === APP_ROUTES.today) return true;
 
-  return APP_ROUTE_PATHS.some(
-    (route) => route !== APP_ROUTES.today && (pathname === route || pathname.startsWith(`${route}/`)),
-  );
+  // Exact match covers every entry, `today` (`/`) included — which is why this
+  // no longer needs a special case for a route that is a prefix of everything.
+  if (APP_ROUTE_PATHS.includes(pathname)) return true;
+
+  return APP_ROUTES_WITH_DETAIL.some((route) => {
+    if (!pathname.startsWith(`${route}/`)) return false;
+    const child = pathname.slice(route.length + 1);
+    return child.length > 0 && !child.includes('/');
+  });
 }

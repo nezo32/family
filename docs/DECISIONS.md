@@ -335,3 +335,233 @@ delivering is otherwise invisible. A subscription with no `deliveredAt` across
 its last N sends is marked unhealthy, and the app shows the user
 «Уведомления отключились — включить снова?» on next open. This closes the loop
 that would otherwise let a family member silently stop receiving everything.
+
+## D12 — Keeping the screen in sync: a family-wide revision poll, not a socket
+
+Two people stand in the kitchen with the shopping list open. One of them ticks
+«молоко». On the other phone the item stays unticked until somebody switches
+apps and comes back, because nothing told that phone anything happened. That is
+the whole problem this decision solves, and it is worth being precise about how
+small it is: **six users, one family, one screen where the answer is measured in
+seconds**, and a handful of others where a minute is fine.
+
+Everything below follows from taking that scale seriously. The instinct is to
+reach for a realtime transport, and a realtime transport is buildable here — but
+at six users it costs more to build, secure and keep alive than the latency it
+buys is worth, and every option that holds a connection open collides with two
+things this app has already decided: an access token that expires every ten
+minutes behind a refresh endpoint that revokes a whole token family on replay
+(D3), and iOS's habit of destroying a backgrounded PWA outright.
+
+### The obvious answer is impossible, and the next person must know why
+
+We already ship Web Push (D10). The tempting move is to send a silent push and
+have the service worker invalidate the query cache — no polling, no connection,
+zero idle cost.
+
+**On iOS you cannot do this, and it is not a preference.** Subscriptions are
+created with `userVisibleOnly: true`; every `push` event must call
+`showNotification()` inside `event.waitUntil()`; and after roughly three pushes
+where the handler ran without showing anything, iOS **silently revokes the
+subscription** — `docs/research/ios-pwa-push.md` §1, gate 3. That claim was
+re-verified against current public sources while writing this entry and has not
+changed. Repurposing push as a sync channel therefore does not merely fail; it
+destroys the notification subscription that D10 and D11 depend on, and
+`pushsubscriptionchange` does not exist on iOS (§2), so it cannot be repaired
+silently — only by a fresh user gesture that a family member will never think to
+give.
+
+The neighbouring escape hatches are closed too. `periodicSync` and Background
+Sync are unimplemented in WebKit (§7), so there is no way to wake and reconcile
+in the background either. And even where a push *is* legitimate, one shopping
+tick would cost the family one lock-screen notification with no `tag` grouping
+(§3) — which is precisely the failure mode `docs/architecture/notifications.md`
+calls the thing that kills these apps.
+
+Push stays what it is: a way to interrupt a person about something that matters.
+It is not a data channel. **Do not propose silent push again.**
+
+### What the existing defaults already give us, and where they run out
+
+`shared/api/query-client.ts` already sets `staleTime: 30s`,
+`refetchOnWindowFocus: true`, `refetchOnReconnect: true`, `refetchOnMount: true`
+and `gcTime: 30 min`, and the reasoning written into that file is right: on a
+phone, focus *is* the moment the data is stalest, and coming back from the app
+switcher to a cached render that revalidates behind it is the correct behaviour
+for most screens. Approving a member, adding an event, contributing to a goal,
+posting on the wall — all of these are seen by somebody who *opens* the app, and
+opening the app is a focus event. None of those screens need anything more.
+
+It runs out in exactly one situation, and it is the situation named first:
+**two clients foregrounded at the same time on the same screen.** Nobody
+switches windows, so no focus event ever fires, and the second phone stays wrong
+for as long as it is held. That is the shopping list in a shop, and to a lesser
+degree the tasks screen on a Saturday clean-up. No amount of `staleTime` tuning
+reaches it, because staleness only causes a refetch when something *asks*, and a
+screen that is already mounted and already fetched never asks again.
+
+So the gap is narrow and specific: a foregrounded client needs a way to learn
+that something changed, without holding a connection open and without waking a
+sleeping phone.
+
+### The decision
+
+**One tiny endpoint returning per-domain revision counters, polled by a single
+TanStack Query query while the document is visible, whose result invalidates the
+matching query keys.**
+
+```
+GET /api/changes  ->  { "rev": { "tasks": 128, "shopping": 4471, "goals": 12, … } }
+```
+
+Counters live in one Redis hash, incremented by a Fastify `onResponse` hook on
+every successful non-GET request under `/api`, mapped by route prefix to a
+domain. The client remembers the last map it saw; any domain whose number
+**differs** — up or down — has its query keys invalidated with
+`refetchType: 'active'`. One request every 15 seconds while the app is visible,
+5 seconds while a shopping list is on screen, and none at all while it is not.
+
+Why this shape and not a smaller or a bigger one:
+
+- **It reuses the authenticated `api` client verbatim**, so a 401 mid-poll goes
+  through the single-flight refresh in `shared/api/refresh.ts` that already
+  exists and is already tested. No second auth surface, no token in a
+  querystring, and structurally no way to produce the reconnect storm that would
+  race D3's rotation. This is the strongest single argument against every
+  connection-based option below.
+- **Resume is free and exact.** `refetchOnWindowFocus` on the `['changes']`
+  query means a phone returning from an hour in the background asks "what
+  moved?" within a beat of becoming visible and invalidates only those domains —
+  strictly better than the blanket refetch-everything that a very short
+  `staleTime` would produce, and it needs no `Last-Event-ID`, no server-side
+  replay buffer and no catch-up protocol, because a counter *is* the catch-up.
+- **It is one request covering every screen at once**, including the
+  notification bell and the Today dashboard, instead of one interval per query
+  each pulling a full list payload. The response is roughly 120 bytes.
+- **Nothing is fetched that nobody is looking at.** `refetchType: 'active'`
+  marks unmounted queries stale without fetching them; they refresh on mount.
+- **Zero infrastructure.** No Caddy change, no new dependency, no new Redis
+  connection, no pub/sub, no long-lived connections against the VDI. Redis is
+  already a hard dependency (rate limiting, BullMQ), so this adds nothing new
+  that can be down.
+- **It does not replace the floor, it sits on it.** Focus and reconnect
+  refetching stay exactly as they are. If the change feed breaks entirely the
+  app degrades to today's behaviour, not to nothing.
+
+Battery and data are the reason for a visibility gate rather than a cleverer
+interval: locking an iPhone fires `visibilitychange → hidden`, so a phone in a
+pocket polls zero times. The 5-second rate exists only while a human is looking
+at a shopping list, which is the one place it earns its cost. Worst case with
+every family member holding a phone with the app open is under 40 requests a
+minute against a per-user rate limit of 300.
+
+### What was rejected
+
+**Server-Sent Events.** The closest call, and the one to revisit if the
+requirement changes. Caddy is already prepared for it (`flush_interval -1` on
+`/api/*`) and the document CSP's `connect-src 'self'` already permits it. It was
+rejected on the sum of four costs, none fatal alone. `EventSource` cannot send
+an `Authorization` header and `core/plugins/auth.ts` reads only
+`Authorization: Bearer`, so it needs either a token in the querystring — which
+lands in Caddy's JSON access log — or a single-use ticket endpoint, a new auth
+surface to design, secure and test. Reconnection after every iOS backgrounding
+races `/api/auth/refresh`, and D3's reuse detection turns a bad race into
+"everybody is logged out", which has already bitten the test suite once. A
+connection killed by backgrounding needs a catch-up on resume regardless, which
+is either a server-side event buffer keyed by `Last-Event-ID` or a plain
+refetch — and if it is a plain refetch, the poll was already doing that. And all
+of it buys roughly 5 seconds → 0.5 seconds on **one** screen. Six idle
+connections would not trouble the VDI; the machinery around them is the cost.
+*Revisit if* a genuinely sub-second surface appears (shared presence, a live
+timer), or the family grows past roughly fifteen people so the aggregate poll
+rate begins to matter.
+
+**WebSockets.** Everything SSE costs, plus framing, ping/pong liveness, a
+subprotocol and `@fastify/websocket`, in exchange for a client→server channel we
+have no use for — every write is already a REST mutation with optimistic
+rollback. For a one-way "domain X changed" signal it buys nothing over SSE, and
+SSE already lost.
+
+**Postgres `LISTEN/NOTIFY`.** The right fan-out primitive *if* there were a
+transport worth feeding, and it would need a dedicated connection held outside
+the Drizzle pool. With no socket to feed it solves a problem we do not have.
+Redis pub/sub would be equally reasonable and equally unnecessary.
+
+**A global short `refetchInterval` on every query.** N requests per interval per
+mounted screen, each returning a full list payload whether or not anything
+changed, and it keeps polling domains the user cannot even see. The revision
+poll is the same idea with the payload taken out.
+
+**Per-query `refetchInterval` on the shopping list only, with no new endpoint.**
+Honestly close, and it needs no backend work at all — this is the fallback if
+the endpoint below turns out to be a mistake. Rejected because it fixes only the
+screens somebody remembers to configure, missing the bell, the dashboard and
+every screen not yet written, and because it refetches the whole list every tick
+even when nothing moved.
+
+**A `/api/changes?since=<cursor>` change log.** A cursor implies a durable
+append-only log that must be written on every mutation, indexed, and trimmed
+forever. The client does not need to know *what* changed, only *whether* — and a
+counter answers that with no storage, no trimming and no per-handler writes.
+
+**CRDTs / local-first replication.** Already rejected in D9, and correctly: the
+shopping outbox in `features/shopping/outbox.ts` gives us offline writes without
+a replication protocol.
+
+**`BroadcastChannel` as the mechanism.** Same-device only, so it cannot address
+the two-phones case at all. It stays worth about twenty lines later as a
+cross-tab accelerator; see the companion note.
+
+### Latency targets, per screen
+
+These drive the two interval constants and nothing else. Where the target is
+"focus", that is a deliberate statement that the screen does not deserve a
+timer.
+
+| Surface | Query key root | Target | Delivered by |
+|---|---|---|---|
+| Shopping list items | `['shopping','items',listId]` | **≤ 6 s**, both phones foreground | 5 s poll while a list page is mounted |
+| Shopping lists index | `['shopping']` | ≤ 20 s | 15 s poll |
+| Tasks / chores done state | `['tasks']` | ≤ 20 s | 15 s poll |
+| Today dashboard | `['dashboard']` | ≤ 20 s | 15 s poll, fanned in from five domains |
+| Calendar | `['calendar']` | ≤ 20 s | 15 s poll |
+| Goal balance | `['goals']` | ≤ 60 s required, ≤ 20 s delivered | 15 s poll |
+| Wall, kudos, polls | `['wall']` | ≤ 20 s | 15 s poll |
+| Roster, pending approvals | `['members']` | ≤ 20 s | 15 s poll |
+| Own effective permissions | `['me']` | affordances ≤ 20 s | 15 s poll, via `members` |
+| Notification bell unread | `['notifications']` | ≤ 20 s | 15 s poll + an explicit bump from the dispatcher |
+| Sign-in methods, push devices | `['settings']` | focus only | existing defaults — you change these on the device in your hand |
+| Anything at all while backgrounded | — | **no target**; correct within ~1 s of resume | focus refetch of `['changes']` |
+
+Permission *enforcement* is untouched by any of this: `resolveAuth` re-reads the
+`users` row on every request, so a suspension or a role change binds
+immediately. The `['me']` invalidation above only repairs the client's affordance
+layer, which would otherwise lag by up to ten minutes.
+
+### The rule that protects optimistic updates
+
+Optimistic writes are everywhere in this app — `useOptimisticOccurrence` in
+tasks, the wall's comment and reaction patches, and the shopping outbox, which
+is not even a `useMutation`. An invalidation landing mid-flight refetches the
+server's *pre-mutation* state and flashes the user's tick back off before the
+response arrives and turns it on again. On the shopping list, which is the one
+screen polling fastest, that flicker would be the most visible bug in the app.
+
+**Therefore: the change feed never invalidates while any mutation is in flight.**
+Affected domains are held in a pending set and flushed when the mutation cache
+reports idle, or on the next poll tick. Nothing is lost — the set is additive —
+and the delay is bounded by one interval, which is invisible beside the
+mutation's own `onSettled` invalidation that was going to reconcile anyway. This
+is the one behaviour that gets a named regression test.
+
+Offline is protected from the other side: `['changes']` is the one query in the
+app that runs with `networkMode: 'online'` rather than the global
+`offlineFirst`, so it pauses while the browser believes it is offline and
+resumes on reconnect, instead of firing failing requests every 15 seconds
+alongside a shopping outbox that is busy queueing writes.
+
+### Build detail
+
+`docs/architecture/sync.md` — exact files, the route-prefix→domain map, the
+query-key map, the failure-mode table, the open questions and the test plan.
+Build from that, not from this entry.

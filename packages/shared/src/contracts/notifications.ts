@@ -748,6 +748,9 @@ export const deliveryReceiptsResponseSchema = z.object({
 /**
  * `POST /api/notifications/read`. Either an explicit id list or `all: true`
  * ("прочитать все") — the bell badge needs both.
+ *
+ * Reversed by `markUnreadRequestSchema` below (§G4's six-second undo), which
+ * takes ids and nothing else — see there for why the two are separate.
  */
 export const markReadRequestSchema = z
   .object({
@@ -761,6 +764,39 @@ export const markReadRequestSchema = z
     path: ['ids'],
   });
 export type MarkReadRequest = z.infer<typeof markReadRequestSchema>;
+
+/**
+ * `POST /api/notifications/unread` — the reverse of the mark-read call, and the
+ * only reason it exists is §G4: every gesture action has to be undoable for six
+ * seconds, and swipe-left on a notification row is «Прочитано».
+ *
+ * ## Why a companion route rather than `unread: true` on the body above
+ *
+ * The undo is only ever *these rows, the ones the finger just touched*. Folding
+ * it into `markReadRequestSchema` would inherit `all` and `before` along with
+ * it, and neither has a defensible inverse: `{ all: true, unread: true }` is
+ * "mark my entire inbox unread", a bulk write nobody asked for that the badge,
+ * the escalation ladder and the D11 receipts would all have to survive. It
+ * would have to be validated and refused — more schema, not less. A separate
+ * body that simply cannot express it is smaller than a flag that can and must
+ * not, and `POST /notifications/read` keeps meaning exactly one thing in the
+ * generated OpenAPI.
+ *
+ * ## What it may and may not touch
+ *
+ * `readAt` only. `deliveredAt`, `interactedAt` and `acknowledgedAt` are the D11
+ * delivery-confirmation record — the evidence for "did this actually reach
+ * them" — and un-reading an inbox row says nothing about any of them. The
+ * status field walks back from `read` to what the receipts already prove
+ * (`delivered` if it arrived, otherwise `sent`), and a row that has since gone
+ * past `read` on its own — `interacted`, `acknowledged` — keeps its status
+ * untouched and merely loses `readAt`.
+ */
+export const markUnreadRequestSchema = z.object({
+  /** Deliveries to return to unread. Always explicit — there is no `all` here. */
+  ids: z.array(idSchema).min(1).max(500),
+});
+export type MarkUnreadRequest = z.infer<typeof markUnreadRequestSchema>;
 
 /* -------------------------------------------------------------------------- */
 /* Weekly digest                                                               */

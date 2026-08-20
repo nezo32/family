@@ -131,5 +131,28 @@ export const AUTH_RU = {
     formTitle: 'Не удалось войти',
     registerFormTitle: 'Не удалось отправить заявку',
     statusUnavailable: 'Не удалось проверить статус заявки. Попробуйте чуть позже.',
+
+    /**
+     * Bare provider names, for sentences that talk *about* a provider.
+     * `login.providerGoogle` is a button label («Войти через Google») and reads
+     * wrong inside one.
+     */
+    providerNames: {
+      google: 'Google',
+      telegram: 'Telegram',
+    },
+
+    /**
+     * A provider that is configured wrong is not a blip, and «попробуйте через
+     * минуту» — the generic 503 copy — sends the user into a retry loop that
+     * cannot succeed. This says what actually happened and what to do instead.
+     *
+     * The live example: the Telegram bot had no domain registered with
+     * BotFather, so `oauth.telegram.org` answered every request with a bare
+     * «Bot domain invalid» page. Nobody but the family admin can fix that.
+     */
+    providerUnavailableTitle: (provider: string) => `Вход через ${provider} сейчас недоступен`,
+    providerUnavailableText: (provider: string) =>
+      `Вход через ${provider} не настроен на сервере. Войдите другим способом — или попросите администратора семьи проверить настройки.`,
   },
 } as const;

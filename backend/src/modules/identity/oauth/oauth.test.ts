@@ -3,6 +3,7 @@ import { createHash, createHmac } from 'node:crypto';
 import cookie from '@fastify/cookie';
 import { fastify, type RouteOptions } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
+import { ResponseBodyError } from 'openid-client';
 import { describe, expect, it } from 'vitest';
 
 import { AppError } from '../../../core/errors.js';
@@ -13,8 +14,20 @@ import { decideLinkOutcome, sanitizeRawProfile, type LinkDecisionInput } from '.
 import {
   buildDataCheckString,
   computeTelegramHash,
+  isTelegramTokenEndpoint,
+  normalizeTelegramTokenResponse,
+  probeTelegramLoginDomain,
+  telegramAuthorizationParams,
+  telegramLoginOrigin,
   telegramMiniAppSecretKey,
+  telegramProfileFromClaims,
+  telegramRefusalReason,
+  telegramTokenErrorHint,
+  telegramTokenErrorIn,
+  telegramTokenFailureFrom,
   telegramWidgetSecretKey,
+  TELEGRAM_CLIENT_SECRET_FIX,
+  TELEGRAM_SCOPES,
   verifyTelegramInitData,
   verifyTelegramWidget,
 } from './telegram.js';
@@ -268,6 +281,118 @@ describe('telegram Mini App initData HMAC', () => {
         maxAgeSeconds: 60,
       }),
     ).toThrowError(/too old/);
+  });
+});
+
+/* ========================================================================== */
+/* Telegram — one human, one identity, across all three flows                 */
+/* ========================================================================== */
+
+/**
+ * The regression lock for the `sub`-versus-`id` trap.
+ *
+ * Telegram's `id_token` carries **both** `sub` (the OIDC subject, returned by
+ * the `openid` scope) and `id` (the numeric Telegram user id, returned by
+ * `profile`) — two claims behind two different scopes, holding two different
+ * values. Telegram's own worked example pairs `"sub": "1234123412341234123"`
+ * with `"id": 987654321`.
+ *
+ * The Login Widget and Mini App fallbacks have only `id` to work with. So if
+ * the OIDC path ever keys off `sub` again, one family member signing in through
+ * both routes gets **two** `user_identities` rows — and because registration is
+ * admin-gated, their second sign-in shows up as a stranger awaiting approval.
+ *
+ * These tests fail the moment any one flow drifts off `id`.
+ */
+describe('telegram identity key parity', () => {
+  const TELEGRAM_USER_ID = 987_654_321;
+  /** Deliberately unequal to the user id, exactly as Telegram's docs show it. */
+  const OIDC_SUBJECT = '1234123412341234123';
+  const authDate = 1_700_000_000;
+  const now = new Date(authDate * 1000 + 5_000);
+
+  /** The documented id_token payload, minus the claims we do not read. */
+  const oidcProfile = () =>
+    telegramProfileFromClaims({
+      iss: 'https://oauth.telegram.org',
+      aud: '123456789',
+      sub: OIDC_SUBJECT,
+      iat: authDate,
+      exp: authDate + 3600,
+      id: TELEGRAM_USER_ID,
+      name: 'Иван Петров',
+      given_name: 'Иван',
+      family_name: 'Петров',
+      preferred_username: 'ivan',
+      picture: 'https://cdn4.telesco.pe/file/avatar.jpg',
+    });
+
+  const widgetProfile = () => {
+    const payload: Record<string, string> = {
+      id: String(TELEGRAM_USER_ID),
+      first_name: 'Иван',
+      last_name: 'Петров',
+      username: 'ivan',
+      auth_date: String(authDate),
+    };
+    const hash = computeTelegramHash(
+      telegramWidgetSecretKey(BOT_TOKEN),
+      buildDataCheckString(Object.entries(payload)),
+    );
+    return verifyTelegramWidget({ payload: { ...payload, hash }, botToken: BOT_TOKEN, now });
+  };
+
+  const miniAppProfile = () => {
+    const fields: [string, string][] = [
+      ['auth_date', String(authDate)],
+      [
+        'user',
+        JSON.stringify({
+          id: TELEGRAM_USER_ID,
+          first_name: 'Иван',
+          last_name: 'Петров',
+          username: 'ivan',
+        }),
+      ],
+    ];
+    const hash = computeTelegramHash(
+      telegramMiniAppSecretKey(BOT_TOKEN),
+      buildDataCheckString(fields),
+    );
+    const params = new URLSearchParams(fields);
+    params.set('hash', hash);
+    return verifyTelegramInitData({ initData: params.toString(), botToken: BOT_TOKEN, now });
+  };
+
+  it('resolves OIDC, widget and Mini App to one and the same providerUserId', () => {
+    const expected = String(TELEGRAM_USER_ID);
+    expect(oidcProfile().providerUserId).toBe(expected);
+    expect(widgetProfile().providerUserId).toBe(expected);
+    expect(miniAppProfile().providerUserId).toBe(expected);
+  });
+
+  it('keys the OIDC flow on `id`, never on `sub`', () => {
+    expect(oidcProfile().providerUserId).not.toBe(OIDC_SUBJECT);
+  });
+
+  it('normalizes the numeric `id` claim to the string the fallbacks produce', () => {
+    // `id` is a JSON number over OIDC and a string everywhere else. Leaving it
+    // un-normalized would split the identity just as effectively as reading the
+    // wrong claim, and `text` columns compare exactly.
+    expect(typeof oidcProfile().providerUserId).toBe('string');
+    expect(oidcProfile().providerUserId).toBe(widgetProfile().providerUserId);
+  });
+
+  it('keeps `sub` in raw_profile — it is worth logging, just not a join key', () => {
+    expect(oidcProfile().rawProfile).toMatchObject({ sub: OIDC_SUBJECT, flow: 'oidc' });
+  });
+
+  it('refuses an id_token with no `id` claim instead of falling back to `sub`', () => {
+    // Silently substituting `sub` here is what would mint the duplicate
+    // identity, so a missing `profile` scope has to be fatal and loud.
+    expect(() =>
+      telegramProfileFromClaims({ iss: 'https://oauth.telegram.org', sub: OIDC_SUBJECT }),
+    ).toThrowError(/`profile` scope/);
   });
 });
 
@@ -564,6 +689,250 @@ describe('oauth transaction store', () => {
 });
 
 /* ========================================================================== */
+/* Telegram - the login origin and the BotFather domain                       */
+/* ========================================================================== */
+
+/**
+ * These exist because of a production outage that showed as «Bot domain
+ * invalid» on Telegram's own page: a bare plain-text 200 that our callback
+ * never sees, so no server log and no Russian message could ever be produced
+ * from it. Everything below is the part we can assert without a network.
+ */
+describe('telegram login origin', () => {
+  it('is the bare origin of APP_PUBLIC_URL - no trailing slash, no path', () => {
+    expect(telegramLoginOrigin('https://nezo.su')).toBe('https://nezo.su');
+    expect(telegramLoginOrigin('https://nezo.su/')).toBe('https://nezo.su');
+    expect(telegramLoginOrigin('https://nezo.su/app/?next=/x#frag')).toBe('https://nezo.su');
+  });
+
+  it('lower-cases the host and drops the default port', () => {
+    // Telegram compares the string literally against the registered domain.
+    expect(telegramLoginOrigin('https://NEZO.SU')).toBe('https://nezo.su');
+    expect(telegramLoginOrigin('https://nezo.su:443')).toBe('https://nezo.su');
+  });
+
+  it('keeps a non-default port and never rewrites the host', () => {
+    expect(telegramLoginOrigin('http://localhost:5173')).toBe('http://localhost:5173');
+    // `www.` is a real difference from `cookieDomain`'s point of view, so it is
+    // APP_PUBLIC_URL that must be fixed - not silently patched here.
+    expect(telegramLoginOrigin('https://www.nezo.su')).toBe('https://www.nezo.su');
+  });
+
+  it('refuses a non-http(s) or malformed APP_PUBLIC_URL', () => {
+    expect(() => telegramLoginOrigin('ftp://nezo.su')).toThrowError(AppError);
+    expect(() => telegramLoginOrigin('nezo.su')).toThrowError(AppError);
+  });
+
+  it('defaults to the configured public origin', () => {
+    expect(telegramLoginOrigin()).toBe(new URL(process.env.APP_PUBLIC_URL ?? '').origin);
+  });
+});
+
+describe('telegram authorization parameters', () => {
+  const params = telegramAuthorizationParams({
+    state: 'st',
+    nonce: 'no',
+    codeChallenge: 'cc',
+    redirectUri: 'https://nezo.su/api/auth/telegram/callback',
+    origin: telegramLoginOrigin('https://nezo.su/'),
+  });
+
+  it('sends `origin` as the exact public origin', () => {
+    // The single most common cause of «Bot domain invalid» after the domain
+    // itself: a trailing slash, a path, or http where the bot expects https.
+    expect(params.origin).toBe('https://nezo.su');
+    expect(params.origin?.endsWith('/')).toBe(false);
+    expect(new URL(params.origin ?? '').protocol).toBe('https:');
+  });
+
+  it('derives redirect_uri from the same origin it sends', () => {
+    expect(new URL(params.redirect_uri ?? '').origin).toBe(params.origin);
+    expect(new URL(params.redirect_uri ?? '').pathname).toBe('/api/auth/telegram/callback');
+  });
+
+  it('is a PKCE code flow carrying the bot_access scope', () => {
+    expect(params.response_type).toBe('code');
+    expect(params.code_challenge_method).toBe('S256');
+    expect(params.code_challenge).toBe('cc');
+    expect(params.state).toBe('st');
+    expect(params.nonce).toBe('no');
+    expect(params.scope).toBe(TELEGRAM_SCOPES);
+    expect(TELEGRAM_SCOPES).toContain('telegram:bot_access');
+  });
+});
+
+describe('telegram refusal detection', () => {
+  it('recognises the bare plain-text refusals, case-insensitively', () => {
+    expect(telegramRefusalReason('Bot domain invalid')).toBe('bot domain invalid');
+    expect(telegramRefusalReason('  ORIGIN REQUIRED\n')).toBe('origin required');
+    expect(telegramRefusalReason('bot_id required')).toBe('bot_id required');
+  });
+
+  it('does not mistake the real widget page for a refusal', () => {
+    expect(telegramRefusalReason('<!DOCTYPE html><html><body>Telegram</body></html>')).toBeNull();
+    expect(telegramRefusalReason('')).toBeNull();
+  });
+});
+
+describe('telegram login domain probe', () => {
+  const reply = (body: string) =>
+    ((() => Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch);
+
+  it('asks Telegram with the origin and bot id we would really send', async () => {
+    let seen = '';
+    const spy = ((url: URL) => {
+      seen = url.href;
+      return Promise.resolve(new Response('<!DOCTYPE html>', { status: 200 }));
+    }) as unknown as typeof fetch;
+
+    const result = await probeTelegramLoginDomain({
+      botId: '8936828934',
+      origin: 'https://nezo.su',
+      fetchImpl: spy,
+    });
+
+    const asked = new URL(seen);
+    expect(asked.origin).toBe('https://oauth.telegram.org');
+    expect(asked.pathname).toBe('/auth');
+    expect(asked.searchParams.get('bot_id')).toBe('8936828934');
+    expect(asked.searchParams.get('origin')).toBe('https://nezo.su');
+    expect(result.ok).toBe(true);
+    expect(result.indeterminate).toBe(false);
+  });
+
+  it('reports Telegram\'s own words when the domain is not registered', async () => {
+    const result = await probeTelegramLoginDomain({
+      botId: '8936828934',
+      origin: 'https://nezo.su',
+      fetchImpl: reply('Bot domain invalid'),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('bot domain invalid');
+    // The two facts a diagnosis needs, carried on the result itself.
+    expect(result.origin).toBe('https://nezo.su');
+    expect(result.botId).toBe('8936828934');
+  });
+
+  it('never blocks a login because the probe itself failed', async () => {
+    const dead = (() => Promise.reject(new Error('ENOTFOUND'))) as unknown as typeof fetch;
+    const result = await probeTelegramLoginDomain({
+      botId: '8936828934',
+      origin: 'https://nezo.su',
+      fetchImpl: dead,
+    });
+    // Unreachable proves nothing - refusing to start sign-in would be a worse
+    // outage than the one the check exists to catch.
+    expect(result.ok).toBe(true);
+    expect(result.indeterminate).toBe(true);
+  });
+});
+
+/* ========================================================================== */
+/* Telegram — token endpoint client authentication                            */
+/* ========================================================================== */
+
+describe('telegram token endpoint errors', () => {
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+    });
+
+  it('finds an OAuth error object in a response body', () => {
+    expect(telegramTokenErrorIn({ error: 'invalid_client' })).toEqual({
+      error: 'invalid_client',
+      description: null,
+    });
+    expect(
+      telegramTokenErrorIn({ error: 'invalid_grant', error_description: 'code expired' }),
+    ).toEqual({ error: 'invalid_grant', description: 'code expired' });
+  });
+
+  it('never reads a successful token response as a failure', () => {
+    expect(telegramTokenErrorIn({ access_token: 'a', token_type: 'Bearer' })).toBeNull();
+    expect(telegramTokenErrorIn({})).toBeNull();
+    expect(telegramTokenErrorIn(null)).toBeNull();
+    expect(telegramTokenErrorIn('invalid_client')).toBeNull();
+    // A body that somehow carries both is a success — the token is what matters.
+    expect(telegramTokenErrorIn({ access_token: 'a', error: 'invalid_client' })).toBeNull();
+  });
+
+  /**
+   * The whole reason this machinery exists: Telegram rejects a token request
+   * with HTTP 200, which `oauth4webapi` does not treat as an error response at
+   * all. Left alone it surfaces as «"response" body "access_token" property must
+   * be a string», which names neither Telegram nor the client secret.
+   */
+  it('rewrites Telegram\'s HTTP 200 rejection to the status RFC 6749 requires', async () => {
+    const normalized = await normalizeTelegramTokenResponse(json({ error: 'invalid_client' }));
+    expect(normalized.status).toBe(400);
+    await expect(normalized.json()).resolves.toEqual({ error: 'invalid_client' });
+  });
+
+  it('leaves a genuine token response alone', async () => {
+    const normalized = await normalizeTelegramTokenResponse(
+      json({ access_token: 'a', token_type: 'Bearer', id_token: 'jwt' }),
+    );
+    expect(normalized.status).toBe(200);
+    await expect(normalized.json()).resolves.toMatchObject({ access_token: 'a' });
+  });
+
+  it('passes through non-JSON and non-200 responses untouched', async () => {
+    const html = new Response('<!DOCTYPE html>', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    });
+    expect(await normalizeTelegramTokenResponse(html)).toBe(html);
+
+    const already400 = json({ error: 'invalid_client' }, 400);
+    expect(await normalizeTelegramTokenResponse(already400)).toBe(already400);
+  });
+
+  it('normalizes only the token endpoint, not discovery or JWKS', () => {
+    expect(isTelegramTokenEndpoint('https://oauth.telegram.org/token')).toBe(true);
+    expect(isTelegramTokenEndpoint('https://oauth.telegram.org/auth')).toBe(false);
+    expect(isTelegramTokenEndpoint('https://oauth.telegram.org/.well-known/jwks.json')).toBe(false);
+    // A look-alike host must not get its responses rewritten.
+    expect(isTelegramTokenEndpoint('https://oauth.telegram.org.evil.test/token')).toBe(false);
+    expect(isTelegramTokenEndpoint('not a url')).toBe(false);
+  });
+
+  it('unwraps the library error back into Telegram\'s own words', () => {
+    const err = new ResponseBodyError('server responded with an error in the response body', {
+      cause: { error: 'invalid_client', error_description: 'client authentication failed' },
+      response: new Response('{}', { status: 400 }),
+    });
+    expect(telegramTokenFailureFrom(err)).toEqual({
+      error: 'invalid_client',
+      description: 'client authentication failed',
+    });
+    expect(telegramTokenFailureFrom(new Error('boom'))).toBeNull();
+  });
+
+  /**
+   * `invalid_client` is the only symptom of a missing or wrong
+   * `TELEGRAM_CLIENT_SECRET`, and the single most likely wrong guess is the bot
+   * token — every other Telegram flow in this module keys off it. The hint has
+   * to rule that out explicitly or it does not help anyone.
+   */
+  it('explains invalid_client in terms of where the secret comes from', () => {
+    const hint = telegramTokenErrorHint('invalid_client');
+    expect(hint).toBeTruthy();
+    expect(hint).toContain('TELEGRAM_CLIENT_SECRET');
+    expect(hint).toContain('BotFather');
+    expect(hint).toContain('NOT the bot token');
+    expect(telegramTokenErrorHint('something_new')).toBeNull();
+  });
+
+  it('does not offer the bot token as a client secret anywhere', () => {
+    // A guard against a future "helpful" derivation: the client secret is
+    // issued by BotFather and is not computable from anything we hold.
+    expect(TELEGRAM_CLIENT_SECRET_FIX).toContain('BotFather');
+    expect(TELEGRAM_CLIENT_SECRET_FIX).toContain('Login Widget');
+  });
+});
+
+/* ========================================================================== */
 /* route wiring                                                               */
 /* ========================================================================== */
 
@@ -646,13 +1015,21 @@ describe('oauth route plugin', () => {
     await app.close();
   });
 
-  it('answers 503 for a provider with no credentials configured', async () => {
+  it('sends a browser back to the login screen when a provider is unavailable', async () => {
     const { app } = await buildTestApp();
 
+    // `/start` is a top-level navigation: a JSON error envelope in the address
+    // bar is unreadable, English, and offers no way back into the app.
     const start = await app.inject({ method: 'GET', url: '/api/auth/google/start' });
-    expect(start.statusCode).toBe(503);
-    expect(start.json<{ error: { code: string } }>().error.code).toBe('SERVICE_UNAVAILABLE');
+    expect(start.statusCode).toBe(302);
+    const location = new URL(start.headers.location as string);
+    expect(location.pathname).toBe('/login');
+    expect(location.searchParams.get('error')).toBe('SERVICE_UNAVAILABLE');
+    // Named, so the screen can say *which* provider is out rather than blaming
+    // sign-in as a whole.
+    expect(location.searchParams.get('provider')).toBe('google');
 
+    // The callback is not a screen anybody can reach on purpose, and stays JSON.
     // Reaches no database: the provider check runs before the state lookup.
     const callback = await app.inject({
       method: 'GET',
@@ -660,6 +1037,14 @@ describe('oauth route plugin', () => {
     });
     expect(callback.statusCode).toBe(503);
 
+    await app.close();
+  });
+
+  it('keeps a caller mistake a JSON 4xx rather than an outage screen', async () => {
+    const { app } = await buildTestApp();
+    // A bad request is not a provider outage and must not be disguised as one.
+    const res = await app.inject({ method: 'GET', url: '/api/auth/google/start?intent=link' });
+    expect(res.statusCode).toBe(401);
     await app.close();
   });
 

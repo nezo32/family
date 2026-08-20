@@ -12,6 +12,7 @@ import {
   idSchema,
   inAppNotificationSchema,
   markReadRequestSchema,
+  markUnreadRequestSchema,
   notificationTestRequestSchema,
   notificationTestResponseSchema,
   okSchema,
@@ -139,6 +140,44 @@ const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
         ...(body.all ? { all: body.all } : {}),
         ...(body.before ? { before: body.before } : {}),
       });
+      return { ok: true } as const;
+    },
+  );
+
+  /**
+   * The undo behind §G4's «Отменить» on a swiped notification row.
+   *
+   * A companion route rather than a flag on `/notifications/read`, for the
+   * reason written out on `markUnreadRequestSchema`: the undo is only ever the
+   * ids the finger just touched, and a shared body would have to carry — and
+   * then refuse — `{ all: true }`.
+   *
+   * Nothing is returned but `ok`. How many rows moved is not the client's
+   * business: an id it does not own matches nothing, a replayed undo matches
+   * nothing, and both are ordinary. The count is what would turn this into an
+   * existence oracle for another member's deliveries.
+   *
+   * The `notifications` revision bump is not made here. `core/plugins/revisions`
+   * classifies `/api/notifications/*` (everything but `/deliveries` and the
+   * settings routes) as `['notifications']` and bumps it in `onResponse`, which
+   * is why this route's path is `/notifications/unread` and not something under
+   * `/notifications/deliveries` — the latter is deliberately classified as
+   * changing nothing, and an undo hidden there would leave the badge stale on
+   * every other device in the family.
+   */
+  app.post(
+    '/notifications/unread',
+    {
+      config: { permission: 'notification:manage:own' },
+      schema: {
+        tags: ['notifications'],
+        summary: 'Return inbox notifications to unread (undo of mark-read)',
+        body: markUnreadRequestSchema,
+        response: { 200: okSchema },
+      },
+    },
+    async (request) => {
+      await service.markUnread(getDb(), auth(request).userId, request.body.ids);
       return { ok: true } as const;
     },
   );

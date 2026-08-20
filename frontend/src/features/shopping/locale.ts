@@ -94,6 +94,14 @@ export const SHOPPING_RU = {
   markBought: 'Отметить купленным',
   markNeeded: 'Вернуть в список',
 
+  /**
+   * Gestures (§C-gestures/G4). One word for an 88px button and a toast; the
+   * long forms above stay on the visible tick, which is what teaches the
+   * action. No «проведите, чтобы…» hint — §G1 keeps gestures silent.
+   */
+  swipeBought: 'Куплено',
+  swipeNeeded: 'Вернули',
+
   /* quick add ------------------------------------------------------------ */
   quickAddLabel: 'Что купить',
   /*

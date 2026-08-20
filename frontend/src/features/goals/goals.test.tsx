@@ -18,6 +18,7 @@ import {
 import { useGoalAbilities } from './hooks';
 import { GoalCard } from './components/GoalCard';
 import { ContributeDialog } from './components/ContributeDialog';
+import { GoalFormDialog } from './components/GoalFormDialog';
 
 /**
  * What is worth testing here, and why.
@@ -185,18 +186,39 @@ function GoalCardUnderPermissions() {
   );
 }
 
+/**
+ * The same condition `GoalDetailPage` guards «Пополнить» with — that button
+ * moved off the list row in the §D4 rebuild (one filled primary per view), so
+ * the D4 rule is asserted where the affordance now lives.
+ */
+function ContributeAffordance() {
+  const abilities = useGoalAbilities();
+  return abilities.canContribute ? <button type="button">{GOALS_RU.contribute}</button> : null;
+}
+
 describe('permission affordances', () => {
-  it('shows the contribute button to an adult', () => {
-    renderAs(ADULT_PERMISSIONS, <GoalCardUnderPermissions />);
+  it('resolves the contribute ability from useCan(), never from a role (D4)', () => {
+    renderAs(ADULT_PERMISSIONS, <ContributeAffordance />);
     expect(screen.getByRole('button', { name: GOALS_RU.contribute })).toBeInTheDocument();
   });
 
   it('hides every write affordance from a read-only teen', () => {
-    renderAs(TEEN_PERMISSIONS, <GoalCardUnderPermissions />);
-
-    // The teen still sees the goal — they just cannot act on it.
-    expect(screen.getByText('Отпуск на море')).toBeInTheDocument();
+    renderAs(TEEN_PERMISSIONS, <ContributeAffordance />);
     expect(screen.queryByRole('button', { name: GOALS_RU.contribute })).not.toBeInTheDocument();
+  });
+
+  it('never puts a write affordance on a goal row — for anybody', () => {
+    // §D4: the row is one indicator and one tap into the goal. «Пополнить» on
+    // every row is a second filled primary per goal, floating at a different
+    // height in each card because the titles wrap differently.
+    renderAs(ADULT_PERMISSIONS, <GoalCardUnderPermissions />);
+    expect(screen.getByText('Отпуск на море')).toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('still shows the goal itself to a read-only teen', () => {
+    renderAs(TEEN_PERMISSIONS, <GoalCardUnderPermissions />);
+    expect(screen.getByText('Отпуск на море')).toBeInTheDocument();
   });
 });
 
@@ -235,5 +257,73 @@ describe('contribute dialog preview', () => {
     fireEvent.change(amount, { target: { value: '1 500' } });
     expect(screen.getByTestId('contribute-preview-balance').textContent).toBe(formatMoney(-50_000));
     expect(screen.getByText(GOALS_RU.previewOverdraft)).toBeInTheDocument();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* the edit form survives a concurrent change                                  */
+/* -------------------------------------------------------------------------- */
+
+describe('goal form vs. a refetch mid-edit', () => {
+  /**
+   * The bug this pins down: the re-seed effect depended on the whole `goal`
+   * object. TanStack's structural sharing keeps that object identical while the
+   * data is unchanged, so an idle refetch is harmless and the dependency looks
+   * safe — until another family member actually changes the goal. Then the
+   * query hands back a **new object**, the effect fires, `form.reset` runs, and
+   * everything typed since the dialog opened is gone without a word.
+   *
+   * A family app hits concurrent edits by construction: someone contributing to
+   * the copilka you are renaming is the normal case, not the exotic one. The
+   * same defect was fixed once already in the shopping dialogs, which is why
+   * this test exists rather than just the fix.
+   */
+  it('keeps what the user typed when the goal is changed by someone else', () => {
+    const goal = makeGoal();
+    const { rerender } = renderAs(
+      ADULT_PERMISSIONS,
+      <GoalFormDialog open onOpenChange={() => undefined} goal={goal} />,
+    );
+
+    const title = screen.getByLabelText(GOALS_RU.formName);
+    fireEvent.change(title, { target: { value: 'Отпуск в горах' } });
+    expect(title).toHaveValue('Отпуск в горах');
+
+    // A refetch after somebody else contributed: same id, new object.
+    rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <GoalFormDialog
+            open
+            onOpenChange={() => undefined}
+            goal={makeGoal({ currentAmount: 41_000_00, progressPercent: 82 })}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByLabelText(GOALS_RU.formName)).toHaveValue('Отпуск в горах');
+  });
+
+  it('does re-seed when the dialog is pointed at a different goal', () => {
+    const { rerender } = renderAs(
+      ADULT_PERMISSIONS,
+      <GoalFormDialog open onOpenChange={() => undefined} goal={makeGoal()} />,
+    );
+    expect(screen.getByLabelText(GOALS_RU.formName)).toHaveValue('Отпуск на море');
+
+    rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <GoalFormDialog
+            open
+            onOpenChange={() => undefined}
+            goal={makeGoal({ id: '33333333-3333-4333-8333-333333333333', title: 'Велосипед' })}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByLabelText(GOALS_RU.formName)).toHaveValue('Велосипед');
   });
 });

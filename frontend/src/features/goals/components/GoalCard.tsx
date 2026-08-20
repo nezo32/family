@@ -1,193 +1,226 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { CalendarDays, PiggyBank, Plus, Trophy, Users } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { CheckCircle2, ChevronRight, PiggyBank, Plus } from 'lucide-react';
 import type { GoalResponse, PublicUser } from '@family/shared';
-import { Badge } from '@/shared/ui/badge';
-import { Button } from '@/shared/ui/button';
-import { Card, CardContent } from '@/shared/ui/card';
+import { ActionSheet, type ActionSheetItem } from '@/shared/ui/action-sheet';
+import { useCoarsePointer } from '@/shared/ui/use-coarse-pointer';
+import { useLongPress } from '@/shared/ui/use-long-press';
 import { formatMoney } from '@/shared/lib/format';
 import { displayEmoji } from '@/shared/lib/emoji';
+import { memberSlot } from '@/shared/ui/member-disc';
 import { cn } from '@/shared/lib/utils';
 import { GOALS_RU, GOAL_STATUS_RU, daysLeftLabel } from '../locale';
-import { goalProgressPercent, remainingAmount, ringPercent } from '../money';
+import { goalProgressPercent, ringPercent } from '../money';
 import { daysUntil } from '../dates';
 import { goalDetailPath } from '../paths';
+import { useGoalAbilities } from '../hooks';
 import { ContributorAvatars } from './ContributorAvatars';
-import { ProgressRing } from './ProgressRing';
 import { ContributeDialog } from './ContributeDialog';
 
 /**
- * One goal, as a card in the grid.
+ * One goal, as a **row** (§D4).
  *
- * The brief for this screen is "a goal at 78 % should look like an
- * achievement": the ring dominates, the collected amount is the largest number
- * on the card, and the strip along the bottom fills with the goal's own colour
- * so a wall of cards reads as a wall of progress rather than a table.
+ * ```
+ *  🏕  Поездка в Карелию                                          63 %
+ *      ▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░
+ *      112 500 из 180 000 ₽ · до 01.06                    (П)(М)   ›
+ * ```
  *
- * The whole card is a link to the detail page (a stretched `::after` over the
- * title), while the «Пополнить» button sits above it on its own layer — so the
- * common tap and the deliberate tap never fight.
+ * ## One indicator, not two
+ *
+ * The card this replaces carried a **percentage ring at the top-left and a
+ * progress bar glued to the bottom edge** — two drawings of one number, per
+ * card, three cards to a screen. That is the data-dashboard furniture §A rules
+ * out in as many words. The bar wins because it is the shape that reads at a
+ * glance in a stack: five bars in a column can be compared with one eye
+ * movement, five rings cannot. The ring survives on the goal *detail* screen,
+ * where it is the hero and there is no bar next to it.
+ *
+ * ## «Пополнить» is not on the row
+ *
+ * It used to be, and because each card's title wrapped to a different number of
+ * lines the button floated at a different height in every card. More
+ * importantly it is a second filled primary in a list of them (§B4: one per
+ * view). Contributing is the primary action of the goal's own screen, which is
+ * one tap away — and the row itself is that tap.
+ *
+ * ## Gestures (§C-gestures)
+ *
+ * **No swipe.** §G4's table names exactly three row types — shopping items,
+ * chores and notifications — and a goal has no one-tap reversible action to put
+ * on a gesture. «Пополнить» writes to an append-only ledger; the only reversal
+ * is a second, visible transaction, so it fails the "swipe carries the
+ * reversible action or nothing" rule.
+ *
+ * **Long-press** brings «Пополнить» back as a shortcut, in a sheet, beside
+ * «Открыть копилку». Both live on the goal's own screen as well, which is what
+ * keeps §G1 true — nothing here is reachable only by gesture.
  */
 export function GoalCard(props: {
   goal: GoalResponse;
   roster: Map<string, PublicUser>;
-  /** From `useGoalAbilities()` — never from a role check (D4). */
-  canContribute: boolean;
+  /** Unused now that «Пополнить» lives on the detail screen. Kept for the caller's signature. */
+  canContribute?: boolean;
 }) {
-  const [contributeOpen, setContributeOpen] = useState(false);
   const { goal } = props;
+  const navigate = useNavigate();
+  const coarse = useCoarsePointer();
+  const { canContribute } = useGoalAbilities();
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [contributing, setContributing] = useState(false);
+  const longPress = useLongPress({
+    onLongPress: () => {
+      setSheetOpen(true);
+    },
+  });
 
   const percent = goalProgressPercent(goal.currentAmount, goal.targetAmount);
-  const remaining = remainingAmount(goal.currentAmount, goal.targetAmount);
   const reached = goal.status === 'reached' || goal.currentAmount >= goal.targetAmount;
   const muted = goal.status === 'archived' || goal.status === 'cancelled';
   const days = daysUntil(goal.deadline);
   const urgent = days !== null && days <= 14 && !reached;
-  const accent = goal.color ?? 'var(--primary)';
+  // A stored colour is honoured (a family may have picked one); the fallback is
+  // the theme's five-colour ramp rather than a free hue, so a wall of goals
+  // stays inside the palette (§B1/§B4).
+  const accent = goal.color ?? `var(--chart-${String(memberSlot(goal.id))})`;
   // Never `goal.icon` straight into the DOM: the field is free-form and older
   // rows hold a lucide icon *name*, which used to print as the word "palmtree".
   const emoji = displayEmoji(goal.icon);
 
+  /**
+   * «70 000 ₽ из 200 000 ₽ · до 01.06» — and deliberately **not** the remaining
+   * amount as well. «осталось собрать 130 000 ₽» is the same fact as the two
+   * figures beside it and the percentage above them: a third statement of one
+   * number, which at 393px pushed the deadline off the end of the line
+   * entirely. It survives on the goal's own screen, where there is room for it
+   * to be the headline.
+   */
+  const meta = [
+    `${formatMoney(goal.currentAmount)} ${GOALS_RU.of} ${formatMoney(goal.targetAmount)}`,
+    muted ? GOAL_STATUS_RU[goal.status] : null,
+  ].filter((part): part is string => part !== null);
+
+  const live = goal.status === 'active' || goal.status === 'reached';
+  const items: ActionSheetItem[] = [];
+  if (canContribute && live) {
+    items.push({
+      id: 'contribute',
+      label: GOALS_RU.contribute,
+      icon: Plus,
+      onSelect: () => {
+        setContributing(true);
+      },
+    });
+  }
+  items.push({
+    id: 'open',
+    label: GOALS_RU.openGoal,
+    icon: ChevronRight,
+    onSelect: () => {
+      void navigate(goalDetailPath(goal.id));
+    },
+  });
+
   return (
     <>
-      <Card
+      <Link
+        to={goalDetailPath(goal.id)}
+        /*
+         * Only on a thumb (§G2). The touch handlers would never fire for a
+         * mouse anyway, but `onContextMenu` would — and swallowing right-click
+         * on a desktop is a gesture nobody asked for.
+         */
+        {...(coarse ? longPress.handlers : {})}
         className={cn(
-          'group relative overflow-hidden py-0 transition-shadow duration-200 hover:shadow-md focus-within:ring-2 focus-within:ring-ring/50',
-          muted && 'opacity-75',
+          'block w-full max-w-row-measure px-4 py-3 transition-colors no-callout',
+          'hover:bg-muted/40 active:bg-muted/60',
+          'focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none',
+          muted && 'opacity-70',
         )}
       >
-        <CardContent className="space-y-4 p-4 sm:p-5">
-          <div className="flex items-start gap-4">
-            <ProgressRing
-              percent={percent}
-              size={88}
-              color={accent}
-              muted={muted}
-              caption={reached ? undefined : GOALS_RU.progressLabel}
-            />
+        <span className="flex items-center gap-3">
+          <span
+            aria-hidden
+            className="flex size-8 shrink-0 items-center justify-center rounded-lg text-lg"
+            style={{ backgroundColor: `color-mix(in oklab, ${accent} 18%, transparent)` }}
+          >
+            {emoji ?? <PiggyBank className="size-4 text-muted-foreground" />}
+          </span>
 
-            <div className="min-w-0 flex-1 space-y-2">
-              <div className="flex items-start gap-2">
-                {goal.icon ? (
-                  <span
-                    aria-hidden
-                    className="flex size-8 shrink-0 items-center justify-center rounded-lg text-lg"
-                    style={{ backgroundColor: `color-mix(in oklab, ${accent} 18%, transparent)` }}
-                  >
-                    {emoji ?? <PiggyBank className="size-4 text-muted-foreground" />}
-                  </span>
-                ) : null}
-                <h3 className="min-w-0 text-base leading-snug font-semibold text-balance">
-                  <Link
-                    to={goalDetailPath(goal.id)}
-                    className="rounded-sm outline-none after:absolute after:inset-0 after:content-[''] focus-visible:underline"
-                  >
-                    {goal.title}
-                  </Link>
-                </h3>
-              </div>
+          <span className="min-w-0 flex-1 truncate text-[17px] leading-6 font-medium text-foreground">
+            {goal.title}
+          </span>
 
-              {/*
-                The figure is `text-foreground`, not the goal's own colour. The
-                colour is an *identity* — which goal this is — and it already says
-                so on the ring and the strip below. Painting the headline number
-                with a seeded sky-blue or emerald made the most important text on
-                the card the least legible thing on it, and made two goals look
-                like two different apps.
-              */}
-              <p className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
-                <span className="text-lg font-semibold text-foreground tabular-nums">
-                  {formatMoney(goal.currentAmount)}
-                </span>
-                <span className="text-sm text-muted-foreground">
-                  {GOALS_RU.of} {formatMoney(goal.targetAmount)}
-                </span>
-              </p>
+          {reached ? (
+            <span className="flex shrink-0 items-center gap-1 text-[13px] leading-[18px] font-medium text-success">
+              <CheckCircle2 className="size-4" aria-hidden />
+              {GOALS_RU.reachedShort}
+            </span>
+          ) : (
+            <span className="shrink-0 text-[13px] leading-[18px] font-medium text-muted-foreground tabular-nums">
+              {percent} %
+            </span>
+          )}
 
-              <p className="text-xs text-muted-foreground">
-                {reached ? (
-                  <span className="inline-flex items-center gap-1 font-medium text-success">
-                    <Trophy className="size-3.5" aria-hidden />
-                    {GOALS_RU.reachedBanner}
-                  </span>
-                ) : (
-                  <>
-                    {GOALS_RU.remaining}:{' '}
-                    <span className="tabular-nums">{formatMoney(remaining)}</span>
-                  </>
-                )}
-              </p>
-            </div>
-          </div>
+          <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        </span>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="secondary" className="gap-1 font-normal">
-              <Users className="size-3" aria-hidden />
-              {goal.ownerId === null ? GOALS_RU.sharedGoal : GOALS_RU.personalGoal}
-            </Badge>
-            {muted ? (
-              <Badge variant="outline" className="font-normal">
-                {GOAL_STATUS_RU[goal.status]}
-              </Badge>
-            ) : null}
-            {goal.deadline ? (
-              <Badge
-                variant="outline"
-                className={cn('gap-1 font-normal', urgent && 'border-warning text-warning')}
-              >
-                <CalendarDays className="size-3" aria-hidden />
-                {days === null ? goal.deadline : daysLeftLabel(days)}
-              </Badge>
-            ) : null}
-          </div>
-
-          <div className="flex items-center justify-between gap-3">
-            {/* `contributors` only exists on the detail response — a card must
-                not assume it is there. */}
-            <ContributorAvatars
-              contributors={goal.contributors}
-              roster={props.roster}
-              showTotalLine
-            />
-            {props.canContribute && !muted ? (
-              <Button
-                type="button"
-                size="sm"
-                className="relative z-10 ml-auto h-11 min-w-11 gap-1.5 px-4"
-                onClick={() => {
-                  setContributeOpen(true);
-                }}
-              >
-                <Plus className="size-4" aria-hidden />
-                {GOALS_RU.contribute}
-              </Button>
-            ) : null}
-          </div>
-          {/*
-            The progress strip: a wall of these is a wall of progress.
-
-            Inset inside the card's padding rather than bled to its edge. Bled,
-            it sat on top of the card's own 1px border and its corner radius
-            fought the card's — the fill squared off exactly where the card
-            curves, which read as a bar escaping the card. Inset and
-            `rounded-full`, it matches the contributor bars on the detail screen
-            and cannot collide with the frame.
-          */}
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary" aria-hidden>
-            <div
-              className="h-full rounded-full transition-[width] duration-700 ease-out"
+        {/* The one indicator. 6px, the goal's own colour, inset inside the row's
+          padding so it can never collide with the surface's own radius. */}
+        {reached ? null : (
+          <span
+            className="mt-2 block h-1.5 w-full overflow-hidden rounded-full bg-secondary"
+            role="img"
+            aria-label={`${goal.title}: ${String(percent)} %`}
+          >
+            <span
+              className="block h-full rounded-full transition-[width] duration-700 ease-out"
               style={{ width: `${String(ringPercent(percent))}%`, backgroundColor: accent }}
             />
-          </div>
-        </CardContent>
-      </Card>
+          </span>
+        )}
 
-      {props.canContribute ? (
+        <span className="mt-1.5 flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-[13px] leading-[18px] font-medium text-muted-foreground tabular-nums">
+            {meta.join(' · ')}
+            {goal.deadline ? (
+              <>
+                {' · '}
+                <span className={cn(urgent && 'text-warning')}>
+                  {days === null ? goal.deadline : daysLeftLabel(days)}
+                </span>
+              </>
+            ) : null}
+          </span>
+
+          {/* `contributors` only exists on the detail response — a row must not
+            assume it is there. */}
+          <ContributorAvatars contributors={goal.contributors} roster={props.roster} max={3} />
+        </span>
+      </Link>
+
+      {/*
+        Siblings of the row, never children of the `<Link>`: a React portal still
+        bubbles its events through the React tree, so a sheet rendered inside the
+        anchor would route every tap in it back through that anchor. Neither
+        renders a DOM node while closed, so `Section`'s `[&>*+*]` hairline still
+        sees exactly one child.
+      */}
+      <ActionSheet
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        title={goal.title}
+        description={GOALS_RU.rowSheet}
+        items={items}
+      />
+      {contributing ? (
         <ContributeDialog
           goal={goal}
           mode="contribute"
-          open={contributeOpen}
-          onOpenChange={setContributeOpen}
+          open
+          onOpenChange={(next) => {
+            if (!next) setContributing(false);
+          }}
         />
       ) : null}
     </>

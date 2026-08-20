@@ -34,6 +34,7 @@ import {
 } from '../../core/pagination.js';
 import { logger } from '../../core/logger.js';
 import { enqueue } from '../../core/queue/queues.js';
+import { bumpRevisions } from '../../core/revisions.js';
 import * as repo from './notifications.repository.js';
 import type {
   EscalationPolicyRow,
@@ -457,6 +458,32 @@ export async function dispatchIntent(db: Db, intentId: string, now = new Date())
   }
 
   const inserted = await repo.insertDeliveries(db, rows);
+
+  /*
+   * D12: tell the change feed the inbox moved.
+   *
+   * The hook belongs here and not in `deliver()`, which is where you would look
+   * first: `enqueueDeliveries` skips `in_app` outright, so `deliver()` never
+   * runs for the very rows this is about. Fan-out is the moment an in-app
+   * notification comes into existence.
+   *
+   * Without it the bell is the one stale surface left in the app — everything
+   * else now refreshes within seconds, and the bell would wait for a window
+   * focus. That is the surface that says a family member is waiting to be let
+   * in, and a delay there has already caused real confusion once.
+   *
+   * The predicate reads as "did this fan-out produce an inbox row". Today §3.7
+   * writes one per recipient unconditionally, so it is true whenever anybody
+   * was reached — but checking the channel rather than `inserted.length` keeps
+   * it honest if the in-app row ever becomes suppressible.
+   *
+   * Awaited, per the note in `core/revisions.ts`: this runs inside a worker, and
+   * a job that returns before its bump is dispatched can have its process torn
+   * down first. `bumpRevisions` never throws, so Redis being unavailable cannot
+   * break a fan-out that has already committed.
+   */
+  if (inserted.some((r) => r.channel === 'in_app')) await bumpRevisions(['notifications']);
+
   await enqueueDeliveries(inserted, now);
 
   logger.debug(
@@ -1466,6 +1493,22 @@ export async function markRead(
   );
 }
 
+/**
+ * §G4's undo for «Прочитано»: put specific rows back to unread.
+ *
+ * Ids only — see `markUnreadRequestSchema` for why there is no `all` here — and
+ * scoped to the caller in the repository, so an id belonging to another family
+ * member is a silent no-op rather than a 403 (D4). Returns how many rows
+ * actually moved, which is 0 for a replayed undo and for a row somebody else
+ * owns; both are the same answer to the client and neither is an error.
+ *
+ * The D11 receipt columns are untouched. See the repository for the status
+ * restore and why it only ever fires on a row sitting at exactly `read`.
+ */
+export async function markUnread(db: Db, userId: string, ids: string[]): Promise<number> {
+  return repo.markUnread(db, userId, ids);
+}
+
 /* ========================================================================== */
 /* Subscriptions                                                               */
 /* ========================================================================== */
@@ -1836,94 +1879,26 @@ export async function sendTestNotification(
 }
 
 /* ========================================================================== */
-/* Weekly digest                                                               */
+/* Weekly digest — preferences only                                            */
 /* ========================================================================== */
 
-export interface DigestContext {
-  userId: string;
-  timezone: string;
-  /** Start of the reporting window (UTC instant). */
-  from: Date;
-  /** End of the reporting window (UTC instant). */
-  to: Date;
-}
-
-export interface DigestSectionResult {
-  section: DigestSection;
-  /** Short Russian line for the push body. */
-  headline: string;
-  /** Number the renderer may use for a count, if the section has one. */
-  count?: number;
-  /** Structured detail for the in-app digest page. */
-  items?: Array<Record<string, unknown>>;
-}
-
-export type DigestSectionProvider = (
-  x: Executor,
-  ctx: DigestContext,
-) => Promise<DigestSectionResult | null>;
-
-/**
- * Cross-module seam.
+/*
+ * The digest *subscription* is read and written here, because it is a
+ * notification preference and it is served by this module's settings routes.
+ * The digest **send** is not: `scheduler.weekly-digest` belongs to
+ * `dashboard/dashboard.jobs.ts`, and this module deliberately owns no part of
+ * it (see the note at the bottom of `notifications.jobs.ts`).
  *
- * A module never imports another module's repository (D8), and the tasks/events/
- * goals services are being written concurrently. So the digest does not reach
- * into them: each module registers a provider for its own section at boot and
- * the digest composes whatever is registered. A module that has not landed yet
- * simply contributes nothing, and the digest still ships.
- *
- * ```ts
- * // in tasks.jobs.ts, at import time
- * registerDigestSectionProvider('tasks', async (x, ctx) => ({
- *   section: 'tasks',
- *   headline: `${n} задач на неделю`,
- *   count: n,
- * }));
- * ```
+ * There used to be a second, complete implementation here — `runWeeklyDigest`,
+ * `buildWeeklyDigest` and a `registerDigestSectionProvider` seam — competing
+ * for the same job name. It is deleted rather than left dormant: an unused
+ * sweep that is one `registerJobHandler` line away from silently taking the job
+ * over is not documentation, it is a loaded gun. Its send-once claim was keyed
+ * on a date plus a trailing 23 hours and its due-check was a one-hour window,
+ * so it could send twice in a week when somebody edited their weekday and skip
+ * the week entirely when a worker missed a tick — both of which the surviving
+ * implementation was written to make impossible.
  */
-const digestProviders = new Map<DigestSection, DigestSectionProvider>();
-
-export function registerDigestSectionProvider(
-  section: DigestSection,
-  provider: DigestSectionProvider,
-): void {
-  digestProviders.set(section, provider);
-}
-
-export async function buildWeeklyDigest(
-  db: Db,
-  ctx: DigestContext,
-  sections: readonly DigestSection[],
-): Promise<{ sections: DigestSectionResult[]; payload: Record<string, unknown> }> {
-  const results: DigestSectionResult[] = [];
-
-  for (const section of sections) {
-    const provider = digestProviders.get(section);
-    if (!provider) continue;
-    try {
-      const result = await provider(db, ctx);
-      if (result) results.push(result);
-    } catch (error) {
-      // One broken section must not cost the family the whole digest.
-      logger.warn({ err: error, section, userId: ctx.userId }, 'digest section provider failed');
-    }
-  }
-
-  const taskSection = results.find((r) => r.section === 'tasks');
-  const eventSection = results.find((r) => r.section === 'events');
-
-  return {
-    sections: results,
-    payload: {
-      summary: results.map((r) => r.headline).join(' · '),
-      ...(taskSection?.count !== undefined ? { taskCount: taskSection.count } : {}),
-      ...(eventSection?.count !== undefined ? { eventCount: eventSection.count } : {}),
-      sections: results,
-      from: ctx.from.toISOString(),
-      to: ctx.to.toISOString(),
-    },
-  };
-}
 
 export async function getDigestSubscription(
   db: Db,
@@ -1966,65 +1941,6 @@ export async function updateDigestSubscription(
     sections: [...input.sections],
   });
   return getDigestSubscription(db, userId);
-}
-
-/**
- * The hourly digest tick. Per-user weekday/time filtering happens here, in the
- * user's own timezone, and `claimDigestSend` makes a double run harmless.
- */
-export async function runWeeklyDigest(db: Db, now = new Date()): Promise<number> {
-  const family = await repo.getFamilyDefaults(db);
-  const subscriptions = await repo.listEnabledDigestSubscriptions(db);
-  let sent = 0;
-
-  for (const subscription of subscriptions) {
-    const timezone = subscription.timezone ?? family.timezone;
-    if (!isDigestDue(subscription.weekday, subscription.timeOfDay, timezone, now)) continue;
-
-    // Only one digest per user per 24h, whichever worker gets there first.
-    const claimed = await repo.claimDigestSend(
-      db,
-      subscription.userId,
-      new Date(now.getTime() - 23 * 3_600_000),
-      now,
-    );
-    if (!claimed) continue;
-
-    const from = new Date(now.getTime() - 7 * 24 * 3_600_000);
-    const { payload } = await buildWeeklyDigest(
-      db,
-      { userId: subscription.userId, timezone, from, to: now },
-      subscription.sections as DigestSection[],
-    );
-
-    const result = await emitIntent(db, {
-      type: 'weekly_digest',
-      audience: { users: [subscription.userId] },
-      priority: 'low',
-      dedupeKey: `weekly_digest:${subscription.userId}:${now.toISOString().slice(0, 10)}`,
-      payload,
-    });
-    await result.dispatch();
-    sent += 1;
-  }
-
-  return sent;
-}
-
-/** Is "now", in the user's own wall clock, at or past this week's digest slot? */
-function isDigestDue(weekday: number, timeOfDay: string, timezone: string, now: Date): boolean {
-  const api = globalThis.Temporal;
-  if (!api) throw new Error('Temporal is not available — call installTemporal() first');
-  const local = api.Instant.fromEpochMilliseconds(now.getTime()).toZonedDateTimeISO(timezone);
-  if (local.dayOfWeek % 7 !== weekday) return false;
-  const [hourText, minuteText] = timeOfDay.split(':');
-  const hour = Number(hourText ?? '19');
-  const minute = Number(minuteText ?? '0');
-  const nowMinutes = local.hour * 60 + local.minute;
-  const slotMinutes = hour * 60 + minute;
-  // The job ticks hourly; a one-hour catch-up window means a restart at :05
-  // does not skip the day entirely.
-  return nowMinutes >= slotMinutes && nowMinutes < slotMinutes + 60;
 }
 
 /* ========================================================================== */

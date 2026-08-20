@@ -35,7 +35,15 @@ const ROUTES: Array<{ path: string; expect: RegExp; name: string }> = [
   { path: '/calendar', expect: /Календарь|Событие/i, name: 'calendar' },
   { path: '/goals', expect: /Копилк|Цел/i, name: 'goals' },
   { path: '/shopping', expect: /Покупк|Список/i, name: 'shopping' },
-  { path: '/wall', expect: /Лент|Объявлен/i, name: 'wall' },
+  // Стена has no visible page heading at any width — the title is hoisted into
+  // the app bar (§C4), and «Лента» was only ever a tab label, which the
+  // two-column composition does not have (§D7: feed in the main column,
+  // «Спасибо» and «Опросы» in the side one). These two words are the screen's
+  // own vocabulary, they appear nowhere else in the app, and they render at
+  // **both** widths — as tab labels below 1088px and as the side column's
+  // panels above it. Two of them rather than one so a copy tweak to either
+  // cannot silently stop the check proving anything.
+  { path: '/wall', expect: /Спасибо|Опрос/i, name: 'wall' },
   { path: '/family', expect: /Семья|Участник/i, name: 'family' },
   { path: '/settings', expect: /Настройк/i, name: 'settings' },
   { path: '/settings/profile', expect: /Профиль|Имя/i, name: 'settings/profile' },
@@ -104,7 +112,16 @@ test.describe('forms and modals open', () => {
 
       const dialog = page.getByRole('dialog');
       await expect(dialog).toBeVisible({ timeout: 10_000 });
-      await expect(dialog).toContainText(flow.expect);
+
+      // Role-based, because the create surfaces exist in two shapes: the older
+      // dialog renders the field's caption as visible `<Label>` text, while the
+      // full-screen sheet promotes it to the input's *accessible name* and
+      // shows only a placeholder. `toContainText` sees the first and not the
+      // second, so it started failing the moment a form was converted —
+      // without anything about the form actually being broken.
+      await expect(
+        dialog.getByLabel(flow.expect).first().or(dialog.getByText(flow.expect).first()).first(),
+      ).toBeVisible({ timeout: 10_000 });
 
       // The submit control must be reachable without hunting: it is the single
       // most common complaint about long forms on a phone.

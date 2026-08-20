@@ -110,12 +110,17 @@ const dashboardRoutes: FastifyPluginAsync = async (instance: FastifyInstance) =>
       schema: {
         tags: ['dashboard'],
         summary: 'Как будет выглядеть мой дайджест',
-        body: digestPreviewRequestSchema,
+        // `.nullish()`, not the bare object: every field of
+        // `digestPreviewRequestSchema` is optional, so "preview my digest as
+        // configured" is a POST with no body — which Fastify delivers as
+        // `null`, not `undefined`, and the bare schema rejected with a 400.
+        // Same rule as `archiveBodySchema` in `tasks.routes.ts`.
+        body: digestPreviewRequestSchema.nullish(),
         response: { 200: digestPreviewResponseSchema },
       },
     },
     async (request) =>
-      previewDigest(createDigestPort(getDb()), actorOf(request.auth), request.body.sections),
+      previewDigest(createDigestPort(getDb()), actorOf(request.auth), request.body?.sections),
   );
 };
 

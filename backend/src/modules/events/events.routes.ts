@@ -26,7 +26,13 @@ import type { AuthContext } from '../../core/auth/context.js';
 import { getDb } from '../../core/db.js';
 import { notFound, unauthenticated } from '../../core/errors.js';
 import * as service from './events.service.js';
-import { feedUrlFor, webcalUrlFor } from './ics.service.js';
+import {
+  feedFreshness,
+  feedUrlFor,
+  isNotModifiedSince,
+  matchesEtag,
+  webcalUrlFor,
+} from './ics.service.js';
 
 /**
  * Calendar HTTP surface — the route table from
@@ -441,18 +447,31 @@ const eventsRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
 
       const feed = await service.buildFeedForUser(db, userId);
 
+      // Both validators, because the client we care about only understands one
+      // of them: iOS `dataaccessd` sends `If-Modified-Since` and never
+      // `If-None-Match`, so a feed with an ETag and no `Last-Modified` can
+      // never answer it 304 — it re-downloads the whole calendar every poll and
+      // invents its own validator out of our `Date` header. See the freshness
+      // note in `ics.service.ts`.
+      const lastModified = feedFreshness.stamp(userId, feed.etag);
+
       reply.header('ETag', feed.etag);
+      reply.header('Last-Modified', lastModified.toUTCString());
       // Private: this document is one person's view of the family calendar.
+      // `max-age=0, must-revalidate` keeps every poll conditional rather than
+      // letting a proxy or the phone's own cache answer from a stale copy.
       reply.header('Cache-Control', 'private, max-age=0, must-revalidate');
       reply.header('Content-Disposition', 'inline; filename="family.ics"');
 
+      // RFC 9110 §13.1.3: when both are present, `If-None-Match` wins and
+      // `If-Modified-Since` is ignored outright — not consulted as a tiebreak.
       const ifNoneMatch = request.headers['if-none-match'];
-      if (
-        typeof ifNoneMatch === 'string' &&
-        ifNoneMatch.split(',').some((t) => t.trim() === feed.etag)
-      ) {
-        return reply.code(304).send();
-      }
+      const fresh =
+        ifNoneMatch === undefined
+          ? isNotModifiedSince(request.headers['if-modified-since'], lastModified)
+          : matchesEtag(ifNoneMatch, feed.etag);
+
+      if (fresh) return reply.code(304).send();
 
       return reply.type('text/calendar; charset=utf-8').send(feed.body);
     },

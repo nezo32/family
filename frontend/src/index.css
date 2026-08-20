@@ -236,10 +236,32 @@
     Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 
-  /* Display face (§B2). 'Onest' is deliberately **not shipped yet** (§G step 7)
-     — the stack falls straight through to Inter, so `font-display` is safe to
-     use today and gains the face later without touching a component. It is
-     never load-bearing for legibility. */
+  /* Display face (§B2). 'Onest' is **still not shipped**, and this is now a
+     blocker rather than a sequencing choice: the font is not in `node_modules`,
+     not in the pnpm store and not anywhere on this machine, and the two ways to
+     get it — `pnpm add @fontsource/onest` or a fetch from Google Fonts — are
+     both off the table (no installs; and the CSP allows `font-src 'self' data:`
+     only, so a Google Fonts <link> is blocked outright even if one were added).
+
+     Nothing is broken meanwhile: the stack falls straight through to Inter and
+     then to the system UI face, which is what every screenshot in this
+     repository was taken with. §B2's own rule holds — the display face is never
+     load-bearing for legibility.
+
+     When the font *is* available, the shape of the change is:
+       @font-face { font-family:'Onest'; font-style:normal; font-weight:600 700;
+                    font-display:swap; src:url('/fonts/onest-cyrillic.woff2')
+                    format('woff2');
+                    unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116; }
+     plus the same for the latin range, both under `public/fonts/` so they are
+     same-origin and land in the Workbox precache (the glob already lists
+     `woff2`). Two unicode ranges over **one** variable file, `swap`, and
+     nothing else: `font-display` appears in ten places in `src/`, all of them
+     headings plus two display numbers, so a second and third static weight
+     would be paid for on first paint by every family member on a phone and
+     spent on a handful of lines. Measure the built `.woff2` before shipping
+     it — a display face is worth roughly the bytes of the app's CSS
+     (≈18 KB gzip), not the bytes of its JS. */
   --font-display:
     'Onest', 'Inter var', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 

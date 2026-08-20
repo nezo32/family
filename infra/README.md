@@ -12,6 +12,7 @@ Everything needed to run the Family App locally and on the self-hosted VDI.
   - [Telegram](#telegram)
 - [First user — `BOOTSTRAP_OWNER_EMAIL`](#first-user--bootstrap_owner_email)
 - [Backups](#backups)
+- [Pulling backups to your PC](#pulling-backups-to-your-pc)
 - [Restoring](#restoring)
 - [GitHub configuration](#github-configuration)
 - [Day-to-day operations](#day-to-day-operations)
@@ -56,6 +57,7 @@ port 5432 from outside the VDI, something is wrong.
 | `postgres/init/01-extensions.sql` | first-boot extensions + session defaults                |
 | `scripts/backup.sh`               | nightly `pg_dump`, gzip, sha256, rotation               |
 | `scripts/restore-check.sh`        | replays the newest dump into a throwaway container      |
+| `backup-pull/`                    | **separate project** — pulls backups down to the owner's PC |
 
 ---
 
@@ -192,9 +194,21 @@ not optional for Google, whatever the PKCE spec implies.
 1. Talk to [@BotFather](https://t.me/BotFather) → `/newbot`.
 2. `TELEGRAM_BOT_TOKEN` = the token it prints,
    `TELEGRAM_BOT_USERNAME` = the bot's `@name` **without** the `@`.
-3. `/setdomain` → `<APP_DOMAIN>`. Login fails with an opaque error if the
-   domain is not registered against the bot.
-4. Set `VITE_TELEGRAM_BOT_USERNAME` to the same username.
+3. `/setdomain` → `<APP_DOMAIN>` — the **host only**, exactly as it appears in
+   `APP_PUBLIC_URL`: no scheme, no `www.`, no port, no trailing slash. Skip it
+   and every sign-in dies on a bare **«Bot domain invalid»** page on
+   `oauth.telegram.org`, which our callback never sees. See
+   `docs/DEPLOYMENT.md` §2.2 for the one-line `curl` that checks it.
+4. Open **@BotFather as a mini app** (not the chat) → select the bot →
+   **Login Widget**. Register both Allowed URLs — the origin
+   `https://<APP_DOMAIN>` **and** the redirect URI
+   `https://<APP_DOMAIN>/api/auth/telegram/callback` — and copy the
+   **Client Secret** shown there into `TELEGRAM_CLIENT_SECRET`. It is required:
+   `/auth/telegram/start` is OIDC-only and does not fall back to the widget or
+   Mini App endpoints. Telegram serves the consent page even for an
+   unregistered redirect URI and only rejects it after the user accepts, so a
+   missing second URL fails at the very last step.
+5. Set `VITE_TELEGRAM_BOT_USERNAME` to the same username.
 
 The Telegram login flow opens a popup. The edge `Caddyfile` sets
 `Cross-Origin-Opener-Policy: same-origin-allow-popups` for exactly this reason —
@@ -250,9 +264,72 @@ extensions came back, and `users` is non-empty. It exits non-zero if any of that
 fails — **alert on that exit code**. A backup nobody has restored is a hypothesis,
 not a backup.
 
-`backups/` is git-ignored. Copy it off the VDI (rclone, restic, a USB disk —
-anything), because a backup that lives only on the machine it backs up is not
-protecting you from the failure mode that actually happens.
+`backups/` is git-ignored, and a backup that lives only on the machine it backs
+up is not protecting you from the failure mode that actually happens — see
+**Pulling backups to your PC** below.
+
+---
+
+## Pulling backups to your PC
+
+`backup-pull/` is a **second, independent compose project**. It does not run on
+the VDI; it runs on the owner's PC, which is why it is its own file rather than
+another service in `docker-compose.yml`. Bringing up production must never try
+to start it, and starting it must never need production's `.env`, images or
+networks.
+
+```bash
+docker compose -f infra/backup-pull/docker-compose.yml up -d
+```
+
+That is the entire installation. Docker Desktop starts the container with the
+PC; the container schedules itself. No host cron, no Windows scheduled task, no
+PowerShell — that path is gone.
+
+| File | Purpose |
+| --- | --- |
+| `backup-pull/docker-compose.yml` | the service; every knob and why it is set |
+| `backup-pull/entrypoint.sh` | validate the key, write the crontab, run one check, `exec crond` |
+| `backup-pull/pull.sh` | one run: is it due, fetch, verify, overwrite the slot |
+| `backup-pull/.env.example` | the optional overrides |
+
+**How it schedules.** A stock `instrumentisto/rsync-ssh:alpine` (25 MB —
+Alpine plus `ssh`, `scp`, `rsync`, `sha256sum`, `crond`, `tzdata`; nothing to
+build) runs busybox `crond` with one hourly entry. The hour is not the schedule.
+Each tick asks whether it has been ≥ `MIN_INTERVAL_HOURS` (20) since the last
+*successful* backup, and takes one if so and it is past `PREFERRED_HOUR` (14) —
+or unconditionally past `MAX_INTERVAL_HOURS` (26), which is the "the PC was
+off" case. Container start runs the check too, so waking the machine does not
+mean waiting an hour. All the state is files on the bind mount, so `stop`/
+`start` cycles — a sleeping laptop — lose nothing.
+
+> `cap_drop: ALL` **breaks busybox crond silently**: it forks, the child's
+> `setgroups()` fails, and no job ever runs, with nothing in the log. The
+> compose file adds `SETGID`/`SETUID` back for exactly this reason, and the
+> healthcheck watches for a stalled schedule (`TICK_STALE_HOURS`) so the same
+> class of failure cannot hide again.
+
+**What it fetches.** Both halves — `latest.sql.gz` and `latest-objects.tar.gz`,
+which `backup.sh` always points at the same `STAMP`. Each is checked against the
+server's own `.sha256` sidecar, then `gzip -t`, then a payload check, **before**
+it is allowed to replace the existing local file. A corrupt download is deleted
+and the previous good copy is untouched.
+
+**Where it lands.** `%USERPROFILE%\Backups\family` by default, overridable with
+`BACKUP_DEST`. Files are named for the weekday, so the set is bounded at seven
+database files and seven avatar files that each get overwritten once a week —
+constant disk, no cleanup, and still a week of history to fall back on if the
+newest dump turns out to be bad.
+
+**Is it alive?** `docker compose -f infra/backup-pull/docker-compose.yml ps`.
+The healthcheck reports `unhealthy` if no good backup arrived in 48 h or if the
+internal schedule stopped firing. Every tick logs its decision, including
+"not due", so silence means the container is down.
+
+The one-time SSH key setup — creating it, authorising it on the server, and the
+ACL that lets `familybackup` read `/opt/family/backups` without being able to
+read `.env` — is in **docs/DEPLOYMENT.md §8**, along with the full restore
+procedure for both the database and the avatars.
 
 ---
 

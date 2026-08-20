@@ -20,8 +20,9 @@ function slots(overrides: Partial<PageSlots>): PageSlots {
     side: null,
     appBarTitle: null,
     appBarActions: null,
-    hoist: false,
-    hasPageTitle: false,
+    desktop: false,
+    barTitle: false,
+    pageTitle: false,
     registerPageTitle: () => () => undefined,
     setSide: () => undefined,
     setAppBarTitle: () => undefined,
@@ -58,7 +59,7 @@ describe('the side column', () => {
   });
 });
 
-describe('band 1 on a desktop', () => {
+describe('band 1', () => {
   it('moves the title and the action into the app bar and leaves no empty header', () => {
     const titleSlot = document.createElement('div');
     const actionSlot = document.createElement('div');
@@ -66,7 +67,7 @@ describe('band 1 on a desktop', () => {
 
     const { container } = render(
       <PageSlotsContext.Provider
-        value={slots({ hoist: true, appBarTitle: titleSlot, appBarActions: actionSlot })}
+        value={slots({ appBarTitle: titleSlot, appBarActions: actionSlot })}
       >
         <PageHeader title="Задачи" actions={<button type="button">Новое дело</button>} />
       </PageSlotsContext.Provider>,
@@ -76,6 +77,8 @@ describe('band 1 on a desktop', () => {
     expect(actionSlot.textContent).toBe('Новое дело');
     // Nothing but a title and an action: the in-page band would be an empty box.
     expect(container.querySelector('header')).toBeNull();
+    titleSlot.remove();
+    actionSlot.remove();
   });
 
   it('still renders the description in place', () => {
@@ -83,7 +86,7 @@ describe('band 1 on a desktop', () => {
     document.body.append(titleSlot);
 
     const { container } = render(
-      <PageSlotsContext.Provider value={slots({ hoist: true, appBarTitle: titleSlot })}>
+      <PageSlotsContext.Provider value={slots({ appBarTitle: titleSlot })}>
         <PageHeader title="Задачи" description="Кто и что делает" />
       </PageSlotsContext.Provider>,
     );
@@ -95,19 +98,70 @@ describe('band 1 on a desktop', () => {
     titleSlot.remove();
   });
 
-  it('keeps everything in the page below md', () => {
+  it('hoists on a phone too — the page must not repeat the bar title', () => {
     const titleSlot = document.createElement('div');
     document.body.append(titleSlot);
 
-    render(
-      <PageSlotsContext.Provider value={slots({ hoist: false, appBarTitle: titleSlot })}>
-        <PageHeader title="Задачи" actions={<button type="button">Новое дело</button>} />
+    const { container } = render(
+      <PageSlotsContext.Provider value={slots({ desktop: false, appBarTitle: titleSlot })}>
+        <PageHeader title="Задачи" />
       </PageSlotsContext.Provider>,
     );
 
+    expect(titleSlot.querySelector('h1')?.textContent).toBe('Задачи');
+    expect(container.querySelector('h1')).toBeNull();
+    titleSlot.remove();
+  });
+
+  it('keeps a display title in the page below md, and claims it as such', () => {
+    const titleSlot = document.createElement('div');
+    document.body.append(titleSlot);
+    const claimed: string[] = [];
+
+    render(
+      <PageSlotsContext.Provider
+        value={slots({
+          desktop: false,
+          appBarTitle: titleSlot,
+          registerPageTitle: (where) => {
+            claimed.push(where);
+            return () => undefined;
+          },
+        })}
+      >
+        <PageHeader displayTitle title="Доброе утро, Павел" />
+      </PageSlotsContext.Provider>,
+    );
+
+    // §D1: the greeting is the screen's display line on a phone, so it stays in
+    // the main column — and the claim tells the bar to stand its `<h1>` down.
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Доброе утро, Павел' }),
+    ).toBeInTheDocument();
+    expect(titleSlot.textContent).toBe('');
+    expect(claimed).toEqual(['page']);
+    titleSlot.remove();
+  });
+
+  it('hoists the same display title from md up', () => {
+    const titleSlot = document.createElement('div');
+    document.body.append(titleSlot);
+
+    const { container } = render(
+      <PageSlotsContext.Provider value={slots({ desktop: true, appBarTitle: titleSlot })}>
+        <PageHeader displayTitle title="Доброе утро, Павел" />
+      </PageSlotsContext.Provider>,
+    );
+
+    expect(titleSlot.querySelector('h1')?.textContent).toBe('Доброе утро, Павел');
+    expect(container.querySelector('h1')).toBeNull();
+    titleSlot.remove();
+  });
+
+  it('keeps everything in the page outside the shell', () => {
+    render(<PageHeader title="Задачи" actions={<button type="button">Новое дело</button>} />);
+
     expect(screen.getByRole('heading', { level: 1, name: 'Задачи' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Новое дело' })).toBeInTheDocument();
-    expect(titleSlot.textContent).toBe('');
-    titleSlot.remove();
   });
 });

@@ -55,10 +55,14 @@ export const WALL_RU = {
     pinnedToast: 'Закрепили наверху',
     unpinnedToast: 'Убрали из закреплённых',
     delete: 'Удалить объявление',
+    /** Screen-reader name of the row's action sheet (§G5). */
+    menuTitle: 'Действия с объявлением',
     deleteConfirmTitle: 'Удалить объявление?',
     deleteConfirmDescription: 'Оно исчезнет из ленты у всех. Отменить не получится.',
     deleted: 'Объявление удалено',
     edited: 'изменено',
+    more: 'ещё',
+    less: 'свернуть',
   },
 
   /* ------------------------------ comments ------------------------------- */
@@ -101,10 +105,17 @@ export const WALL_RU = {
     send: 'Отправить спасибо',
     sending: 'Отправляем…',
     sent: 'Спасибо отправлено',
-    received: (n: number) => `${String(n)} спасибо`,
+    /**
+     * No count, deliberately. A per-person total that grows is a scoreboard
+     * whatever the heading says (D5) — «Спасибо» is the one screen that exists
+     * to make people feel good, and a smaller number beside a bigger one
+     * teaches a child they are losing. The chip says *whether* somebody was
+     * thanked this month, and nothing more.
+     */
+    receivedSome: 'спасибо есть',
     receivedNone: 'пока без спасибо',
     totalsTitle: 'Спасибо за последний месяц',
-    totalsHint: 'Показываем всех — по алфавиту, без мест и рейтингов.',
+    totalsHint: 'Показываем всех — по алфавиту, без счёта, без мест и рейтингов.',
     recentTitle: 'Последние',
     empty: 'Пока никто никого не благодарил.',
     emptyDescription: 'Самое время начать.',

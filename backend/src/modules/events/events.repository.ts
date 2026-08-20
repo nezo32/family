@@ -10,6 +10,7 @@ import {
   isNull,
   lt,
   lte,
+  notInArray,
   or,
   sql,
   type SQL,
@@ -825,7 +826,23 @@ export async function removeAttendeesExcept(
   if (occurrenceIds.length === 0) return;
   const where: SQL[] = [inArray(eventAttendees.occurrenceId, [...occurrenceIds])];
   if (keepUserIds.length > 0) {
-    where.push(sql`${eventAttendees.userId} <> all(${[...keepUserIds]}::uuid[])`);
+    /**
+     * `notInArray`, **not** a raw `... <> all(${ids}::uuid[])`.
+     *
+     * Drizzle's `sql` template spreads a JS array into one placeholder per
+     * element, so `all(${ids}::uuid[])` compiles to `all(($1)::uuid[])` for one
+     * id — which Postgres reads as a bare string and rejects with «malformed
+     * array literal» — and to `all(($1, $2)::uuid[])` for two, which is a row
+     * constructor: «cannot cast type record to uuid[]». Either way the delete
+     * threw for every non-empty keep list, so **changing an event's guest list
+     * to anything other than "nobody" was a 500** on all three call sites
+     * (`PUT /events/series/:id/attendees` and both series-update paths).
+     *
+     * Same family of defect as the `Date`-in-a-raw-template trap `core/sql.ts`
+     * documents: a value the driver cannot bind, and a query nothing executed
+     * until now. A typed predicate has no binding to get wrong.
+     */
+    where.push(notInArray(eventAttendees.userId, [...keepUserIds]));
   }
   await x.delete(eventAttendees).where(and(...where));
 }

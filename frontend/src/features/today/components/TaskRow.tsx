@@ -1,17 +1,27 @@
 import { Check } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
-import { formatDuration } from '@/shared/lib/format';
+import { MemberTick } from '@/shared/ui/member-disc';
 import { TODAY_RU } from '../locale';
 import type { DashboardTask } from '../types';
 
 /**
- * A single chore, with the one-tap completion control.
+ * One chore, as a 56px row (§D1).
  *
- * The tick is a 44 px round button on the leading edge — the thumb lands there
+ * ```
+ *  ○ ┃  Разобрать посудомойку
+ *    ┃  до 10:00 · Кухня
+ * ```
+ *
+ * The tick is a 44px round target on the leading edge — the thumb lands there
  * without looking, which is the whole point of a home screen. When the user may
  * not complete this row (no `task:complete` scope for it) the control degrades
  * to a static dot rather than a disabled button: a greyed-out button invites a
  * tap and then refuses it.
+ *
+ * The 3px tick beside it is the assignee's colour (§B4). On an overdue row it
+ * is `--destructive` and the meta line **also says «просрочено»** — colour is
+ * never the only signal, and four overdue chores must not become four pink
+ * boxes (§B4): the rail is tinted, the row's ground is not.
  *
  * `dueTime` arrives as a local `HH:mm` string already resolved in the payload's
  * timezone, so there is nothing to reformat and no chance of the row showing
@@ -24,41 +34,67 @@ export function TaskRow(props: {
   onComplete: (occurrenceId: string) => void;
   /** Overdue rows lead with how late they are instead of the due time. */
   overdue?: boolean;
+  /** «Саша» — who it is on, when that is not obviously the reader. */
+  assigneeName?: string | undefined;
 }) {
   const { task } = props;
 
-  const when = props.overdue ? overdueLabel(task.overdueByMinutes) : dueLabel(task.dueTime);
+  const meta = [
+    props.overdue ? overdueLabel(task.dueTime) : dueLabel(task.dueTime),
+    props.assigneeName,
+    task.category,
+  ].filter((part): part is string => Boolean(part));
 
   return (
-    <li className="flex items-center gap-3 py-1">
-      {props.canComplete ? (
-        <button
-          type="button"
-          onClick={() => {
-            props.onComplete(task.id);
-          }}
-          aria-label={`${TODAY_RU.complete}: ${task.title}`}
-          className={cn(
-            'flex size-11 shrink-0 items-center justify-center rounded-full border-2 border-border text-transparent transition-colors',
-            'hover:border-primary hover:text-primary/40 active:bg-accent',
-            'focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none',
-          )}
-        >
-          <Check className="size-5" aria-hidden />
-        </button>
-      ) : (
-        <span aria-hidden className="flex size-11 shrink-0 items-center justify-center">
-          <span className="size-2.5 rounded-full bg-muted-foreground/30" />
-        </span>
-      )}
+    <div className="block">
+      <div className="flex min-h-14 w-full max-w-row-measure items-center gap-3 px-4 py-1.5">
+        {props.canComplete ? (
+          <button
+            type="button"
+            onClick={() => {
+              props.onComplete(task.id);
+            }}
+            aria-label={`${TODAY_RU.complete}: ${task.title}`}
+            className={cn(
+              // 44px target, 28px ring: §F1 wants the target, §D2 wants a tick
+              // that does not dominate a 17px title.
+              'flex size-11 shrink-0 touch-manipulation items-center justify-center rounded-full',
+              'text-transparent transition-colors',
+              'hover:text-primary/50 active:bg-muted',
+              'focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none',
+            )}
+          >
+            <span className="flex size-7 items-center justify-center rounded-full border-2 border-border">
+              <Check className="size-4" aria-hidden />
+            </span>
+          </button>
+        ) : (
+          <span aria-hidden className="flex size-11 shrink-0 items-center justify-center">
+            <span className="size-2.5 rounded-full bg-muted-foreground/30" />
+          </span>
+        )}
 
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-foreground">{task.title}</p>
-        <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-          <span className={cn(props.overdue && 'text-destructive')}>{when}</span>
-        </p>
+        <MemberTick
+          seed={task.assigneeId}
+          tone={props.overdue ? 'destructive' : 'member'}
+          className="h-9 self-center"
+        />
+
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[17px] leading-6 font-medium text-foreground">{task.title}</p>
+          {meta.length > 0 ? (
+            <p
+              className={cn(
+                'truncate text-[13px] leading-[18px] font-medium',
+                props.overdue ? 'text-destructive' : 'text-muted-foreground',
+              )}
+            >
+              {meta.join(' · ')}
+            </p>
+          ) : null}
+        </div>
       </div>
-    </li>
+    </div>
   );
 }
 
@@ -67,12 +103,9 @@ function dueLabel(dueTime: string | null): string {
 }
 
 /**
- * "Просрочено на 2 ч 30 мин" — a fact, not an accusation. Past a day the exact
- * minute count stops being useful and starts being a scolding, so it collapses
- * to the bare word.
+ * «срок был в 08:00» — a fact, not an accusation. Without a time on the task
+ * the bare word is all there is to say, and it is enough.
  */
-function overdueLabel(minutes: number): string {
-  if (minutes <= 0) return TODAY_RU.overdueLongAgo;
-  if (minutes >= 60 * 24) return TODAY_RU.overdueLongAgo;
-  return `${TODAY_RU.overdueBy} ${formatDuration(minutes)}`;
+function overdueLabel(dueTime: string | null): string {
+  return dueTime ? `${TODAY_RU.overdueDue} ${dueTime}` : TODAY_RU.overdueLongAgo;
 }

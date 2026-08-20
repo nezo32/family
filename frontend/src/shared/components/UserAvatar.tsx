@@ -2,6 +2,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
 import { cn } from '../lib/utils';
 import { initials } from '../lib/format';
 import { useAuthedImage } from '../api/authed-image';
+import { memberSlot } from '../ui/member-disc';
 
 export interface AvatarUser {
   id?: string;
@@ -107,14 +108,26 @@ export function AvatarGroup(props: { users: AvatarUser[]; max?: number; size?: A
   );
 }
 
-/** Deterministic pastel from a string — same member, same colour, forever. */
+/**
+ * The initials tint, from the theme's five-colour member ramp (§B4).
+ *
+ * It used to be `oklch(0.88 0.06 <hash mod 360>)` — a deterministic pastel from
+ * **any** of 360 hues, which is how a pink «БН» disc ended up sitting on a sand
+ * card in `today-desktop-light`, and why an avatar looked identical in light
+ * and dark mode while everything around it moved. §B1 keeps the palette whole:
+ * five perceptually-spaced colours picked against this warm ground, and the
+ * same person is the same colour on their disc, their day-rail tick, their
+ * event bar and their load bar.
+ *
+ * `color-mix` rather than a second token: the ramp colour is the foreground at
+ * full strength and the ground at 18 %, which is exactly what `MemberDisc`
+ * does with `bg-member-N/15` — one relationship, expressed twice because one
+ * of these two has to set the colour from JavaScript.
+ */
 function tintFor(seed: string): { background: string; foreground: string } {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i += 1) {
-    hash = (hash * 31 + seed.charCodeAt(i)) % 360;
-  }
+  const colour = `var(--chart-${String(memberSlot(seed))})`;
   return {
-    background: `oklch(0.88 0.06 ${String(hash)})`,
-    foreground: `oklch(0.35 0.09 ${String(hash)})`,
+    background: `color-mix(in oklab, ${colour} 18%, transparent)`,
+    foreground: colour,
   };
 }

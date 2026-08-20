@@ -205,7 +205,31 @@ export default function EventDetailPage() {
           {occurrencesQuery.isPending ? (
             <Skeleton className="h-16 w-full" />
           ) : occurrences.length === 0 ? (
-            <EmptyState compact title={CALENDAR_RU.emptyAgendaTitle} />
+            <EmptyState
+              compact
+              title={CALENDAR_RU.emptyAgendaTitle}
+              // A series with nothing ahead of it has either ended or is set to
+              // repeat in a way that no longer produces dates — both of which
+              // are fixed in the same place, the series itself.
+              action={
+                canEdit ? (
+                  <Button
+                    variant="outline"
+                    className="h-11"
+                    onClick={() => {
+                      setFormOpen(true);
+                    }}
+                  >
+                    <Pencil aria-hidden />
+                    {COMMON.edit}
+                  </Button>
+                ) : (
+                  <Button asChild variant="outline" className="h-11">
+                    <Link to={ROUTES.calendar}>{CALENDAR_RU.backToCalendar}</Link>
+                  </Button>
+                )
+              }
+            />
           ) : (
             occurrences.map((occurrence) => (
               <EventRow

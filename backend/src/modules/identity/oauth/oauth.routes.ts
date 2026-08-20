@@ -11,6 +11,7 @@ import {
   sessionResponseSchema,
   telegramInitDataSchema,
   telegramWidgetPayloadSchema,
+  type ErrorCode,
   type OAuthProvider,
   type SessionResponse,
   type UserStatus,
@@ -210,6 +211,22 @@ async function finishApiFlow(
   return toSessionResponse(user, session);
 }
 
+/**
+ * Where a failed `/start` lands.
+ *
+ * `/start` is a **top-level browser navigation**, so throwing renders the JSON
+ * error envelope into the address bar: English, developer-facing, and with no
+ * way back to the app. The login screen already turns `?error=<ErrorCode>` into
+ * a Russian sentence; `provider` lets it name which provider is unavailable
+ * instead of blaming sign-in as a whole.
+ */
+function loginErrorUrl(provider: OAuthProvider, code: ErrorCode): string {
+  const url = new URL(appUrl('/login'));
+  url.searchParams.set('error', code);
+  url.searchParams.set('provider', provider);
+  return url.href;
+}
+
 function providerError(provider: string, error: string, description?: string): AppError {
   return new AppError('OAUTH_PROVIDER_ERROR', `${provider} returned an error`, {
     context: { error, description },
@@ -242,13 +259,26 @@ const oauthRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         // authenticated variant below is the only way to start a link flow.
         throw new AppError('UNAUTHENTICATED', 'Use GET /auth/:provider/link to link a provider');
       }
-      const { authorizationUrl } = await beginAuthorization({
-        provider: request.params.provider,
-        intent: 'login',
-        linkUserId: null,
-        redirectAfter: request.query.redirect ?? null,
-      });
-      return reply.redirect(authorizationUrl, 302);
+      const provider = request.params.provider;
+      try {
+        const { authorizationUrl } = await beginAuthorization({
+          provider,
+          intent: 'login',
+          linkUserId: null,
+          redirectAfter: request.query.redirect ?? null,
+        });
+        return reply.redirect(authorizationUrl, 302);
+      } catch (error) {
+        // Only *our side or the provider's* failures come back as a screen. A
+        // 4xx (unknown provider, `intent=link` here) is a caller mistake and
+        // stays a JSON error, so a broken client is not disguised as an outage.
+        if (!AppError.isAppError(error) || error.statusCode < 500) throw error;
+        request.log.error(
+          { err: error, code: error.code, context: error.context, provider },
+          'oauth start failed before the user ever reached the provider',
+        );
+        return reply.redirect(loginErrorUrl(provider, error.code), 302);
+      }
     },
   );
 

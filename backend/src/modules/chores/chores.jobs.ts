@@ -3,6 +3,7 @@
 import { getDb, type Db } from '../../core/db.js';
 import { logger } from '../../core/logger.js';
 import { registerJobHandler } from '../../core/queue/workers.js';
+import { bumpRevisions } from '../../core/revisions.js';
 import * as repo from './chores.repository.js';
 
 /**
@@ -59,7 +60,10 @@ export function registerChoreJobs(): void {
   registered = true;
 
   registerJobHandler(CHORE_JOBS.expireSwaps, async () => {
-    await runSwapExpiry(getDb());
+    const expired = await runSwapExpiry(getDb());
+    // Swaps render on the tasks screens, so an expiry moves the `tasks`
+    // counter. A worker's writes never reach the HTTP hook (D12, §4.3).
+    if (expired > 0) await bumpRevisions(['tasks']);
   });
 }
 

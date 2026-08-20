@@ -3,7 +3,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
-import type { LinkedIdentityList } from '@family/shared';
+import type { LinkedIdentityList, MeResponse } from '@family/shared';
 
 import { InstallPrompt } from '@/features/auth/components/InstallPrompt';
 import {
@@ -32,6 +32,7 @@ import { PushOnboarding } from './push/PushOnboarding';
 import { SETTINGS_RU } from './locale';
 import { canUnlink } from './api';
 import AccountsPage from './pages/AccountsPage';
+import ProfilePage from './pages/ProfilePage';
 
 /**
  * The tests that matter for this feature are not "does the switch flip" — they
@@ -632,5 +633,103 @@ describe('the notification offer in the app shell', () => {
     await waitFor(() => {
       expect(requestPermission).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* the profile form                                                            */
+/* -------------------------------------------------------------------------- */
+
+function meResponse(): MeResponse {
+  return {
+    user: {
+      id: '11111111-1111-4111-8111-111111111111',
+      displayName: 'Тест',
+      avatarUrl: null,
+      color: null,
+      role: 'owner',
+      status: 'active',
+      email: 'test@example.com',
+      birthDate: null,
+      timezone: 'Europe/Moscow',
+      locale: 'ru-RU',
+    },
+    permissions: ['profile:update:own'],
+    family: { name: 'Наша семья', timezone: 'Europe/Moscow', weekStartsOn: 1, currency: 'RUB' },
+    permissionsVersion: 'v1',
+  };
+}
+
+describe('the profile form guards its required name', () => {
+  /**
+   * Clearing «Имя» used to leave «Сохранить» enabled and fire
+   * `PATCH /api/me {"displayName":""}`, so the only thing telling a user the
+   * field was required was a server 400 arriving as a toast — after the write
+   * had already been attempted. The rule is `nonEmptyString(80)` in the shared
+   * contract; the form must apply it before anything reaches the network.
+   */
+  function stubMe() {
+    const calls: RequestInit[] = [];
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method && init.method !== 'GET') calls.push(init);
+      return Promise.resolve(
+        new Response(JSON.stringify(meResponse()), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return calls;
+  }
+
+  it('refuses an empty name in Russian and sends no request', async () => {
+    const writes = stubMe();
+    renderWithProviders(<ProfilePage />);
+
+    const name = await screen.findByLabelText('Имя');
+    await userEvent.clear(name);
+
+    // The contract's own message, not a local paraphrase of it.
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('Поле не может быть пустым');
+    });
+    expect(name).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('button', { name: 'Сохранить' })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
+    expect(writes).toHaveLength(0);
+  });
+
+  it('refuses a whitespace-only name, which trims to empty', async () => {
+    const writes = stubMe();
+    renderWithProviders(<ProfilePage />);
+
+    const name = await screen.findByLabelText('Имя');
+    await userEvent.clear(name);
+    await userEvent.type(name, '   ');
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('Поле не может быть пустым');
+    });
+    expect(screen.getByRole('button', { name: 'Сохранить' })).toBeDisabled();
+    expect(writes).toHaveLength(0);
+  });
+
+  it('accepts a real name again once it is typed back', async () => {
+    stubMe();
+    renderWithProviders(<ProfilePage />);
+
+    const name = await screen.findByLabelText('Имя');
+    await userEvent.clear(name);
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+    });
+
+    await userEvent.type(name, 'Аня');
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: 'Сохранить' })).toBeEnabled();
   });
 });

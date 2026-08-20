@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { MessageSquareHeart } from 'lucide-react';
 import { EmptyState, ErrorState } from '@/shared/components';
+import { Can } from '@/shared/auth';
 import { Button } from '@/shared/ui/button';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { pinnedFrom, useRoster, useWallFeed } from '../hooks';
 import { WALL_RU } from '../locale';
 import { AnnouncementCard } from './AnnouncementCard';
+import { AnnouncementComposer } from './AnnouncementComposer';
 import { ActivityRow } from './ActivityRow';
 
 /**
@@ -48,24 +50,31 @@ export function WallFeed() {
         icon={MessageSquareHeart}
         title={WALL_RU.feed.empty}
         description={WALL_RU.feed.emptyDescription}
+        // §D: an empty screen is an invitation, so it always carries the way
+        // out of being empty.
+        action={
+          <Can perm="post:create">
+            <AnnouncementComposer />
+          </Can>
+        }
       />
     );
   }
 
   return (
-    <div className="space-y-4">
-      {pinned.length > 0 ? (
-        <section aria-label={WALL_RU.feed.pinnedSection} className="space-y-3">
-          <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-            {WALL_RU.feed.pinnedSection}
-          </h2>
-          {pinned.map((post) => (
-            <AnnouncementCard key={post.id} post={post} roster={roster} emphasised />
-          ))}
-        </section>
-      ) : null}
+    <div className="flex flex-col gap-4">
+      {/*
+        Pinned first, and that is the whole treatment — the card already carries
+        the clay wash, the 📌 and «закреплено до 25 августа». The «ЗАКРЕПЛЕНО»
+        heading that used to sit above it said, at `label` weight, exactly what
+        each card says at `meta` weight two lines lower (§A3: chrome must not
+        repeat).
+      */}
+      {pinned.map((post) => (
+        <AnnouncementCard key={post.id} post={post} roster={roster} emphasised />
+      ))}
 
-      <section aria-label={WALL_RU.tabs.feed} className="space-y-2">
+      <section aria-label={WALL_RU.tabs.feed} className="flex flex-col gap-2">
         {items.map((item) => (
           <div
             key={`${item.kind}-${item.id}`}
@@ -150,7 +159,10 @@ function FeedSkeleton() {
   return (
     <div className="space-y-3" aria-hidden>
       {[0, 1, 2].map((index) => (
-        <div key={index} className="space-y-2 rounded-xl border border-border bg-card p-4">
+        <div
+          key={index}
+          className="max-w-row-measure space-y-2 rounded-xl border border-border bg-card p-4"
+        >
           <div className="flex items-center gap-2.5">
             <Skeleton className="size-8 rounded-full" />
             <Skeleton className="h-4 w-32" />

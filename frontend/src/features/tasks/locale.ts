@@ -29,6 +29,8 @@ export const TASKS_RU = {
 
   /* ---- filters ---- */
   filters: {
+    title: 'Фильтры',
+    apply: 'Показать',
     assignee: 'Кто делает',
     everyone: 'Все',
     mine: 'Мои',
@@ -45,7 +47,6 @@ export const TASKS_RU = {
     complete: 'Выполнено',
     completeAria: 'Отметить выполненным',
     uncomplete: 'Вернуть в работу',
-    swipeHint: 'Проведите вправо, чтобы отметить выполненным',
     overdue: 'Просрочено',
     doneBy: 'Сделал',
     changed: 'Изменено',
@@ -55,6 +56,30 @@ export const TASKS_RU = {
     open: 'Подробнее',
     skipped: 'Пропущено',
     cancelled: 'Отменено',
+  },
+
+  /**
+   * Gestures (§C-gestures). One word on the revealed swipe button, one line in
+   * the undo toast. Deliberately shorter than `card.complete` / `card.uncomplete`:
+   * an 88px button and a toast have room for a word, not for a sentence, and the
+   * long forms still carry the full meaning on the visible controls.
+   *
+   * There is no «проведите, чтобы…» hint anywhere and there must not be one —
+   * §G1 makes gestures silent on purpose, because the visible tick is what
+   * teaches the action.
+   */
+  swipe: {
+    done: 'Сделано',
+    undone: 'Вернули',
+    /** Screen-reader name for the revealed button. */
+    doneAria: 'Отметить выполненным',
+    undoneAria: 'Вернуть в работу',
+  },
+
+  /** The long-press / «ещё» sheet on a row (§G5, §D2). */
+  rowSheet: {
+    description: 'Действия с делом',
+    open: 'Открыть дело',
   },
 
   /* ---- states ---- */
@@ -109,6 +134,34 @@ export const TASKS_RU = {
     saved: 'Дело сохранено',
     created: 'Дело добавлено',
     deleted: 'Дело удалено',
+
+    /* ---- the §D-forms sheet ---- */
+    /** Section label above everything that is optional by construction (§F7). */
+    details: 'Подробнее',
+    /** The disclosure that reveals the rarely-touched rows. */
+    more: 'Ещё',
+    when: 'Когда',
+    who: 'Кто',
+    whoAnyone: 'Любой',
+    /** «Срок» in the row sense: how long after the start it stops being on time. */
+    dueSheetTitle: 'Когда истекает срок',
+    dueHints: {
+      atStart: 'Просрочится сразу после начала.',
+      hour: 'Есть час после начала.',
+      nextDay: 'Есть время до конца следующего дня.',
+      week: 'Есть неделя.',
+    },
+    visibility: 'Кто видит',
+    categorySheetTitle: 'Категория',
+    notesSheetTitle: 'Заметка',
+    whoSheetTitle: 'Кто это сделает',
+  },
+
+  /** Who can see the chore. Same vocabulary as the calendar, by design. */
+  visibility: {
+    household: 'Вся семья',
+    restricted: 'Только участники',
+    private: 'Только я',
   },
 
   /* ---- recurrence builder ---- */
@@ -184,6 +237,21 @@ export const TASKS_RU = {
     confirm: 'Продолжить',
   },
 
+  /**
+   * The chip that stays under the sheet header once the scope is chosen (§F6).
+   * One decision, taken when it is cheap, visible the whole time, changeable in
+   * one tap.
+   */
+  scopeChip: {
+    prefix: 'Меняем',
+    // Lower-cased because the label lands mid-sentence: «Меняем: только
+    // сегодня», not «Меняем: только Сегодня».
+    this: (date: string) => `только ${date.toLocaleLowerCase('ru')}`,
+    thisAndFuture: (date: string) => `${date.toLocaleLowerCase('ru')} и все следующие`,
+    all: 'всю серию',
+    change: 'сменить',
+  },
+
   /* ---- skip ---- */
   skip: {
     title: 'Пропустить это дело?',
@@ -210,6 +278,8 @@ export const TASKS_RU = {
   /* ---- swaps ---- */
   swap: {
     title: 'Подмена',
+    /** The §C2 band-2 eyebrow, shared wording with Сегодня's attention block. */
+    attentionLabel: 'Требует внимания',
     incoming: 'Просят подменить',
     outgoing: 'Вы просили подменить',
     ask: 'Попросить подмениться',
@@ -234,8 +304,11 @@ export const TASKS_RU = {
 
   /* ---- weekly load ---- */
   load: {
-    title: 'Как разделились дела на этой неделе',
+    title: 'Нагрузка за неделю',
     description: 'Полоска — доля дел, метка — своя норма. Это не соревнование.',
+    aboutRight: 'примерно поровну',
+    aboveShare: 'больше своей доли',
+    belowShare: 'меньше своей доли',
     fairShare: 'Своя доля',
     yourShare: 'Ваша доля',
     balanced: 'Дела разделились ровно.',
