@@ -4,37 +4,63 @@ import type { EntityRef, ReactionSummary } from '@family/shared';
 import { useCan } from '@/shared/auth';
 import { Button } from '@/shared/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
+import { MemberDiscGroup } from '@/shared/ui/member-disc';
 import { cn } from '@/shared/lib/utils';
-import { useReactionState, useToggleReaction } from '../hooks';
-import { REACTION_EMOJI, WALL_RU, reactorLabel } from '../locale';
+import { useReactionState, useRoster, useToggleReaction, type Roster } from '../hooks';
+import { REACTION_EMOJI, WALL_RU, reactorLabel, reactorMembers } from '../locale';
 
 /**
- * Emoji reactions for any note on the board.
+ * Reactions — **faces, never digits** (§D7.7, D13).
  *
- * The toggle is optimistic: the counter moves on the tap and rolls back if the
- * request fails (see `useToggleReaction`). The server endpoint is idempotent
- * and answers with the fresh summary, so an offline double-tap converges rather
- * than oscillating. The digit width is reserved with `tabular-nums` so a count
- * going 9 → 10 does not shift the row (§D7).
+ * ```
+ * ❤️ (М)(Л)   👍 (П)   ☺+
+ * ```
  *
- * ## The one count on this screen that is allowed to exist
+ * On a board a per-note count was defensible: it belonged to a note rather
+ * than to a person, and notes were grouped by kind. In a feed that argument
+ * weakens, and it weakens because of the redesign itself — cards by different
+ * authors are now adjacent, in one column, with the count at a fixed position
+ * on every card. «❤️ 3» under Мама's note sitting 120px above «❤️ 1» under
+ * Лизы's is a comparison the reader performs without any effort at all, and
+ * the child reading the smaller number learns the same wrong thing D5 removed
+ * the points to prevent.
  *
- * D5 removes scores, and «Спасибо» prints no per-person total at all. A
- * reaction count is a different object: it belongs to a *note*, not to a
- * person, it cannot be accumulated across the family, and nothing sorts by it.
- * The accessible name is exactly what is drawn — «❤️ 3» — so a screen reader
- * hears the screen rather than a hidden tally; the tooltip adds «Вы и ещё 2»,
- * which is the same sentence a sighted reader gets on hover.
+ * The alternative is not "no signal". With six people in the family the useful
+ * fact was never the quantity — it is **who**.
  *
- * Reacting needs `kudos:give`, which a guest does not hold: they see the counts
- * and no controls.
+ * > **Rule.** A reaction renders as its emoji plus the discs of the people who
+ * > used it. No digit anywhere: not on the chip, not in a tooltip, not in a
+ * > `title`, not in an `aria-label`.
+ *
+ * The accessible name is exactly what is drawn — «❤️ — Мама, Лиза» — because a
+ * screen-reader-only count is precisely how this crept back last time: a load
+ * bar on Семья read «40 % (своя доля 33 %)» aloud while drawing no numbers at
+ * all. `wall.test.tsx` asserts the rendered subtree contains no per-person
+ * digit, markup included.
+ *
+ * Two details that are not decoration:
+ *
+ * - `MemberDiscGroup` is capped at the family size, so «+N» never renders. Six
+ *   people is the bound that makes this work — the worst case is five emoji
+ *   with one disc each, ≈260px, one line at 358px. This design does not
+ *   generalise past a household and does not have to.
+ * - A reader without `kudos:give` (a guest) gets the chips as **static text**,
+ *   not disabled buttons: a control that can be focused and pressed to no
+ *   effect is worse than no control.
  */
+
+/** Six people, and «+N» must never render — see the note above. */
+const DISC_CAP = 12;
+
 export function ReactionBar(props: {
   target: EntityRef;
   reactions: readonly ReactionSummary[];
+  /** Passed in where the card already holds one; fetched otherwise. */
+  roster?: Roster;
   className?: string;
 }) {
+  const fallbackRoster = useRoster();
+  const roster = props.roster ?? fallbackRoster;
   const summaries = useReactionState(props.target, props.reactions);
   const toggle = useToggleReaction(props.target);
   const { can } = useCan();
@@ -49,38 +75,58 @@ export function ReactionBar(props: {
 
   return (
     <div className={cn('flex flex-wrap items-center gap-1', props.className)}>
-      {summaries.map((summary) => (
-        <Tooltip key={summary.emoji}>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              disabled={!mayReact}
-              onClick={() => {
-                react(summary.emoji);
-              }}
-              aria-pressed={summary.reacted}
-              aria-label={`${summary.emoji} ${String(summary.count)}`}
-              className={cn(
-                // Every chip carries a border, transparent when unreacted, so
-                // toggling one does not shift the row it sits in by 2px.
-                'inline-flex min-h-11 items-center gap-1.5 rounded-full border px-2.5',
-                'text-[13px] leading-[18px] font-medium transition-colors',
-                'touch-manipulation no-callout',
-                'disabled:cursor-default disabled:opacity-70',
-                summary.reacted
-                  ? 'border-primary/40 bg-primary/10 text-foreground'
-                  : 'border-transparent text-muted-foreground hover:bg-muted/60',
-              )}
+      {summaries.map((summary) => {
+        const members = reactorMembers(summary, roster);
+        const label = reactorLabel(summary, (id) => roster.byId.get(id)?.displayName);
+        const face = (
+          <>
+            <span aria-hidden className="text-base leading-none">
+              {summary.emoji}
+            </span>
+            {members.length > 0 ? (
+              <MemberDiscGroup members={members} max={DISC_CAP} size="sm" />
+            ) : null}
+          </>
+        );
+
+        // Nobody may react here: the chip is a statement, not a control.
+        if (!mayReact) {
+          return (
+            <span
+              key={summary.emoji}
+              role="img"
+              aria-label={label}
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-transparent px-2.5"
             >
-              <span aria-hidden className="text-base leading-none">
-                {summary.emoji}
-              </span>
-              <span className="tabular-nums">{summary.count}</span>
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>{reactorLabel(summary)}</TooltipContent>
-        </Tooltip>
-      ))}
+              {face}
+            </span>
+          );
+        }
+
+        return (
+          <button
+            key={summary.emoji}
+            type="button"
+            onClick={() => {
+              react(summary.emoji);
+            }}
+            aria-pressed={summary.reacted}
+            aria-label={label}
+            className={cn(
+              // Every chip carries a border, transparent when unreacted, so
+              // toggling one does not shift the row it sits in by 2px.
+              'inline-flex min-h-11 items-center gap-1.5 rounded-full border px-2.5',
+              'text-[13px] leading-[18px] font-medium transition-colors',
+              'touch-manipulation no-callout',
+              summary.reacted
+                ? 'border-primary/40 bg-primary/10 text-foreground'
+                : 'border-transparent text-muted-foreground hover:bg-muted/60',
+            )}
+          >
+            {face}
+          </button>
+        );
+      })}
 
       {mayReact ? (
         <Popover open={pickerOpen} onOpenChange={setPickerOpen}>

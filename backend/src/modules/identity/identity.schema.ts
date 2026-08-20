@@ -284,6 +284,19 @@ export const familySettings = pgTable(
      */
     allowRegistration: boolean().notNull().default(true),
 
+    /**
+     * «Очистить доску» is a **horizon, not a delete** (§D7.11, D13). The wall
+     * feed returns only rows created after this instant; nothing is removed —
+     * not a post, not a comment, not a reaction, not a kudos, not a poll, not
+     * an activity row. A bulk delete is the one irreversible operation in this
+     * app that could take several hundred rows, including other people's words
+     * and other people's thank-yous, on a single confirm.
+     *
+     * It lives on the singleton family row (D1), which is why the permission
+     * that governs family settings — `settings:manage` — governs it too.
+     */
+    wallClearedAt: timestamp({ withTimezone: true }),
+
     ...timestamps(),
   },
   (t) => [

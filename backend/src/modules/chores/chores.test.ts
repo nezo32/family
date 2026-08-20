@@ -63,8 +63,6 @@ const store = vi.hoisted(() => ({
   kudos: [] as Array<Record<string, unknown>>,
   swaps: [] as Array<Record<string, unknown>>,
   members: [] as Array<Record<string, unknown>>,
-  fairness: [] as Array<Record<string, unknown>>,
-  memberWeights: [] as Array<Record<string, unknown>>,
   seq: 0,
   nextId(): string {
     this.seq += 1;
@@ -75,8 +73,6 @@ const store = vi.hoisted(() => ({
     this.kudos.length = 0;
     this.swaps.length = 0;
     this.members.length = 0;
-    this.fairness.length = 0;
-    this.memberWeights.length = 0;
     this.seq = 0;
   },
 }));
@@ -174,8 +170,6 @@ vi.mock('./chores.repository.js', () => ({
   findBlackoutsForUsers: () => Promise.resolve(new Map<string, never[]>()),
   findRotationMembers: (_ex: unknown, rotationId: string) =>
     Promise.resolve(store.members.filter((m) => m.rotationId === rotationId)),
-  listChoreMemberWeights: () => Promise.resolve(store.memberWeights),
-  loadFairnessRows: () => Promise.resolve(store.fairness),
 
   decodeCursor: () => ({ createdAt: T0, id: 'x' }),
   toPage: (rows: unknown[], limit: number) => ({ items: rows.slice(0, limit), nextCursor: null }),
@@ -464,64 +458,6 @@ describe('swaps', () => {
     expect(store.swaps.map((s) => s.status)).toEqual(['expired', 'pending', 'accepted']);
     // Running the sweep again is a no-op.
     expect(await service().swaps.expireDue(fakeDb, T0)).toBe(0);
-  });
-});
-
-/* -------------------------------------------------------------------------- */
-/* Fairness summary                                                            */
-/* -------------------------------------------------------------------------- */
-
-describe('fairnessSummary — the neutral split of the week', () => {
-  it('compares each member to their own fair share and exposes no ranking', async () => {
-    store.memberWeights.push(
-      { userId: ADULT, weight: '1.00', position: 0 },
-      { userId: CHILD, weight: '0.40', position: 1 },
-    );
-    store.fairness.push(
-      { userId: ADULT, completed: 7, committed: 3, coveredForOthers: 1 },
-      { userId: CHILD, completed: 3, committed: 1, coveredForOthers: 0 },
-    );
-
-    const summary = await new ChoresService(fakeDb, { now: () => T0 }).fairnessSummary({
-      windowDays: 28,
-    });
-
-    const adult = summary.members.find((m) => m.userId === ADULT);
-    const child = summary.members.find((m) => m.userId === CHILD);
-    expect(adult?.fairShare).toBeCloseTo(1 / 1.4, 4);
-    expect(child?.fairShare).toBeCloseTo(0.4 / 1.4, 4);
-    expect(adult?.actualShare).toBeCloseTo(10 / 14, 4);
-    // Ten chores on one unit of weight and four on 0.4 of a unit is the *same*
-    // load per unit — equal debt is the definition of balanced here, and the
-    // family-level number says so with a single 0.
-    expect(adult?.debt).toBe(10);
-    expect(child?.debt).toBe(10);
-    expect(summary.imbalance).toBeCloseTo(0, 4);
-
-    // No rank field, anywhere, ever (D5) — and no per-person score either.
-    for (const member of summary.members) {
-      expect(Object.keys(member)).not.toContain('rank');
-      expect(Object.keys(member)).not.toContain('earned');
-      expect(Object.keys(member)).not.toContain('points');
-    }
-  });
-
-  it('reports everybody at their fair share on a week with no load at all', async () => {
-    store.memberWeights.push(
-      { userId: ADULT, weight: '1.00', position: 0 },
-      { userId: CHILD, weight: '1.00', position: 1 },
-    );
-    store.fairness.push(
-      { userId: ADULT, completed: 0, committed: 0, coveredForOthers: 0 },
-      { userId: CHILD, completed: 0, committed: 0, coveredForOthers: 0 },
-    );
-
-    const summary = await new ChoresService(fakeDb, { now: () => T0 }).fairnessSummary({
-      windowDays: 7,
-    });
-
-    expect(summary.members.map((m) => m.actualShare)).toEqual([0.5, 0.5]);
-    expect(summary.imbalance).toBe(0);
   });
 });
 

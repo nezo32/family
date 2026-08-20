@@ -1,3 +1,4 @@
+export { ArchiveToggle } from './ArchiveToggle';
 export { ConfirmDialog, useConfirm, type ConfirmOptions } from './ConfirmDialog';
 export { EditScopeDialog, type EditScopeStrings } from './EditScopeDialog';
 export { EmptyState } from './EmptyState';

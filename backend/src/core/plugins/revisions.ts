@@ -43,9 +43,12 @@ import { bumpRevisions } from '../revisions.js';
  *
  * The non-obvious rows:
  *
- * - **Chores are `tasks`.** Rotations, swaps, blackouts and fairness all render
- *   on the tasks screens and share the `['tasks']` key root. `/chores/kudos` is
- *   the exception, because kudos render on the wall.
+ * - **Chores are `tasks`.** Rotations, swaps and blackouts all render on the
+ *   tasks screens and share the `['tasks']` key root. `/chores/kudos` is the
+ *   exception, because kudos render on the wall. Fairness is not in that list:
+ *   no screen draws a split of the housework any more (D5). The mapping is
+ *   unchanged regardless — a rotation write still bumps `tasks`, because the
+ *   assignment it produces is what those screens show.
  * - **Comments and reactions are `wall` wherever they are mounted.**
  *   `wall.routes.ts` mounts the generic discussion routes on five segments —
  *   `posts`, `polls`, `tasks`, `events`, `goals` — and a comment on a task
@@ -76,6 +79,11 @@ export const ROUTE_DOMAINS: readonly (readonly [string, readonly ChangeDomain[]]
   ['/api/events/:id/reactions', ['wall']],
   ['/api/goals/:id/comments', ['wall']],
   ['/api/goals/:id/reactions', ['wall']],
+  // «Спасибо» is a card in the feed now (§D7.6), so a thank-you takes comments
+  // and reactions through the same generic mounts everything else uses. Both
+  // land on Стена, so both bump `wall` and nothing else.
+  ['/api/kudos/:id/comments', ['wall']],
+  ['/api/kudos/:id/reactions', ['wall']],
   ['/api/posts', ['wall']],
   ['/api/polls', ['wall']],
   ['/api/notifications/preferences', []],

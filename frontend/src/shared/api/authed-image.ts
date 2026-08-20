@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import { API_BASE_URL } from './config';
+import { API_BASE_URL, API_PREFIX } from './config';
 import { refreshAccessToken } from './refresh';
 import { getAccessToken, onAccessTokenChange } from './token-store';
 
@@ -52,18 +52,61 @@ function remember(key: string, objectUrl: string): void {
 }
 
 /**
- * A same-origin API path we must authenticate, as opposed to a provider's CDN.
+ * Origins whose `/api/...` paths are *ours*, and may therefore be sent the
+ * session's bearer token.
  *
- * Checked by shape rather than by "is it relative", because `VITE_API_URL` can
- * point the API at another origin in a split deployment and those requests
- * still need the token.
+ * Two, not one, because the two deployments differ. Same-origin production
+ * leaves `VITE_API_URL` empty and the backend writes a relative
+ * `/api/users/:id/avatar?v=…`, which resolves against the document. A
+ * split-origin deployment points `API_BASE_URL` at another host, and the same
+ * relative path still has to work while absolute API URLs start matching too.
+ */
+function apiOrigins(): readonly string[] {
+  const documentOrigin = window.location.origin;
+  if (API_BASE_URL === '') return [documentOrigin];
+  try {
+    return [documentOrigin, new URL(API_BASE_URL, documentOrigin).origin];
+  } catch {
+    return [documentOrigin];
+  }
+}
+
+/**
+ * Is `url` our own avatar endpoint, as opposed to a provider's CDN?
+ *
+ * **This is a security boundary, not a formatting question.** `avatarUrl` is
+ * whatever `PATCH /api/me` was last given — an absolute `https://` URL of the
+ * caller's choosing, up to 2048 characters — so the answer decides whether an
+ * access token that authenticates against this API is handed to a host chosen
+ * by a family member. Google and Telegram write real ones when an account is
+ * linked; nothing stops a member writing `https://example.invalid/api/x`.
+ *
+ * Resolved through `URL` and compared by **origin**, never by string prefix.
+ * `https://lh3.googleusercontent.com/api/a/ACg8…` starts with neither `/api/`
+ * nor our base, but the shape of that argument is the shape of every
+ * prefix-matching bypass, and the parser is the thing that cannot be talked
+ * into a wrong answer. `data:` and `blob:` parse fine and are deliberately
+ * excluded: they are not a fetch we need to authenticate.
  */
 export function isApiImagePath(url: string): boolean {
-  if (url.startsWith('/api/')) return true;
-  return API_BASE_URL !== '' && url.startsWith(`${API_BASE_URL}/api/`);
+  let parsed: URL;
+  try {
+    parsed = new URL(url, window.location.origin);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+  if (!apiOrigins().includes(parsed.origin)) return false;
+  return parsed.pathname.startsWith(`${API_PREFIX}/`);
 }
 
 async function fetchImage(url: string, retried = false): Promise<string | null> {
+  // The guard lives *here*, wrapped around the only line that reads the token,
+  // rather than at the call site. Structure, not convention: `avatarUrl` comes
+  // out of the database, and "remember to check before calling" is exactly the
+  // rule that gets forgotten the next time somebody adds a caller.
+  if (!isApiImagePath(url)) return null;
+
   const token = getAccessToken();
   const response = await fetch(url, {
     headers: token ? { authorization: `Bearer ${token}` } : {},
@@ -110,10 +153,12 @@ function load(url: string): Promise<string | null> {
  * a 32px avatar goes is noise.
  */
 export function useAuthedImage(url: string | null | undefined): string | null {
-  const needsAuth = Boolean(url) && isApiImagePath(url as string);
-  const [resolved, setResolved] = useState<string | null>(() =>
-    url && needsAuth ? (cache.get(url) ?? null) : (url ?? null),
-  );
+  const [resolved, setResolved] = useState<string | null>(() => {
+    if (!url) return null;
+    // A provider URL is already renderable; ours is only renderable if the
+    // bytes are in the cache from an earlier screen.
+    return isApiImagePath(url) ? (cache.get(url) ?? null) : url;
+  });
 
   useEffect(() => {
     if (!url) {
@@ -147,6 +192,34 @@ export function useAuthedImage(url: string | null | undefined): string | null {
   }, [url]);
 
   return resolved;
+}
+
+/** Everything an `<img>` needs in order to show one person's avatar. */
+export interface AvatarSource {
+  /** Ready for `<img src>`, or `null` — meaning "show the initials". */
+  src: string | null;
+  /**
+   * The bytes come from a provider's CDN rather than from us.
+   *
+   * Worth knowing at the call site for one reason: an external `<img>` tells
+   * that provider a member opened this app, and `referrer` would tell them
+   * which screen. `no-referrer` is the cheap half of the fix; the other half
+   * would be to stop loading provider images at all (see the note in
+   * `UserAvatar`).
+   */
+  external: boolean;
+}
+
+/**
+ * The one entry point for "render this `avatarUrl`".
+ *
+ * Both faces in this app — `UserAvatar` and `MemberDisc` — go through here, so
+ * the same-origin decision is made once. Two components each deciding for
+ * themselves whether a URL is ours is how one of them ends up wrong.
+ */
+export function useAvatarSource(url: string | null | undefined): AvatarSource {
+  const src = useAuthedImage(url);
+  return { src, external: url ? !isApiImagePath(url) : false };
 }
 
 /** Drop every cached object URL. */

@@ -36,7 +36,7 @@ export function DecidedPanel() {
   if (polls.length === 0) return null;
 
   return (
-    <Section label={WALL_RU.board.decidedLabel} surface="card">
+    <Section label={WALL_RU.polls.decidedLabel} surface="card">
       {polls.map((poll) => {
         const decided = decidedOption(poll);
         return (

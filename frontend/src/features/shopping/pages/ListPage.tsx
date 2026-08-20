@@ -64,6 +64,12 @@ import { QuickAddBar } from '../components/QuickAddBar';
  *  - the `sticky` offset is the height of the tab bar, not `0`. `bottom-0`
  *    pins to the bottom of the *viewport*, which on a phone is behind the tab
  *    bar; on a list long enough to scroll the composer disappeared under it.
+ *    It carries `--viewport-shortfall` for the same reason, with the same
+ *    `0px` fallback: the tab bar is pinned with `bottom-viewport`, which pushes
+ *    it *down* by that much when WebKit leaves the layout viewport short
+ *    (`index.css`, `app/layout/viewport-insets.ts`), and this offset is
+ *    measured *up* from the same short edge — so it has to shrink by exactly
+ *    what the bar moved, or the composer floats that far above it.
  *
  * It deliberately does **not** carry `pb-safe`. The home indicator is the tab
  * bar's problem — it is the thing physically sitting on it — and `AppShell`
@@ -282,7 +288,7 @@ export default function ListPage() {
          * the sticky offset keeps it there once the list is long enough to
          * scroll underneath it.
          */
-        <div className="sticky bottom-[calc(var(--spacing-tabbar)+env(safe-area-inset-bottom,0px))] z-20 -mx-4 mt-auto border-t border-border bg-background/95 px-4 pt-3 pb-3 backdrop-blur-sm md:-mx-6 md:bottom-0 md:px-6">
+        <div className="sticky bottom-[calc(var(--spacing-tabbar)+env(safe-area-inset-bottom,0px)-var(--viewport-shortfall,0px))] z-20 -mx-4 mt-auto border-t border-border bg-background/95 px-4 pt-3 pb-3 backdrop-blur-sm md:-mx-6 md:bottom-0 md:px-6">
           <QuickAddBar
             catalogue={catalogue}
             onAdd={(drafts) => addItems(drafts)}

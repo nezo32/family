@@ -15,7 +15,6 @@ import dashboardRoutes, { DASHBOARD_ROUTE_ACCESS } from './dashboard.routes.js';
 import { runWeeklyDigestSweep } from './dashboard.jobs.js';
 import {
   addLocalDays,
-  buildFairness,
   dayWindowFor,
   getToday,
   getWeek,
@@ -30,7 +29,6 @@ import {
   type DashboardActor,
   type EventRow,
   type GoalRow,
-  type LoadRow,
   type MemberRow,
   type ShoppingSnapshot,
   type TaskRow,
@@ -115,7 +113,6 @@ function member(overrides: Partial<MemberRow> & Pick<MemberRow, 'id' | 'displayN
     email: null,
     role: 'adult',
     status: 'active',
-    choreWeight: '1.00',
     birthDate: null,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     ...overrides,
@@ -156,7 +153,6 @@ interface World {
   shopping: ShoppingSnapshot;
   goals: GoalRow[];
   unread: number;
-  load: LoadRow[];
   wall: WallCounts;
   contributions: number;
   subscribers: DigestSubscriber[];
@@ -185,7 +181,6 @@ function world(overrides: Partial<World> = {}): World {
     shopping: { items: [], neededCount: 0, urgentCount: 0 },
     goals: [],
     unread: 0,
-    load: [],
     wall: { announcements: 0, kudos: 0 },
     contributions: 0,
     subscribers: [],
@@ -238,7 +233,6 @@ function makePort(state: World): FakePort {
     loadShopping: () => track('loadShopping', state.shopping),
     loadGoals: () => track('loadGoals', state.goals),
     loadUnreadCount: () => track('loadUnreadCount', state.unread),
-    loadLoad: () => track('loadLoad', state.load),
     loadWallCounts: () => track('loadWallCounts', state.wall),
     loadGoalContributions: () => track('loadGoalContributions', state.contributions),
     loadSubscriber: (userId) =>
@@ -404,7 +398,6 @@ describe('permission gating of the aggregate', () => {
           milestoneSortOrder: 0,
         },
       ],
-      load: [{ userId: ADULT_ID, doneCount: 3 }],
       members: [
         member({ id: ADULT_ID, displayName: 'Аня', role: 'adult' }),
         member({ id: CHILD_ID, displayName: 'Маша', role: 'child' }),
@@ -416,9 +409,6 @@ describe('permission gating of the aggregate', () => {
     expect(resolveAccess(actorFor('child', CHILD_ID)).goals).toBe(false);
     expect(resolveAccess(actorFor('teen', TEEN_ID)).goals).toBe(true);
     expect(resolveAccess(actorFor('adult', ADULT_ID)).goals).toBe(true);
-    // Seeing the family load means reading everybody's tasks.
-    expect(resolveAccess(actorFor('child', CHILD_ID)).fairness).toBe(false);
-    expect(resolveAccess(actorFor('adult', ADULT_ID)).fairness).toBe(true);
     expect(resolveAccess(actorFor('adult', ADULT_ID)).approvals).toBe(false);
     expect(resolveAccess(actorFor('admin', ADMIN_ID)).approvals).toBe(true);
   });
@@ -429,7 +419,6 @@ describe('permission gating of the aggregate', () => {
     const payload = await getToday(port, actorFor('child', CHILD_ID), NOW);
 
     expect(payload.goals).toBeNull();
-    expect(payload.fairness).toBeNull();
     expect(payload.pendingApprovals).toBeNull();
 
     // The strongest form of the assertion: nothing about the money is anywhere
@@ -450,7 +439,6 @@ describe('permission gating of the aggregate', () => {
     // And it was never fetched — the gate is upstream of the payload, so there
     // is no filtered version of the data anywhere in the process.
     expect(port.calls).not.toContain('loadGoals');
-    expect(port.calls).not.toContain('loadLoad');
   });
 
   it('still gives the child their own tasks, events and shopping list', async () => {
@@ -491,7 +479,6 @@ describe('permission gating of the aggregate', () => {
     const adult = await getToday(makePort(state), actorFor('adult', ADULT_ID, MOSCOW), NOW);
     expect(adult.goals?.nearestMilestone?.goalTitle).toBe('Велосипед');
     expect(adult.goals?.nearestMilestone?.remainingAmount).toBe(260_000);
-    expect(adult.fairness?.me.doneCount).toBe(3);
     // An adult holds no `member:approve`; the section is not theirs to see.
     expect(adult.pendingApprovals).toBeNull();
 
@@ -509,7 +496,7 @@ describe('permission gating of the aggregate', () => {
 });
 
 /* ========================================================================== */
-/* Overdue, milestones, fairness                                              */
+/* Overdue, milestones, and the totals that must not come back               */
 /* ========================================================================== */
 
 describe('derived task state', () => {
@@ -603,39 +590,42 @@ describe('nearest milestone', () => {
   });
 });
 
-describe('fairness is a load bar, never a leaderboard (D5)', () => {
-  it('orders members by name and never by score', () => {
-    const members = [
-      member({ id: TEEN_ID, displayName: 'Паша' }),
-      member({ id: ADULT_ID, displayName: 'Аня' }),
-      member({ id: CHILD_ID, displayName: 'Маша' }),
-    ];
-    const load: LoadRow[] = [
-      { userId: TEEN_ID, doneCount: 9 },
-      { userId: ADULT_ID, doneCount: 1 },
-    ];
-    const fairness = buildFairness({ userId: ADULT_ID, displayName: 'Аня' }, members, load, {
-      weekStart: '2026-08-17',
-      weekEnd: '2026-08-24',
-    });
+/**
+ * This replaces «fairness is a load bar, never a leaderboard». The bar is gone,
+ * and so is the payload that fed it (D5) — so the invariant worth guarding is no
+ * longer "the numbers are ordered fairly" but **"there are no numbers"**.
+ *
+ * The assertion is against the *serialized* body rather than against a named
+ * property on purpose. A `fairness` key is only one spelling; the thing being
+ * kept out is any per-person total under any name, and a future reviewer adding
+ * `load`, `share` or `contributions` should trip this without having to
+ * remember the test exists.
+ */
+describe('the home screen ships no split of the housework (D5)', () => {
+  it('gives the most privileged caller no per-person totals at all', async () => {
+    const port = makePort(world());
+    const payload = await getToday(port, actorFor('owner', ADULT_ID, MOSCOW), NOW);
 
-    expect(fairness.members.map((m) => m.displayName)).toEqual(['Аня', 'Маша', 'Паша']);
-    expect(fairness.me.doneCount).toBe(1);
-    // A member with no rows is 0, not missing — "не участвует" is data too.
-    expect(fairness.members.find((m) => m.userId === CHILD_ID)?.doneCount).toBe(0);
-    expect(fairness.members.find((m) => m.userId === TEEN_ID)?.sharePercent).toBe(90);
-    expect(fairness.note).not.toMatch(/лучш|больше всех|меньше всех|рейтинг участник/i);
+    expect(payload).not.toHaveProperty('fairness');
+
+    const serialized = JSON.stringify(payload);
+    for (const forbidden of [
+      'fairness',
+      'sharePercent',
+      'doneCount',
+      'choreWeight',
+      'нагрузк',
+      'Нагрузка',
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
   });
 
-  it('says something kind when nobody has done anything yet', () => {
-    const fairness = buildFairness(
-      { userId: ADULT_ID, displayName: 'Аня' },
-      [member({ id: ADULT_ID, displayName: 'Аня' })],
-      [],
-      { weekStart: '2026-08-17', weekEnd: '2026-08-24' },
-    );
-    expect(fairness.me.sharePercent).toBe(0);
-    expect(fairness.note).toContain('неделя только начинается');
+  it('has no port method that could total chores per person', () => {
+    // A tripwire rather than a behaviour test: re-adding `loadLoad` to
+    // `DashboardPort` forces it back into this fake, and this line then fails
+    // in the same commit rather than a release later.
+    expect(Object.keys(makePort(world()))).not.toContain('loadLoad');
   });
 });
 
@@ -747,21 +737,12 @@ function digestData(overrides: Partial<DigestData> = {}): DigestData {
     goalContributed: null,
     shopping: null,
     wall: null,
-    load: null,
     actorId: ADULT_ID,
     ...overrides,
   };
 }
 
-const ALL_SECTIONS: DigestSection[] = [
-  'birthdays',
-  'events',
-  'tasks',
-  'goals',
-  'shopping',
-  'wall',
-  'load',
-];
+const ALL_SECTIONS: DigestSection[] = ['birthdays', 'events', 'tasks', 'goals', 'shopping', 'wall'];
 
 describe('digest composition', () => {
   it('writes the headline sentence the product asked for', () => {
@@ -853,26 +834,64 @@ describe('digest composition', () => {
   });
 
   it('renders correct agreement in a real block', () => {
+    // 21 is the number that catches a naive plural rule, and it used to be
+    // caught here through the `load` block («Вы закрыли 21 задачу»). That block
+    // is gone (D5) but the grammar it was guarding is not, so the assertion
+    // moved to a block that survives.
     const digest = composeDigest(
       digestData({
-        load: [
-          { userId: ADULT_ID, doneCount: 21 },
-          { userId: TEEN_ID, doneCount: 1 },
-        ],
+        myTasks: Array.from({ length: 21 }, (_, i) =>
+          task({ id: `t${i}`, title: 'Дело', dueAt: new Date('2026-08-25T09:00:00.000Z') }),
+        ),
       }),
-      ['load'],
+      ['tasks'],
       NOW,
     );
-    // Two counts of chores and nothing else. There was a «и набрали 11 баллов»
-    // on the end of the first line until D5 deleted the score (see the
-    // decision record); the sentence is deliberately shorter now.
-    const load = digest.blocks[0];
-    expect(load?.lines[0]).toBe('Вы закрыли 21 задачу.');
-    expect(load?.lines[1]).toBe('Вся семья за неделю — 22 задачи.');
+    const tasks = digest.blocks[0];
+    expect(tasks?.lines[0]).toBe('У вас на неделе 21 задача.');
   });
 
-  it('drops an unknown section rather than crashing on a stale text[] row', () => {
+  /**
+   * The digest is the one message a family will not switch off, which makes it
+   * the worst possible place for a scoreboard. It carried one until now: a
+   * `load` section reading «Вы закрыли 21 задачу.» and «Вся семья за неделю —
+   * 22 задачи.» — a per-person running total, delivered by push (D5).
+   *
+   * The section is gone. This asserts it stays gone across *every* section a
+   * subscriber can ask for, so re-adding one that counts chores per person
+   * fails here rather than in somebody's notification tray.
+   */
+  it('never tells anyone how many chores they or the family closed', () => {
+    const digest = composeDigest(
+      digestData({
+        members: [
+          member({ id: ADULT_ID, displayName: 'Аня' }),
+          member({ id: TEEN_ID, displayName: 'Паша' }),
+        ],
+        wall: { announcements: 2, kudos: 5 },
+      }),
+      ALL_SECTIONS,
+      NOW,
+    );
+
+    expect(digest.blocks.map((b) => b.section)).not.toContain('load');
+    for (const forbidden of [/Вы закрыли/, /Вся семья за неделю/, /нагрузк/i, /разделились дела/]) {
+      expect(digest.text).not.toMatch(forbidden);
+    }
+  });
+
+  /**
+   * This is the whole migration story for removing a digest section, and it is
+   * why removing `load` needed no SQL. `digest_subscriptions.sections` is a
+   * `text[]` that past releases wrote `points` and then `load` into; every read
+   * goes through `sanitizeSections`, which keeps only values still in
+   * `DIGEST_SECTIONS` and falls back to the defaults if nothing survives.
+   */
+  it('drops a removed section rather than crashing on a stale text[] row', () => {
     expect(sanitizeSections(['tasks', 'meal_plan', 'events'])).toEqual(['tasks', 'events']);
+    // The two sections that have actually been removed, in the order they went.
+    expect(sanitizeSections(['tasks', 'points', 'load', 'events'])).toEqual(['tasks', 'events']);
+    expect(sanitizeSections(['load'])).toEqual([...DEFAULT_DIGEST_SECTIONS]);
     expect(sanitizeSections(['nothing_valid'])).toEqual([...DEFAULT_DIGEST_SECTIONS]);
   });
 
@@ -1067,7 +1086,7 @@ describe('the weekly digest is sent at most once per (user, week)', () => {
           userId: CHILD_ID,
           displayName: 'Маша',
           role: 'child',
-          sections: ['tasks', 'goals', 'load'],
+          sections: ['tasks', 'goals'],
         }),
       ],
       goals: [
@@ -1092,7 +1111,6 @@ describe('the weekly digest is sent at most once per (user, week)', () => {
 
     expect(intents.emitted).toHaveLength(1);
     expect(port.calls).not.toContain('loadGoals');
-    expect(port.calls).not.toContain('loadLoad');
   });
 });
 

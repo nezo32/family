@@ -35,16 +35,20 @@ const ROUTES: Array<{ path: string; expect: RegExp; name: string }> = [
   { path: '/goals', expect: /Копилк|Цел/i, name: 'goals' },
   { path: '/shopping', expect: /Покупк|Список/i, name: 'shopping' },
   // Стена has no visible page heading at any width — the title is hoisted into
-  // the app bar (§C4) — and it has no tabs any more: §D7's board renders one
-  // tree at every width, so «Опрос» is now absent whenever no poll is open.
-  // These two phrases are the board's own vocabulary, they appear nowhere else
-  // in the app, and each of them renders at **every** width and in **every**
-  // data state: «Спасибо» is the side-column panel (beside the board above
-  // 1088px, at the foot of it below), and «На доске» is either the stream's
-  // section label or the empty state's «На доске пусто». Two of them rather
+  // the app bar (§C4) — and since §D7 it has no section labels either: it is
+  // one continuous stream of cards, so «На доске» and «Решаем вместе» no
+  // longer exist to assert on, and «Спасибо» is now a side-column panel that
+  // renders **only** at `lg` and up.
+  //
+  // These two phrases are the feed's own vocabulary, they appear nowhere else
+  // in the app, and between them they cover every width and every data state:
+  // «Что повесить на доску?» is the compose row, which is the first thing in
+  // the surface for anyone who may write, at every width and whether the feed
+  // is empty or full; «Это всё, что было» is the end of the feed, which is
+  // what a reader who may *not* write sees the bottom of. Two of them rather
   // than one so a copy tweak to either cannot silently stop the check proving
   // anything.
-  { path: '/wall', expect: /Спасибо|На доске/i, name: 'wall' },
+  { path: '/wall', expect: /Что повесить на доску|Это всё, что было/i, name: 'wall' },
   { path: '/family', expect: /Семья|Участник/i, name: 'family' },
   { path: '/settings', expect: /Настройк/i, name: 'settings' },
   { path: '/settings/profile', expect: /Профиль|Имя/i, name: 'settings/profile' },
@@ -115,9 +119,14 @@ test.describe('forms and modals open', () => {
       expect: /Название/i,
     },
     {
+      // Стена's door is the **compose row** now, at every width (§D7.5): a
+      // `<button>` at the top of the stream that cannot receive text. The
+      // app bar's «Написать» exists only from `md` up, so a phone-width run
+      // looking for it found nothing — this matches the row instead, which is
+      // the one affordance present at every width.
       name: 'new post',
       path: '/wall',
-      open: /^Написать$/,
+      open: /Что повесить на доску/,
       via: /^Объявление/,
       expect: /Текст|Сообщение|Заголовок/i,
     },

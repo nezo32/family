@@ -218,7 +218,13 @@ function FilterFacets(props: {
             <OptionRow
               key={member.id}
               label={member.displayName}
-              icon={<MemberDisc id={member.id} displayName={member.displayName} />}
+              icon={
+                <MemberDisc
+                  id={member.id}
+                  displayName={member.displayName}
+                  avatarUrl={member.avatarUrl}
+                />
+              }
               selected={value.assignee.kind === 'user' && value.assignee.userId === member.id}
               onSelect={() => {
                 onChange({ ...value, assignee: { kind: 'user', userId: member.id } });

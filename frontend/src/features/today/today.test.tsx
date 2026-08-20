@@ -138,19 +138,6 @@ function makeToday(overrides: Partial<TodayResponse> = {}): TodayResponse {
       },
     },
     unreadNotifications: 0,
-    fairness: {
-      weekStart: '2026-08-17',
-      weekEnd: '2026-08-24',
-      me: {
-        userId: ME_ID,
-        displayName: 'Паша Иванов',
-        doneCount: 3,
-        weight: '1.00',
-        sharePercent: 40,
-      },
-      members: [],
-      note: 'Неделя идёт ровно.',
-    },
     pendingApprovals: [
       {
         id: '22222222-2222-4222-8222-222222222222',
@@ -325,6 +312,33 @@ describe('TodayPage', () => {
     expect(screen.getByText(TODAY_RU.emptyDescription)).toBeInTheDocument();
     // An empty day is not an error: nothing on screen may claim otherwise.
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  /**
+   * The counterpart of «asks for no split of the housework and shows none» on
+   * Семья, for the screen the payload actually arrived on.
+   *
+   * `GET /dashboard/today` carried a `fairness` object — every member's
+   * `doneCount` and `sharePercent` — for a release after the widget that drew
+   * it was deleted. The field is gone from the contract, and this holds the
+   * screen to the same line the roster is held to: no percentage, and nothing
+   * narrated to a screen reader that is not drawn. That second half is not
+   * theoretical — the removed load bar was reading «40 % (своя доля 33 %)»
+   * aloud while showing no numbers at all.
+   */
+  it('shows no share of the housework, on screen or in an aria-label (D5)', async () => {
+    stubApi({ permissions: ADULT_PERMISSIONS });
+    const { container } = renderToday();
+
+    await screen.findByText(TODAY_RU.tasksTitle);
+
+    // The goal ring's «65 %» stays: that percentage belongs to a moneybox, not
+    // to a person, and D6 is what governs it. What may not exist is a share
+    // attached to a *member* — drawn, or narrated and not drawn.
+    expect(screen.queryByText(/нагрузк|своя доля|балл|очк/i)).not.toBeInTheDocument();
+    for (const node of container.querySelectorAll('[aria-label]')) {
+      expect(node.getAttribute('aria-label') ?? '').not.toMatch(/доля|нагрузк|балл/i);
+    }
   });
 });
 

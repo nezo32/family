@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Lock } from 'lucide-react';
+import { Check, Lock, MessageCircleQuestion } from 'lucide-react';
 import type { PollResponse } from '@family/shared';
 import { useCan } from '@/shared/auth';
 import { Button } from '@/shared/ui/button';
@@ -11,6 +11,7 @@ import { isAnsweredByMe, useClosePoll, useVotePoll, votersOf, type Roster } from
 import { WALL_RU } from '../locale';
 import { AuthorLine } from './AuthorLine';
 import { CommentThread } from './CommentThread';
+import { ReactionBar } from './ReactionBar';
 
 /**
  * One question the family is deciding together.
@@ -41,7 +42,21 @@ import { CommentThread } from './CommentThread';
  * says out loud. It is also not a tally against anybody's name: it is a set of
  * people who have answered *this* question, and it resets with the question.
  */
-export function PollCard(props: { poll: PollResponse; roster: Roster }) {
+export function PollCard(props: {
+  poll: PollResponse;
+  roster: Roster;
+  /**
+   * Band 2 (§C2/§D7.4): at most one card on the screen wears the wash, and the
+   * head decides which. Never decided here.
+   */
+  tone?: 'attention' | 'plain';
+  /**
+   * The status this card states about itself, in words, on its own line —
+   * «Вас спрашивают» / «Открытый опрос». There is no section header above it
+   * and there never will be (§D7.0); colour is never the only signal (§B4).
+   */
+  eyebrow?: string;
+}) {
   const { poll } = props;
   const { can, hasPermission, userId } = useCan();
   const vote = useVotePoll();
@@ -81,6 +96,7 @@ export function PollCard(props: { poll: PollResponse; roster: Roster }) {
       votersOf(poll).map((id) => ({
         id,
         displayName: props.roster.nameOf(id),
+        avatarUrl: props.roster.byId.get(id)?.avatarUrl ?? null,
       })),
     [poll, props.roster],
   );
@@ -107,11 +123,17 @@ export function PollCard(props: { poll: PollResponse; roster: Roster }) {
   };
 
   return (
-    <article className="flex w-full max-w-row-measure flex-col gap-2 px-4 py-3">
+    <article
+      className={cn(
+        'flex w-full max-w-row-measure flex-col gap-2 px-4 py-3',
+        props.tone === 'attention' && 'bg-surface-attention text-surface-attention-foreground',
+      )}
+    >
       <AuthorLine
         roster={props.roster}
         authorId={poll.createdById}
         createdAt={poll.createdAt}
+        size="md"
         trailing={
           poll.isClosed ? (
             <span className="flex items-center gap-1 text-[13px] leading-[18px] font-medium opacity-70">
@@ -125,6 +147,13 @@ export function PollCard(props: { poll: PollResponse; roster: Roster }) {
           ) : null
         }
       />
+
+      {props.eyebrow ? (
+        <p className="flex items-center gap-1.5 text-[13px] leading-[18px] font-medium opacity-80">
+          <MessageCircleQuestion className="size-3.5 shrink-0" aria-hidden />
+          {props.eyebrow}
+        </p>
+      ) : null}
 
       <h3 className="wrap-break-word font-display text-[17px] leading-6 font-semibold">
         {poll.question}
@@ -219,9 +248,16 @@ export function PollCard(props: { poll: PollResponse; roster: Roster }) {
       */}
       <CommentThread
         target={{ entityType: 'poll', entityId: poll.id }}
-        commentCount={0}
+        // `pollResponseSchema` carries this now (§D7.13 gap 2). It used to be
+        // hard-coded to 0, which understated a live thread on every poll.
+        commentCount={poll.commentCount}
         actions={
           <>
+            <ReactionBar
+              target={{ entityType: 'poll', entityId: poll.id }}
+              reactions={poll.reactions}
+              roster={props.roster}
+            />
             {voters.length > 0 ? (
               <p className="flex min-w-0 items-center gap-2 pe-1 text-[13px] leading-[18px] font-medium opacity-70">
                 <span>{WALL_RU.polls.answeredBy}</span>

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 
 import { cn } from '@/shared/lib/utils';
 import { initials } from '@/shared/lib/format';
+import { useAvatarSource } from '@/shared/api/authed-image';
 
 /**
  * A person, as a coloured disc with their initial (§B4, "the second device").
@@ -21,8 +22,28 @@ import { initials } from '@/shared/lib/format';
  * This component is the small, identity-only face: five perceptually-spaced
  * ramp colours, one per member, used identically everywhere a human appears —
  * the disc, the day-rail tick, the event bar, the load bars. It is not a
- * replacement for `UserAvatar`; where a photo is the point (the profile screen,
- * the member sheet) `UserAvatar` still wins.
+ * replacement for `UserAvatar`; where a photo is the *subject* (the profile
+ * screen, the member sheet, the avatar editor) `UserAvatar` still wins.
+ *
+ * ## The photo, and why it was missing
+ *
+ * The colour is the identity; the photo is a nicety on top of it. But shipping
+ * the disc without an `avatarUrl` at all meant that Сегодня, Стена, and every
+ * chore row showed initials for people whose avatar the profile screen was
+ * happily rendering two taps away — the app looked like it had lost the
+ * pictures. So the disc takes an optional `avatarUrl` and lays the photo over
+ * the coloured ground.
+ *
+ * Over, not instead of: the initial stays underneath as the ground. A photo
+ * that 404s, a token that has not arrived yet, a provider blocked by somebody's
+ * DNS — all of them land back on a correct, coloured, legible disc rather than
+ * on a broken-image glyph. The tinted ring is still the identity even when the
+ * face loads, which is what keeps a person the same colour on the day rail and
+ * on their own row.
+ *
+ * Resolution goes through `useAvatarSource`, exactly as `UserAvatar` does, so
+ * the "is this our endpoint or a provider's CDN" decision — the one that
+ * governs whether a bearer token is attached — is made in one place.
  *
  * ## Departure from §B4, stated rather than smuggled
  *
@@ -104,6 +125,12 @@ export interface MemberDiscProps {
   /** Stable identity. Falls back to the name when a row carries no id. */
   id?: string | null;
   displayName: string;
+  /**
+   * The member's photo, if the caller has one. Uploaded avatars
+   * (`/api/users/:id/avatar`) and provider URLs are both accepted; omitting it
+   * is a perfectly good disc, not a degraded one.
+   */
+  avatarUrl?: string | null;
   /** Admin projections carry it; everything else derives from `id`. */
   sortOrder?: number | null;
   size?: MemberDiscSize;
@@ -123,6 +150,7 @@ export interface MemberDiscProps {
 export function MemberDisc({
   id,
   displayName,
+  avatarUrl,
   sortOrder,
   size = 'sm',
   highlighted = false,
@@ -130,6 +158,7 @@ export function MemberDisc({
   className,
 }: MemberDiscProps) {
   const slot = memberSlot(id ?? displayName, sortOrder);
+  const { src, external } = useAvatarSource(avatarUrl);
 
   return (
     <span
@@ -137,7 +166,7 @@ export function MemberDisc({
       data-member-slot={slot}
       {...(labelled ? { role: 'img', 'aria-label': displayName } : { 'aria-hidden': true })}
       className={cn(
-        'flex shrink-0 items-center justify-center rounded-full font-semibold select-none',
+        'relative flex shrink-0 items-center justify-center overflow-hidden rounded-full font-semibold select-none',
         SIZE_CLASS[size],
         SLOT_CLASS[slot],
         highlighted && 'ring-2 ring-ring/60 ring-offset-2 ring-offset-background',
@@ -146,6 +175,28 @@ export function MemberDisc({
       title={labelled ? undefined : displayName}
     >
       {initials(displayName)}
+      {src ? (
+        <img
+          data-slot="member-disc-photo"
+          src={src}
+          // The disc already carries the name — through `aria-label` when it is
+          // `labelled`, through the row's text otherwise. A second copy on the
+          // image would read the person's name twice.
+          alt=""
+          aria-hidden
+          decoding="async"
+          // A provider CDN learns that this family opened the app; it does not
+          // also get to learn which screen. No `crossOrigin` — a credential-less
+          // image load is the whole point.
+          {...(external ? { referrerPolicy: 'no-referrer' as const } : {})}
+          className="absolute inset-0 size-full object-cover"
+          onError={(event) => {
+            // Fall back to the coloured initial underneath rather than leave a
+            // broken-image glyph sitting in a 24px circle.
+            event.currentTarget.style.display = 'none';
+          }}
+        />
+      ) : null}
     </span>
   );
 }
@@ -157,7 +208,12 @@ export function MemberDisc({
  * stops being five faces and starts being a smear.
  */
 export function MemberDiscGroup(props: {
-  members: readonly { id?: string | null; displayName: string; sortOrder?: number | null }[];
+  members: readonly {
+    id?: string | null;
+    displayName: string;
+    avatarUrl?: string | null;
+    sortOrder?: number | null;
+  }[];
   max?: number;
   size?: MemberDiscSize;
   className?: string;
@@ -174,6 +230,7 @@ export function MemberDiscGroup(props: {
           key={member.id ?? `${member.displayName}-${String(index)}`}
           id={member.id ?? null}
           displayName={member.displayName}
+          avatarUrl={member.avatarUrl ?? null}
           sortOrder={member.sortOrder ?? null}
           size={props.size ?? 'sm'}
           className="ring-2 ring-card"

@@ -799,16 +799,135 @@ export const markUnreadRequestSchema = z.object({
 export type MarkUnreadRequest = z.infer<typeof markUnreadRequestSchema>;
 
 /* -------------------------------------------------------------------------- */
+/* Clearing the inbox                                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What «Очистить» takes off the bell.
+ *
+ * - `read`  — only what the member has already seen. **The default**, and the
+ *             only one the dialog pre-selects: clearing an unread notification
+ *             destroys something nobody has looked at, and the whole reason the
+ *             inbox exists is to survive the days somebody was away.
+ * - `all`   — everything currently listed, read or not. Offered, because the
+ *             owner asked for «очистка» and a tidy-up that cannot touch the
+ *             hundred unread rows from a holiday is not a tidy-up. It is a
+ *             deliberate second choice, never the tap that happens by accident.
+ *
+ * Neither scope may take a `high`/`critical` delivery whose receipt is still
+ * missing — see `clearInboxResponseSchema.keptNeedsAck`.
+ */
+export const CLEAR_INBOX_SCOPES = ['read', 'all'] as const;
+export const clearInboxScopeSchema = z.enum(CLEAR_INBOX_SCOPES);
+export type ClearInboxScope = z.infer<typeof clearInboxScopeSchema>;
+
+/**
+ * `POST /api/notifications/clear`.
+ *
+ * ## Clearing hides the row; it never deletes the receipt
+ *
+ * A delivery row is three things at once (`notifications.schema.ts`): the inbox
+ * entry, the dispatcher's work record, and **the D11 delivery-confirmation
+ * receipt** — the evidence for "did «дать лекарство в 20:00» actually reach a
+ * human". Deleting the row would answer that question with silence forever, and
+ * would do it retroactively, for the notifications most worth auditing.
+ *
+ * So a clear writes one column, `cleared_at`, and touches nothing else.
+ * `sentAt`, `deliveredAt`, `interactedAt`, `acknowledgedAt`, `status` and
+ * `readAt` all stay exactly as they were. This is the same discipline
+ * `markUnreadRequestSchema` documents from the other direction: the inbox owns
+ * `read_at` (and now `cleared_at`); the receipts are not the inbox's to edit.
+ *
+ * ## And it cannot move an escalation, in either direction
+ *
+ * The ladder reads `status` and the receipt columns (`listUnconfirmedDeliveries`,
+ * `intentHasSignal`). A clear writes neither, so a running chain keeps running
+ * on its own deadline and a stopped one stays stopped — clearing is not a
+ * silent «Подтвердить получение», and it is not a silent restart either.
+ *
+ * The one thing a clear *could* have broken is the button: «Подтвердить
+ * получение» lives on the inbox row, and for a `critical` intent it is the only
+ * signal that stops the chain handing the notification to another family
+ * member. Hiding that row would leave the escalation running with nowhere left
+ * to stop it. So a `high`/`critical` delivery with no `acknowledged_at` is
+ * **excluded from every scope**, `all` included, and reported back as
+ * `keptNeedsAck` so the UI can say why something is still there.
+ *
+ * ## `confirm`
+ *
+ * Same shape as shopping's `clear-bought` (`clearBoughtItemsSchema`): without
+ * it the call only counts. Deleting is on no gesture anywhere, so the count is
+ * what the dialog states before anything happens.
+ */
+export const clearInboxRequestSchema = z.object({
+  scope: clearInboxScopeSchema.default('read'),
+  /** `true` clears them, `false` (default) just reports how many would go. */
+  confirm: z.boolean().default(false),
+});
+export type ClearInboxRequest = z.infer<typeof clearInboxRequestSchema>;
+
+export const clearInboxResponseSchema = z.object({
+  /** How many rows this scope covers. */
+  matched: z.number().int().min(0),
+  /**
+   * How many were actually hidden — `0` unless `confirm` was set.
+   *
+   * Deliberately not called `removed` (which is what `clear-bought` returns):
+   * nothing is removed. The row and its D11 receipts stay in the database and
+   * only leave the inbox.
+   */
+  cleared: z.number().int().min(0),
+  /**
+   * `high`/`critical` deliveries still waiting for «Подтвердить получение».
+   * Never cleared, whatever the scope — see above.
+   */
+  keptNeedsAck: z.number().int().min(0),
+});
+export type ClearInboxResponse = z.infer<typeof clearInboxResponseSchema>;
+
+/**
+ * `GET /api/notifications/clearable` — the numbers the confirmation dialog
+ * states before it destroys anything.
+ *
+ * A GET rather than a `confirm: false` POST, unlike `clear-bought`'s dry run:
+ * every non-GET under `/api/notifications` bumps the `notifications` revision
+ * domain (`core/plugins/revisions.ts`), so a dry run shaped as a POST would
+ * make every other device in the family refetch its inbox just because somebody
+ * opened a dialog and thought better of it.
+ */
+export const clearableInboxSchema = z.object({
+  /** Cleared by `scope: 'read'`. */
+  read: z.number().int().min(0),
+  /** Cleared by `scope: 'all'` — this already includes `read`. */
+  all: z.number().int().min(0),
+  keptNeedsAck: z.number().int().min(0),
+});
+export type ClearableInbox = z.infer<typeof clearableInboxSchema>;
+
+/* -------------------------------------------------------------------------- */
 /* Weekly digest                                                               */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The blocks a subscriber can put in their weekly digest.
+ *
+ * **Removing a value from this list needs no migration.** `sections` is a
+ * `text[]` a past release wrote into, and `sanitizeSections()` in
+ * `dashboard/digest.service.ts` filters every stored value through this set on
+ * read, falling back to `DEFAULT_DIGEST_SECTIONS` if nothing survives. That is
+ * how `points` was retired, and how `load` was after it.
+ *
+ * `load` was «Как разделились дела» — «Вы закрыли N дел» plus the family's
+ * weekly total, pushed to a phone. A per-person running total is the thing D5
+ * abolished whether it is drawn on a screen or delivered by notification, so it
+ * is gone. Do not add it, or any per-person count, back.
+ */
 export const DIGEST_SECTIONS = [
   'tasks',
   'events',
   'goals',
   'shopping',
   'wall',
-  'load',
   'birthdays',
 ] as const;
 export const digestSectionSchema = z.enum(DIGEST_SECTIONS);
@@ -820,7 +939,6 @@ export const DIGEST_SECTION_LABELS_RU: Record<DigestSection, string> = {
   goals: 'Прогресс копилок',
   shopping: 'Списки покупок',
   wall: 'Объявления и благодарности',
-  load: 'Как разделились дела',
   birthdays: 'Дни рождения',
 };
 

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Archive, ArchiveX, Plus, ShoppingBasket } from 'lucide-react';
+import { Plus, ShoppingBasket } from 'lucide-react';
+import { ArchiveToggle } from '@/shared/components/ArchiveToggle';
 import { PageHeader } from '@/shared/components/PageHeader';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
@@ -44,7 +45,8 @@ function ShoppingListsOverview() {
   const [showArchived, setShowArchived] = useState(false);
   const sync = useShoppingSync();
   const createList = useCreateList();
-  const { data, isPending, isError, error, refetch } = useShoppingLists(showArchived);
+  const { data, isPending, isPlaceholderData, isError, error, refetch } =
+    useShoppingLists(showArchived);
 
   return (
     <>
@@ -73,27 +75,6 @@ function ShoppingListsOverview() {
         flushing={sync.flushing}
         onRetry={sync.flushNow}
       />
-
-      {/* Part of managing lists, so it follows the same permission as the menu. */}
-      <Can perm="shopping:list:manage">
-        <div className="mb-2 flex justify-end">
-          <Button
-            variant="ghost"
-            className="min-h-11 text-muted-foreground"
-            aria-pressed={showArchived}
-            onClick={() => {
-              setShowArchived((current) => !current);
-            }}
-          >
-            {showArchived ? (
-              <ArchiveX className="size-4" aria-hidden />
-            ) : (
-              <Archive className="size-4" aria-hidden />
-            )}
-            {showArchived ? SHOPPING_RU.hideArchived : SHOPPING_RU.showArchived}
-          </Button>
-        </div>
-      </Can>
 
       {isPending ? (
         <ul className="space-y-2" aria-busy>
@@ -136,10 +117,33 @@ function ShoppingListsOverview() {
         </ul>
       )}
 
-      {/* Otherwise the toggle looks broken: you ask for the archive, nothing moves. */}
-      {showArchived && !isPending && !isError && data.every((list) => !list.isArchived) ? (
-        <p className="mt-3 text-center text-xs text-muted-foreground">{SHOPPING_RU.archiveEmpty}</p>
-      ) : null}
+      {/*
+        Band 4 (§C2/§D5): at the bottom of the list, not above the first row.
+        The rows it reveals are archived, so they sort to the end — press it up
+        by the title and, measured at 320px, the change happens ~700px below
+        your thumb. It is also the same component Копилки uses, which is the
+        only thing that keeps the two screens from drifting apart again.
+
+        Not behind `shopping:list:manage`: showing history is a read, and
+        `GET /shopping/lists?includeArchived=true` asks for `shopping:read`.
+        Gating it here hid the archive from everyone who cannot archive — the
+        children and teens who share these lists — while `/shopping/:id` still
+        opened an archived list for them by URL.
+      */}
+      <ArchiveToggle
+        className="mt-6"
+        expanded={showArchived}
+        onToggle={() => {
+          setShowArchived((current) => !current);
+        }}
+        showLabel={SHOPPING_RU.showArchived}
+        hideLabel={SHOPPING_RU.hideArchived}
+        emptyHint={
+          !isPending && !isPlaceholderData && !isError && data.every((list) => !list.isArchived)
+            ? SHOPPING_RU.archiveEmpty
+            : undefined
+        }
+      />
 
       <CreateListDialog
         open={creating}

@@ -1,9 +1,6 @@
 import type {
   BlackoutCreate,
   BlackoutResponse,
-  FairnessMember,
-  FairnessQuery,
-  FairnessSummaryResponse,
   KudosCreate,
   KudosResponse,
   RotationCreate,
@@ -37,7 +34,7 @@ export type { ChoreActor } from './actor.js';
 /**
  * Chore fairness business rules (D5). No HTTP knowledge (D8).
  *
- * This service owns three things that must not drift apart:
+ * This service owns two things that must not drift apart:
  *
  * 1. **The rotation seam.** {@link RotationPort} is how the tasks module gets an
  *    assignee at materialization time. Tasks never imports this repository —
@@ -46,10 +43,11 @@ export type { ChoreActor } from './actor.js';
  * 2. **Completion.** Idempotent, credited to the doer, auto-kudos when somebody
  *    covered. Nothing is scored: the completion is simply a fact the rotation
  *    counts later.
- * 3. **The neutral split of the week.** {@link fairnessSummary} reports each
- *    member against *their own* fair share. There is no rank field anywhere in
- *    the chain, and there must never be one: a sibling leaderboard generates
- *    arguments, not chores (D5).
+ *
+ * It used to own a third: a family-wide summary of how the week's chores split,
+ * read by a bar on Задачи and Семья. The screen was removed and the summary
+ * with it — the debt calculation stays a scheduling input and has no read model
+ * of its own outside the per-rotation preview (D5).
  */
 
 const MS_PER_DAY = 86_400_000;
@@ -489,81 +487,6 @@ export class ChoresService implements RotationPort {
       throw notFound('Blackout');
     }
     await repo.deleteBlackout(this.db, id);
-  }
-
-  /* ------------------------------ fairness ----------------------------- */
-
-  /**
-   * «Как разделились дела» — the neutral split of the week.
-   *
-   * Every member is compared to *their own* fair share (`weight / Σweight`),
-   * never to each other. `imbalance` is a single family-level number precisely
-   * so the fix is a family conversation rather than a ranking, and there is no
-   * sort by load anywhere in this method. If a future change adds one, it is
-   * re-litigating D5.
-   *
-   * Everything here is counted in **chores**, never in points. The load figures
-   * exist so an adult can see whether the split is lopsided, not so anybody can
-   * be told they are behind.
-   */
-  async fairnessSummary(query: FairnessQuery): Promise<FairnessSummaryResponse> {
-    const to = this.now();
-    const from = new Date(to.getTime() - query.windowDays * MS_PER_DAY);
-
-    const roster: Array<{ userId: string; weight: number }> = query.rotationId
-      ? (await repo.findRotationMembers(this.db, query.rotationId))
-          .filter((m) => m.active)
-          .map((m) => ({ userId: m.userId, weight: Number(m.weight) }))
-      : (await repo.listChoreMemberWeights(this.db)).map((m) => ({
-          userId: m.userId,
-          weight: Number(m.weight),
-        }));
-
-    const rows = await repo.loadFairnessRows(
-      this.db,
-      roster.map((m) => m.userId),
-      { from, to },
-    );
-    const byUser = new Map(rows.map((row) => [row.userId, row]));
-
-    const totalWeight = roster.reduce((sum, m) => sum + Math.max(m.weight, 0), 0);
-    const loads = roster.map((m) => {
-      const row = byUser.get(m.userId);
-      return (row?.completed ?? 0) + (row?.committed ?? 0);
-    });
-    const totalLoad = loads.reduce((sum, load) => sum + load, 0);
-
-    const members: FairnessMember[] = roster.map((m, index) => {
-      const row = byUser.get(m.userId);
-      const load = loads[index] ?? 0;
-      const fairShare = totalWeight > 0 ? Math.max(m.weight, 0) / totalWeight : 0;
-      // With no load at all, everybody is exactly at their fair share. Reporting
-      // 0 % would render as "nobody is doing anything", which is true but reads
-      // as an accusation on an empty week.
-      const actualShare = totalLoad > 0 ? load / totalLoad : fairShare;
-      return {
-        userId: m.userId,
-        weight: m.weight.toFixed(2),
-        completed: row?.completed ?? 0,
-        committed: Math.round(row?.committed ?? 0),
-        debt: m.weight > 0 ? round4(load / m.weight) : 0,
-        fairShare: round4(fairShare),
-        actualShare: round4(actualShare),
-        coveredForOthers: row?.coveredForOthers ?? 0,
-      };
-    });
-
-    const ratios = members.filter((m) => m.fairShare > 0).map((m) => m.actualShare / m.fairShare);
-    const imbalance = ratios.length < 2 ? 0 : round4(Math.max(...ratios) - Math.min(...ratios));
-
-    return {
-      windowDays: query.windowDays,
-      from: from.toISOString().slice(0, 10),
-      to: to.toISOString().slice(0, 10),
-      rotationId: query.rotationId ?? null,
-      members,
-      imbalance,
-    };
   }
 
   /* -------------------------------- kudos ------------------------------ */

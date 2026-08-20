@@ -1,7 +1,12 @@
 import {
+  clearInboxResponseSchema,
+  clearableInboxSchema,
   deliveryReceiptsResponseSchema,
   inAppNotificationSchema,
   unreadCountSchema,
+  type ClearInboxResponse,
+  type ClearInboxScope,
+  type ClearableInbox,
   type DeliveryAckResponse,
   type InAppNotification,
   type PreferencesResponse,
@@ -40,6 +45,8 @@ export const notificationKeys = {
   /** The list is keyed by its filter: «только непрочитанные» is a separate page set. */
   list: (unreadOnly: boolean) => [...notificationKeys.inbox(), { unreadOnly }] as const,
   unreadCount: () => [...notificationKeys.all, 'unread-count'] as const,
+  /** How much «Очистить» would take — read only while its dialog is open. */
+  clearable: () => [...notificationKeys.all, 'clearable'] as const,
   receipts: (intentId: string) => [...notificationKeys.all, 'receipts', intentId] as const,
   /** Owned by `features/settings`, refetched from here for the D11 health flag. */
   preferences: ['settings', 'notifications', 'preferences'] as const,
@@ -170,6 +177,49 @@ export function acknowledgeDelivery(
     `/notifications/deliveries/${encodeURIComponent(deliveryId)}/acknowledge`,
     { occurredAt },
   );
+}
+
+/**
+ * `GET /api/notifications/clearable` — the numbers «Очистить» states before it
+ * destroys anything, for both scopes at once.
+ *
+ * A read, not a `confirm: false` dry-run POST like shopping's `clear-bought`:
+ * every non-GET under `/api/notifications` bumps the `notifications` revision
+ * domain, so a dry run shaped as a write would make every other device in the
+ * family refetch its inbox because somebody opened a dialog.
+ */
+export async function fetchClearable(signal?: AbortSignal): Promise<ClearableInbox> {
+  const raw = await api.get<unknown>('/notifications/clearable', signal ? { signal } : undefined);
+  return clearableInboxSchema.parse(raw);
+}
+
+/**
+ * `POST /api/notifications/clear` — empty **my own** bell.
+ *
+ * The body carries a scope and a confirmation and no ids, which is the whole
+ * of the authorisation story: there is no field in which another family
+ * member's delivery could be named, so this is not an endpoint an IDOR can be
+ * pointed at.
+ *
+ * ## What the server does with it, because the UI copy depends on knowing
+ *
+ * It writes `cleared_at` and nothing else. The row survives with every D11
+ * receipt intact — `sentAt`, `deliveredAt`, `interactedAt`, `acknowledgedAt`,
+ * `status` — so «дошло ли до Ани» still has an answer about a notification the
+ * recipient has tidied away, and the escalation ladder (which reads exactly
+ * those columns) cannot tell this ran. Clearing stops no chain and starts none.
+ *
+ * A `high`/`critical` row that still owes «Подтвердить получение» is refused by
+ * every scope, `all` included, and comes back in `keptNeedsAck`: that button
+ * only exists on the inbox row, and hiding it would leave an escalation running
+ * with nowhere left for a human to stop it.
+ */
+export async function clearInbox(input: {
+  scope: ClearInboxScope;
+  confirm: boolean;
+}): Promise<ClearInboxResponse> {
+  const raw = await api.post<unknown>('/notifications/clear', input);
+  return clearInboxResponseSchema.parse(raw);
 }
 
 /* -------------------------------------------------------------------------- */

@@ -1,9 +1,7 @@
-import { and, asc, eq, gte, inArray, isNotNull, isNull, lt, ne, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 
 import type {
   DashboardEvent,
-  DashboardFairness,
-  DashboardLoadMember,
   DashboardMilestone,
   DashboardPendingMember,
   DashboardShoppingItem,
@@ -242,8 +240,6 @@ export interface MemberRow {
   email: string | null;
   role: Role;
   status: 'pending_approval' | 'active' | 'rejected' | 'suspended';
-  /** `numeric(4,2)` as a decimal string — never a float (see `choreWeightSchema`). */
-  choreWeight: string;
   /** `YYYY-MM-DD`, or `null`. */
   birthDate: string | null;
   createdAt: Date;
@@ -304,11 +300,6 @@ export interface GoalRow {
   milestoneSortOrder: number;
 }
 
-export interface LoadRow {
-  userId: string;
-  doneCount: number;
-}
-
 /**
  * Everything the dashboard reads from domains it does not own.
  *
@@ -334,7 +325,6 @@ export interface DashboardPort {
   loadShopping(limit: number): Promise<ShoppingSnapshot>;
   loadGoals(userId: string, canSeeEveryGoal: boolean): Promise<GoalRow[]>;
   loadUnreadCount(userId: string): Promise<number>;
-  loadLoad(range: { fromUtc: Date; toUtc: Date }): Promise<LoadRow[]>;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -410,7 +400,6 @@ export function createDashboardPort(exec: Executor): DashboardPort {
           email: users.email,
           role: users.role,
           status: users.status,
-          choreWeight: users.choreWeight,
           birthDate: users.birthDate,
           createdAt: users.createdAt,
         })
@@ -621,32 +610,6 @@ export function createDashboardPort(exec: Executor): DashboardPort {
         );
       return row ? toInt(row.n) : 0;
     },
-
-    async loadLoad(range) {
-      // Grouped by `completed_by_id`, not by `assignee_id`: a chore counts for
-      // whoever actually did it, not whoever it was handed to (D5). That used
-      // to be a fact only the points ledger remembered; the occurrence row
-      // carries it directly, which is why the ledger could go.
-      const rows = await exec
-        .select({
-          userId: taskOccurrences.completedById,
-          doneCount: sql<string>`count(*)`,
-        })
-        .from(taskOccurrences)
-        .where(
-          and(
-            eq(taskOccurrences.status, 'done'),
-            isNotNull(taskOccurrences.completedById),
-            gte(taskOccurrences.completedAt, range.fromUtc),
-            lt(taskOccurrences.completedAt, range.toUtc),
-          ),
-        )
-        .groupBy(taskOccurrences.completedById);
-
-      return rows.flatMap((r) =>
-        r.userId === null ? [] : [{ userId: r.userId, doneCount: toInt(r.doneCount) }],
-      );
-    },
   };
 }
 
@@ -721,8 +684,9 @@ export function toShoppingItem(row: ShoppingRow): DashboardShoppingItem {
  * 754), and an over-funded goal read «100 %» here and «112 %» there. Same
  * function everywhere now.
  *
- * `sharePercent` cannot exceed 100 by construction (`doneCount <= total`), so
- * dropping the clamp changes nothing for the fairness bar.
+ * Its only remaining caller here is the milestone's `progressPercent`, which is
+ * a goal's progress and not a person's — the other caller was the fairness
+ * bar's `sharePercent`, and that is gone (D5).
  */
 const percent = percentOf;
 
@@ -770,59 +734,21 @@ export function pickNearestMilestone(rows: readonly GoalRow[]): DashboardMilesto
   };
 }
 
-/**
- * This week's load, as a neutral bar and never as a leaderboard (D5).
+/*
+ * There is no `buildFairness` here any more, and no `fairness` on the wire.
  *
- * Members are ordered **by display name**. There is no rank field, no "best",
- * no arrow. A sibling leaderboard is the fastest way to make a child hate a
- * family app, and the ordering is the part a well-meaning frontend would
- * otherwise get wrong.
+ * It built a `doneCount` and a `sharePercent` for every active member of the
+ * family, on every load of the home screen, gated on `task:read:any`. The bar
+ * that drew it went with the score system (D5); the payload stayed behind for a
+ * release, computed and serialised for nobody. That is not harmless — a field
+ * already on the wire is the cheapest possible starting point for putting the
+ * scoreboard back, and this one arrived pre-sorted with the percentages already
+ * worked out.
+ *
+ * `debt` still decides whose turn a chore is, inside `chores/rotation.ts`, and
+ * `GET /chores/rotations/:id/preview` still explains **one** pick. Neither
+ * totals anything per person for a person to read. Nothing here should either.
  */
-export function buildFairness(
-  actor: { userId: string; displayName: string },
-  members: readonly MemberRow[],
-  load: readonly LoadRow[],
-  window: { weekStart: string; weekEnd: string },
-): DashboardFairness {
-  const byUser = new Map(load.map((l) => [l.userId, l]));
-  const active = members.filter((m) => m.status === 'active');
-  const total = active.reduce((sum, m) => sum + (byUser.get(m.id)?.doneCount ?? 0), 0);
-
-  const toMember = (m: MemberRow): DashboardLoadMember => {
-    const row = byUser.get(m.id);
-    return {
-      userId: m.id,
-      displayName: m.displayName,
-      doneCount: row?.doneCount ?? 0,
-      weight: m.choreWeight,
-      sharePercent: percent(row?.doneCount ?? 0, total),
-    };
-  };
-
-  const list = active
-    .map(toMember)
-    .sort((a, b) => a.displayName.localeCompare(b.displayName, 'ru'));
-
-  const mine = list.find((m) => m.userId === actor.userId) ?? {
-    userId: actor.userId,
-    displayName: actor.displayName,
-    doneCount: 0,
-    weight: '1.00',
-    sharePercent: 0,
-  };
-
-  return {
-    weekStart: window.weekStart,
-    weekEnd: window.weekEnd,
-    me: mine,
-    members: list,
-    // Deliberately free of comparatives and of any number that invites one.
-    note:
-      total === 0
-        ? 'На этой неделе дел пока никто не закрывал — неделя только начинается.'
-        : 'Общая нагрузка семьи за неделю. Это не соревнование и не рейтинг.',
-  };
-}
 
 function toPendingMember(row: MemberRow): DashboardPendingMember {
   return {
@@ -845,7 +771,6 @@ export interface TodayInputs {
   shopping: ShoppingSnapshot | null;
   goals: GoalRow[] | null;
   unreadNotifications: number;
-  load: LoadRow[] | null;
 }
 
 /**
@@ -858,8 +783,6 @@ export interface TodayAccess {
   events: boolean;
   shopping: boolean;
   goals: boolean;
-  /** Reading the *family's* load, not one's own. */
-  fairness: boolean;
   approvals: boolean;
   /** Owner/admin see `private` goals as well as `household` ones. */
   everyGoal: boolean;
@@ -873,9 +796,6 @@ export function resolveAccess(actor: DashboardActor): TodayAccess {
     // Children hold zero `goal:*` permissions by design (D4) — no target, no
     // balance, no goal title ever reaches them through this aggregate.
     goals: actor.can('goal:read'),
-    // Seeing what everyone else did requires reading everyone else's tasks.
-    // A child sees only their own load, so they get no family bar at all.
-    fairness: actor.can('task:read:any'),
     approvals: actor.can('member:approve'),
     // `visibility = 'private'` narrows *further* than the permission matrix:
     // it limits reads to the goal's owner plus the `:any`-equivalent authority
@@ -896,10 +816,8 @@ export function resolveAccess(actor: DashboardActor): TodayAccess {
  * Fastify — which is what makes the permission and timezone rules testable.
  */
 export function assembleToday(
-  actor: DashboardActor,
   access: TodayAccess,
   window: DayWindow,
-  weekStartDate: string,
   inputs: TodayInputs,
   now: Date,
 ): TodayResponse {
@@ -957,12 +875,6 @@ export function assembleToday(
       : null,
     goals: inputs.goals ? { nearestMilestone: pickNearestMilestone(inputs.goals) } : null,
     unreadNotifications: inputs.unreadNotifications,
-    fairness: inputs.load
-      ? buildFairness(actor, inputs.members, inputs.load, {
-          weekStart: weekStartDate,
-          weekEnd: addLocalDays(weekStartDate, 7),
-        })
-      : null,
     pendingApprovals: pending,
   };
 }
@@ -990,13 +902,7 @@ export async function getToday(
   const window = dayWindowFor(timezone, now);
   const access = resolveAccess(actor);
 
-  const weekStart = startOfLocalWeek(window.today, viewer.weekStartsOn);
-  const weekRange = {
-    fromUtc: startOfLocalDay(weekStart, timezone),
-    toUtc: startOfLocalDay(addLocalDays(weekStart, 7), timezone),
-  };
-
-  const [members, tasks, events, shopping, goals, unreadNotifications, load] = await Promise.all([
+  const [members, tasks, events, shopping, goals, unreadNotifications] = await Promise.all([
     port.loadMembers(),
     access.tasks
       ? port.loadMyTasks(actor.userId, {
@@ -1018,15 +924,12 @@ export async function getToday(
       ? port.loadGoals(actor.userId, access.everyGoal)
       : Promise.resolve<GoalRow[] | null>(null),
     port.loadUnreadCount(actor.userId),
-    access.fairness ? port.loadLoad(weekRange) : Promise.resolve<LoadRow[] | null>(null),
   ]);
 
   return assembleToday(
-    actor,
     access,
     window,
-    weekStart,
-    { members, tasks, events, shopping, goals, unreadNotifications, load },
+    { members, tasks, events, shopping, goals, unreadNotifications },
     now,
   );
 }

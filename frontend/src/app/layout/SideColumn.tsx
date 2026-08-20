@@ -7,7 +7,7 @@ import { usePageSlots } from './page-slots';
  *
  * ```tsx
  * <SideColumn>
- *   <WeeklyLoad … />
+ *   <TaskFilterPanel … />
  * </SideColumn>
  * ```
  *

@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Users } from 'lucide-react';
-import { SideColumn } from '@/app/layout/SideColumn';
 import { PageHeader } from '@/shared/components/PageHeader';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
@@ -12,8 +11,6 @@ import { COMMON, NAV_LABELS } from '@/shared/lib/i18n';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { useCan } from '@/shared/auth/use-can';
 import { useMe } from '@/shared/auth/use-me';
-import { useFairness, useMembers } from '@/features/tasks/hooks';
-import { WeeklyLoad } from '@/features/tasks/components/WeeklyLoad';
 import { FAMILY_RU, memberCount } from '../locale';
 import { useRoster } from '../hooks';
 import type { RosterMember } from '../api';
@@ -25,23 +22,24 @@ import { MemberSheet } from '../components/MemberSheet';
  *
  * **What the user came for:** "who is in the family and who is carrying what."
  *
- * ### Not a leaderboard (D5)
+ * ### Not a leaderboard, and now not a load screen either (D5)
  *
  * The list order is `sortOrder`, then name. It is **never** sorted by completed
  * chores or by anything else a child could read as a placing, and no row shows
  * a number.
  *
- * Every member's card used to carry a little load bar. That went with the score
- * system, and it went for a reason worth keeping written down: one bar per
- * person, stacked down a roster of siblings, *is* the comparison, however
- * carefully each individual bar is worded.
+ * The removal happened in three passes, and the order is the argument. First
+ * the per-person totals went. Then the little load bar glued to every member's
+ * card went, because one bar per person stacked down a roster of siblings *is*
+ * the comparison however carefully each bar is worded. What survived was one
+ * family-level picture in the side column — and that has now gone too, at the
+ * owner's request: a distribution of housework is still a distribution of
+ * housework, and the family does not need the app to draw it.
  *
- * The load comes back in the side column (§D9) as one **family-level** picture
- * — `WeeklyLoad`, the same component Задачи uses, which compares each person to
- * their own rotation weight, lists everybody alphabetically and prints no
- * rankable number anywhere, including in its `aria-label`. It is imported from
- * `features/tasks` rather than copied: two implementations of "how did the
- * housework split" is two places for a number to creep back in.
+ * So this screen is a roster and nothing else. It renders no share, no bar and
+ * no proportion, in the DOM or in an `aria-label`, and it asks the server for
+ * none. The rotation still balances chores behind the scenes; that is a
+ * scheduling input with no display (D5).
  *
  * ### Permissions
  *
@@ -55,11 +53,6 @@ export default function FamilyPage() {
   const { data: me } = useMe();
 
   const roster = useRoster();
-  const fairness = useFairness(7);
-  // `WeeklyLoad` resolves names against the task roster, which is the same
-  // `GET /members` payload under a different query key — the request is shared,
-  // not doubled.
-  const taskRoster = useMembers();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -160,18 +153,10 @@ export default function FamilyPage() {
         </Section>
       )}
 
-      {/* §D9: the load, family-level and neutral by construction, beside the
-          roster on a wide screen and under it on a phone. */}
-      <SideColumn>
-        {fairness.isSuccess ? (
-          <WeeklyLoad
-            members={fairness.data.members}
-            roster={taskRoster.data ?? members}
-            imbalance={fairness.data.imbalance}
-          />
-        ) : null}
-      </SideColumn>
-
+      {/* No `<SideColumn>`: this screen publishes nothing into it since the
+          weekly load was removed, and the shell's `<aside>` is `empty:hidden`,
+          so the grid gap goes with it rather than leaving a hole beside the
+          roster. */}
       <MemberSheet
         member={selected}
         isSelf={selected?.id === me?.user.id}
@@ -186,8 +171,8 @@ export default function FamilyPage() {
 
 /**
  * Stable, boring order: the family's own `sortOrder` (which an admin controls),
- * then name. Load never enters into it — reordering the roster by who did most
- * this week is a leaderboard wearing a disguise.
+ * then name. Chore counts never enter into it — reordering the roster by who
+ * did most this week is a leaderboard wearing a disguise.
  */
 function sortRoster(items: readonly RosterMember[]): RosterMember[] {
   return [...items].sort((a, b) => {

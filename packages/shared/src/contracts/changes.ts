@@ -30,7 +30,7 @@ import { z } from 'zod';
  * domains and is invalidated by all of them, on the client.
  */
 export const CHANGE_DOMAINS = [
-  /** Task series & occurrences, chores, rotations, swaps, fairness. */
+  /** Task series & occurrences, chores, rotations, swaps. */
   'tasks',
   /** Event series & occurrences, attendees, RSVP. */
   'events',

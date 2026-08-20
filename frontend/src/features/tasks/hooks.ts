@@ -7,7 +7,6 @@ import {
   type UseQueryResult,
 } from '@tanstack/react-query';
 import type {
-  FairnessSummaryResponse,
   Paginated,
   PublicUser,
   SwapCreate,
@@ -31,7 +30,6 @@ import {
   createSeries,
   createSwap,
   deleteSeries,
-  fetchFairness,
   fetchMembers,
   fetchOccurrence,
   fetchOccurrences,
@@ -90,22 +88,6 @@ export function useSwaps(direction: SwapDirection): UseQueryResult<Paginated<Swa
   return useQuery({
     queryKey: taskKeys.swaps(direction),
     queryFn: ({ signal }) => fetchSwaps(direction, signal),
-  });
-}
-
-/**
- * `GET /chores/fairness` needs `task:read:any` (scheduling.md §8), so the query
- * stays disabled for a member who only sees their own chores — asking would be
- * a guaranteed 404/403 and a pointless red state on the screen.
- */
-export function useFairness(windowDays = 7): UseQueryResult<FairnessSummaryResponse> {
-  const { scopeFor, isReady } = useCan();
-  const allowed = scopeFor('task:read') === 'any';
-  return useQuery({
-    queryKey: taskKeys.fairness(windowDays),
-    queryFn: ({ signal }) => fetchFairness(windowDays, signal),
-    enabled: isReady && allowed,
-    staleTime: 5 * 60_000,
   });
 }
 

@@ -4,7 +4,6 @@ import {
   choreWeightSchema,
   cursorPaginationSchema,
   idSchema,
-  isoDateSchema,
   isoDateTimeSchema,
   nonEmptyString,
   paginatedSchema,
@@ -12,17 +11,18 @@ import {
 } from './common.js';
 
 /**
- * Chore fairness contracts (D5): rotations, blackouts, swaps, kudos and the
- * fairness read models.
+ * Chore contracts (D5): rotations, blackouts, swaps and kudos.
  *
  * There are no points anywhere in this file, and there must never be again:
  * scoring a person turns a family into a leaderboard (D5). Fairness is measured
  * in **chores completed**, a scheduling input the rotation divides by capacity
  * — never a balance shown to anybody as a total.
  *
- * The framing rule for every response here: surface load as a neutral
- * "this week" split, never a sibling leaderboard. That is why the fairness
- * summary reports a *share* and a *debt*, and deliberately has no rank field.
+ * There is also no read model for it. The rotation's `debt` reaches exactly one
+ * response, {@link rotationPreviewResponseSchema}, and only as the audit trail
+ * for a single pick ("why did I get the bins again?"). The family-wide split of
+ * the week used to have its own summary contract; it was deleted along with the
+ * screen that drew it. Do not add another one.
  */
 
 export const rotationStrategySchema = z.enum([
@@ -215,61 +215,6 @@ export const swapListQuerySchema = cursorPaginationSchema.extend({
 export type SwapListQuery = z.infer<typeof swapListQuerySchema>;
 
 export const swapListResponseSchema = paginatedSchema(swapResponseSchema);
-
-/* -------------------------------------------------------------------------- */
-/* Fairness read model                                                         */
-/* -------------------------------------------------------------------------- */
-
-export const fairnessQuerySchema = z.object({
-  /**
-   * Defaults to the rotation's `balanceWindowDays`, i.e. 28 (D5).
-   *
-   * `z.coerce` because this is a querystring: both callers send
-   * `?windowDays=7`, which arrives as the string `"7"` and would fail a bare
-   * `z.number()` with a 400 on every call.
-   */
-  windowDays: z.coerce.number().int().min(1).max(365).default(28),
-  rotationId: idSchema.optional(),
-});
-export type FairnessQuery = z.infer<typeof fairnessQuerySchema>;
-
-/**
- * "This week's split of the housework", the neutral view from D5. Note the
- * absence of a rank: the UI compares each member to their *own fair share*, not
- * to each other, and shows no per-person total at all.
- */
-export const fairnessMemberSchema = z.object({
-  userId: idSchema,
-  weight: choreWeightSchema,
-  /** Chores completed in the window. A scheduling input, never a score. */
-  completed: z.number().int(),
-  /** Still-scheduled chores assigned in the window. */
-  committed: z.number().int(),
-  /** `(completed + committed) / weight` — the rotation's ordering key. */
-  debt: z.number(),
-  /** This member's weight as a fraction of total weight, 0..1. */
-  fairShare: z.number(),
-  /** This member's actual load as a fraction of the total, 0..1. */
-  actualShare: z.number(),
-  /** Chores they took over for somebody else. The quiet hero metric. */
-  coveredForOthers: z.number().int(),
-});
-export type FairnessMember = z.infer<typeof fairnessMemberSchema>;
-
-export const fairnessSummaryResponseSchema = z.object({
-  windowDays: z.number().int(),
-  from: isoDateSchema,
-  to: isoDateSchema,
-  rotationId: idSchema.nullable(),
-  members: z.array(fairnessMemberSchema),
-  /**
-   * Max minus min `actualShare / fairShare`. 0 = perfectly balanced. Shown as a
-   * single family-level number so the fix is a family conversation, not a
-   * ranking.
-   */
-  imbalance: z.number(),
-});
-export type FairnessSummaryResponse = z.infer<typeof fairnessSummaryResponseSchema>;
 
 /* -------------------------------------------------------------------------- */
 /* Kudos                                                                       */

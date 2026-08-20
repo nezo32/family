@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
 import { PiggyBank, Plus } from 'lucide-react';
-import type { GoalResponse } from '@family/shared';
 import { SideColumn } from '@/app/layout/SideColumn';
 import { Button } from '@/shared/ui/button';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { Section, SectionStack } from '@/shared/ui/section';
+import { ArchiveToggle } from '@/shared/components/ArchiveToggle';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { PageHeader } from '@/shared/components/PageHeader';
@@ -12,6 +12,7 @@ import { formatMoney } from '@/shared/lib/format';
 import { cn } from '@/shared/lib/utils';
 import { GOALS_RU, activeCountLabel, reachedCountLabel } from '../locale';
 import type { GoalScope } from '../api';
+import { groupGoals } from '../grouping';
 import { useGoalAbilities, useGoals, useRoster } from '../hooks';
 import { GoalCard } from '../components/GoalCard';
 import { GoalFormDialog } from '../components/GoalFormDialog';
@@ -39,7 +40,17 @@ import { GoalFormDialog } from '../components/GoalFormDialog';
  * leaves the accessibility tree with `display: none`.
  *
  * Reached goals drop to a `--surface-calm` group under «Собрано»: finished work
- * stays visible without competing with the goals still being saved for.
+ * stays visible without competing with the goals still being saved for. An
+ * archived goal gets the same treatment under «В архиве» — it used to be listed
+ * and counted under «Копим», so two live goals and one archived one read as
+ * «КОПИМ 3» and «3 цели в работе». The archive is history: `groupGoals` keeps it
+ * out of every count and out of «Накоплено», so the display figure does not move
+ * when the archive is revealed.
+ *
+ * «Показать архив» is band 4 (§C2) — quiet, meta, no box, at the bottom of the
+ * list — and it is the *same component* Покупки renders, which is the only
+ * thing that keeps the two screens from drifting apart again. See
+ * `shared/components/ArchiveToggle.tsx` for why it sits where it does.
  *
  * Access is decided entirely by `useCan()` (D4): a child holds no `goal:*`
  * permission and never reaches this route, a teen holds `goal:read` only and so
@@ -53,12 +64,16 @@ export default function GoalsPage() {
 
   const abilities = useGoalAbilities();
   const { byId: roster } = useRoster();
-  const { data, isPending, isError, error, refetch } = useGoals({ scope, includeArchived });
+  const { data, isPending, isPlaceholderData, isError, error, refetch } = useGoals({
+    scope,
+    includeArchived,
+  });
 
   const goals = useMemo(() => data?.items ?? [], [data]);
-  const totalSaved = goals.reduce((sum, goal) => sum + goal.currentAmount, 0);
-  const reached = goals.filter(isReached);
-  const open = goals.filter((goal) => !isReached(goal));
+  const { open, reached, archived, summarised, totalSaved } = useMemo(
+    () => groupGoals(goals),
+    [goals],
+  );
 
   const createButton = abilities.canCreate ? (
     <Button
@@ -72,8 +87,10 @@ export default function GoalsPage() {
     </Button>
   ) : null;
 
+  // Counted from the live goals only: revealing history must not move the
+  // figure the screen exists to answer.
   const summary =
-    goals.length > 0 ? (
+    summarised.length > 0 ? (
       <Section label={GOALS_RU.summarySaved} divided={false} surface="none" bodyClassName="px-4">
         <p className="font-display text-[28px] leading-[34px] font-bold text-foreground tabular-nums">
           {formatMoney(totalSaved)}
@@ -138,21 +155,37 @@ export default function GoalsPage() {
                 ))}
               </Section>
             ) : null}
+
+            {/* Its own group, on the calm ground «Собрано» uses: a goal that is
+                put away is not one the family is saving for, and it used to be
+                rendered and counted under «Копим». */}
+            {archived.length > 0 ? (
+              <Section label={GOALS_RU.groupArchived} count={archived.length} surface="calm">
+                {archived.map((goal) => (
+                  <GoalCard key={goal.id} goal={goal} roster={roster} />
+                ))}
+              </Section>
+            ) : null}
           </SectionStack>
         )}
 
-        {/* Band 4: quiet, meta, no box. The archive is history, and history
-            belongs at the bottom of the page, not above the first row. */}
-        <button
-          type="button"
-          aria-pressed={includeArchived}
-          className="max-w-row-measure self-start rounded-sm px-4 text-[13px] leading-[18px] font-medium text-muted-foreground underline-offset-4 hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
-          onClick={() => {
+        {/* Band 4 (§C2): quiet, meta, no box, at the bottom of the list — the
+            same control Покупки renders, from the same component. */}
+        <ArchiveToggle
+          expanded={includeArchived}
+          onToggle={() => {
             setIncludeArchived((value) => !value);
           }}
-        >
-          {includeArchived ? GOALS_RU.hideArchived : GOALS_RU.showArchived}
-        </button>
+          showLabel={GOALS_RU.showArchived}
+          hideLabel={GOALS_RU.hideArchived}
+          // Only once the wider query has actually answered: while the old
+          // list is still on screen the archive is not empty, it is unknown.
+          emptyHint={
+            archived.length === 0 && !isPending && !isPlaceholderData && !isError
+              ? GOALS_RU.archiveEmpty
+              : undefined
+          }
+        />
       </div>
 
       {/* §C4: Сводка. Desktop only — on a phone it is already at the top,
@@ -166,10 +199,6 @@ export default function GoalsPage() {
       ) : null}
     </>
   );
-}
-
-function isReached(goal: GoalResponse): boolean {
-  return goal.status === 'reached' || goal.currentAmount >= goal.targetAmount;
 }
 
 /**

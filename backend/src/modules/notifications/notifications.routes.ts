@@ -4,6 +4,9 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 
 import {
+  clearInboxRequestSchema,
+  clearInboxResponseSchema,
+  clearableInboxSchema,
   cursorPaginationSchema,
   deliveryAckRequestSchema,
   deliveryAckResponseSchema,
@@ -179,6 +182,81 @@ const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
     async (request) => {
       await service.markUnread(getDb(), auth(request).userId, request.body.ids);
       return { ok: true } as const;
+    },
+  );
+
+  /**
+   * The numbers «Очистить» states before it destroys anything.
+   *
+   * A GET, and not the `confirm: false` dry-run POST that shopping's
+   * `clear-bought` uses, for one reason: `core/plugins/revisions` classifies
+   * everything under `/api/notifications` that is not `/deliveries` or a
+   * settings route as `['notifications']` and bumps it in `onResponse`. A dry
+   * run shaped as a POST would therefore make every other device in the family
+   * refetch its inbox because somebody opened a dialog and thought better of
+   * it. Reads bump nothing by construction.
+   */
+  app.get(
+    '/notifications/clearable',
+    {
+      config: { permission: 'notification:manage:own', notFoundOnDeny: true },
+      schema: {
+        tags: ['notifications'],
+        summary: 'How much «Очистить» would take off the bell, per scope',
+        response: { 200: clearableInboxSchema },
+      },
+    },
+    async (request) => service.getClearableInbox(getDb(), auth(request).userId),
+  );
+
+  /**
+   * «Очистить» — the member empties **their own** inbox.
+   *
+   * Scoped to the caller by construction: the body carries a scope and a
+   * confirmation and no ids, so there is no field in which another family
+   * member's delivery could be named. That is deliberate. `markUnread` had to
+   * defend itself against ids it did not own; this route simply cannot be
+   * handed one.
+   *
+   * ## It hides rows; it never deletes a receipt (D11)
+   *
+   * The service writes `cleared_at` and nothing else. Every receipt column
+   * survives, `getIntentReceipts` keeps telling the sender the truth about a
+   * notification the recipient tidied away, and the escalation sweep — which
+   * reads `status` and the receipts and never `cleared_at` — cannot tell this
+   * ran. A clear stops no chain and restarts none.
+   *
+   * A `high`/`critical` delivery with no acknowledgement yet is excluded from
+   * every scope, `all` included, because «Подтвердить получение» exists only on
+   * the inbox row and for a `critical` intent it is the only signal that ends
+   * the ladder. `keptNeedsAck` reports how many stayed for that reason.
+   *
+   * The `notifications` revision bump happens in `onResponse` via the
+   * route-prefix table — which is also why this path is `/notifications/clear`
+   * and not something under `/notifications/deliveries`, deliberately
+   * classified as changing nothing. A clear that did not bump would leave the
+   * member's other phone showing a bell they have just emptied.
+   */
+  app.post(
+    '/notifications/clear',
+    {
+      config: { permission: 'notification:manage:own' },
+      schema: {
+        tags: ['notifications'],
+        summary: 'Clear my own inbox (hides rows; D11 receipts are kept)',
+        description:
+          'Без `confirm` только считает, сколько уведомлений скроется. ' +
+          'Уведомления, которые ждут подтверждения получения, не скрываются никогда.',
+        body: clearInboxRequestSchema,
+        response: { 200: clearInboxResponseSchema },
+      },
+    },
+    async (request) => {
+      const body = request.body;
+      return service.clearInbox(getDb(), auth(request).userId, {
+        scope: body.scope,
+        confirm: body.confirm,
+      });
     },
   );
 

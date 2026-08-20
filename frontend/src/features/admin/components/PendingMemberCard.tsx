@@ -31,7 +31,14 @@ export function PendingMemberCard(props: {
   return (
     <li className="rounded-2xl border border-border bg-card p-3">
       <div className="flex items-start gap-3">
-        <UserAvatar user={{ id: member.id, displayName: member.displayName }} size="md" />
+        <UserAvatar
+          user={{
+            id: member.id,
+            displayName: member.displayName,
+            avatarUrl: member.avatarUrl,
+          }}
+          size="md"
+        />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-foreground">{member.displayName}</p>
           <p className="truncate text-xs text-muted-foreground">

@@ -102,6 +102,9 @@ export function SwapInbox(props: {
             <MemberDisc
               id={swap.fromUserId}
               displayName={memberName(props.members, swap.fromUserId)}
+              avatarUrl={
+                props.members.find((member) => member.id === swap.fromUserId)?.avatarUrl ?? null
+              }
             />
             <span className="min-w-0 truncate text-[13px] leading-[18px] font-medium opacity-80">
               {memberName(props.members, swap.fromUserId)}

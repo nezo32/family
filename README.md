@@ -17,7 +17,7 @@ The interface is in Russian; the code, comments and documentation are in English
 | **Календарь**   | Appointments, celebrations and birthdays, with reminders. Subscribable as an ICS feed so it shows up in the iPhone's own Calendar app.                                                                   |
 | **Копилка**     | Shared and personal savings goals with milestones. An append-only ledger — the balance is always the sum of its transactions.                                                                            |
 | **Покупки**     | Multiple lists, one-line quick add (`2 кг картошки`), store-aisle grouping, and autocomplete that learns from the family's own history. Works offline, because that is where shopping happens.           |
-| **Лента**       | Announcements, comments on anything, kudos and polls. Deliberately not a chat — Telegram already exists.                                                                                                 |
+| **Стена**       | One shared feed: announcements, comments on anything, kudos and polls. No counters and no message box — deliberately not a chat, Telegram already exists.                                                |
 | **Уведомления** | Web Push and a Telegram bot, with per-type preferences, quiet hours that defer rather than drop, and escalation for things that matter.                                                                  |
 | **Доступ**      | Google and Telegram sign-in, six roles, and registration that only an admin can approve.                                                                                                                 |
 

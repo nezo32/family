@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   useInfiniteQuery,
   useMutation,
@@ -23,11 +23,15 @@ import type {
   PostResponse,
   PublicUser,
   ReactionSummary,
+  WallClearResponse,
+  WallFeedItem,
 } from '@family/shared';
 import { hasErrorCode } from '@/shared/api/errors';
 import { notify } from '@/shared/lib/toast';
 import { useCan } from '@/shared/auth';
+import { usePrefersReducedMotion } from '@/shared/ui/use-reduced-motion';
 import {
+  clearWall,
   closePoll,
   createComment,
   createPoll,
@@ -42,6 +46,7 @@ import {
   fetchReactions,
   fetchWallFeed,
   giveKudos,
+  restoreWall,
   setPostPin,
   toggleReaction,
   votePoll,
@@ -68,16 +73,24 @@ import { WALL_RU } from './locale';
  */
 
 /**
- * Twelve, not twenty — and the board never auto-loads the next page (§D7).
- *
- * A board is finite; an infinite scroll is a feed, and everything the shell
- * puts *after* the main column (the side column, which collapses to the bottom
- * of the page on a phone) is unreachable in practice under an unbounded one.
- * Twelve notes is roughly 1.5 phone viewports, which is §C5's density target
- * for a list screen, so «Спасибо» sits one flick below the board rather than
- * behind a scroll that never ends.
+ * Fifteen (§D7.9), up from the board's twelve: after activity coalescing that
+ * is roughly two phone viewports of mixed content.
  */
-const FEED_PAGE_SIZE = 12;
+export const FEED_PAGE_SIZE = 15;
+
+/**
+ * How many pages the sentinel may fetch before the feed stops and **asks**
+ * (§D7.9).
+ *
+ * This is the board's first refusal, kept as a feed mechanic: an unbounded
+ * scroll creates obligation, and a family of six must not feel behind on their
+ * own kitchen wall. Four pages is roughly sixty items — at which point the
+ * reader is asked, once, whether they actually want to keep going. An
+ * Instagram feed is engineered never to bottom out because bottoming out is
+ * when you leave; a family noticeboard wants you to leave.
+ */
+export const AUTO_LOAD_PAGES = 4;
+
 const COMMENT_PAGE_SIZE = 30;
 const KUDOS_WINDOW_DAYS = 30;
 
@@ -111,30 +124,340 @@ export function useWallFeed(): UseInfiniteQueryResult<InfiniteData<WallFeedPage>
     // The wall is a "what happened while I was away" surface; a 30s window keeps
     // a tab switch from re-fetching six pages.
     staleTime: 30_000,
+    // Page one renders from cache while offline (§D7.12), so the compose row
+    // and everything already read still work on a train.
+    gcTime: 30 * 60_000,
   });
 }
 
-/** Live pins ride outside the cursor stream, so they only exist on page one. */
-export function pinnedFrom(data: InfiniteData<WallFeedPage> | undefined): PostResponse[] {
-  return data?.pages[0]?.pinned ?? [];
+/**
+ * The head (§D7.4): live pins and open polls, both served outside the cursor
+ * stream, so they exist on page one only and never move as the feed grows.
+ */
+export function headFrom(data: InfiniteData<WallFeedPage> | undefined): {
+  pinned: PostResponse[];
+  openPolls: PollResponse[];
+} {
+  const first = data?.pages[0];
+  return { pinned: first?.pinned ?? [], openPolls: first?.openPolls ?? [] };
+}
+
+/*
+  The feed also echoes `clearedAt`, the «Очистить доску» horizon. Nothing reads
+  it on the client and nothing should have to: the clear writes a system post
+  stamped just after the horizon, so the *feed itself* explains its own floor —
+  «Доску очистили 20 августа» — rather than the UI having to infer it.
+*/
+
+/* -------------------------------------------------------------------------- */
+/* the head, as a pure function                                                */
+/* -------------------------------------------------------------------------- */
+
+export type HeadCard =
+  | { kind: 'poll'; id: string; poll: PollResponse; tone: 'attention' | 'plain' }
+  | { kind: 'post'; id: string; post: PostResponse; tone: 'attention' | 'plain' };
+
+/**
+ * What floats above the stream, and which single card is loud.
+ *
+ * §D7.4, evaluated live on every render:
+ *
+ * 1. **At most one card in the attention wash.** Precedence: an open poll the
+ *    reader has not answered → a live pin → nothing. §C2 band 2 allows exactly
+ *    one tinted card per screen, and answering the poll moves the wash to the
+ *    pin in the same frame because this is a function, not state.
+ * 2. Then the remaining live pins, then the remaining open polls.
+ * 3. **Capped at five.** Beyond that, excess pins stay in chronological
+ *    position — a head that fills the first viewport has become a section with
+ *    the label filed off, which is the one thing «не делить явно на секции»
+ *    was about.
+ *
+ * Colour is never the only signal (§B4): every card the head returns states
+ * its status in words on its own eyebrow line, which is the card's job, not
+ * this function's.
+ */
+export const HEAD_CARD_LIMIT = 5;
+
+export function buildHead(head: {
+  pinned: readonly PostResponse[];
+  openPolls: readonly PollResponse[];
+}): HeadCard[] {
+  const unanswered = head.openPolls.find((poll) => !isAnsweredByMe(poll));
+  const cards: HeadCard[] = [];
+
+  if (unanswered) {
+    cards.push({ kind: 'poll', id: unanswered.id, poll: unanswered, tone: 'attention' });
+  }
+
+  head.pinned.forEach((post, index) => {
+    const tone = !unanswered && index === 0 ? 'attention' : 'plain';
+    cards.push({ kind: 'post', id: post.id, post, tone });
+  });
+
+  for (const poll of head.openPolls) {
+    if (poll.id === unanswered?.id) continue;
+    cards.push({ kind: 'poll', id: poll.id, poll, tone: 'plain' });
+  }
+
+  return cards.slice(0, HEAD_CARD_LIMIT);
+}
+
+/* -------------------------------------------------------------------------- */
+/* activity coalescing                                                         */
+/* -------------------------------------------------------------------------- */
+
+export type FeedBlock =
+  | { kind: 'card'; id: string; item: Exclude<WallFeedItem, { kind: 'activity' }> }
+  | { kind: 'digest'; id: string; items: Extract<WallFeedItem, { kind: 'activity' }>[] };
+
+/**
+ * A run of **consecutive** activity items renders as **one** card (§D7.6).
+ *
+ * This is the mechanic that makes a chronological feed survivable, and it is
+ * the direct answer to "recency ordering treats an unanswered poll and «Лиза
+ * полила цветы» identically". Without it a Saturday of chores produces twenty
+ * near-identical muted lines and the announcement about Sunday sits below all
+ * of them — which is exactly the burial the board's ordering prevented.
+ *
+ * The rule is about runs, not about a minimum: a single activity item between
+ * two announcements is still a one-line digest card of the same kind.
+ */
+export function coalesceFeed(items: readonly WallFeedItem[]): FeedBlock[] {
+  const blocks: FeedBlock[] = [];
+  for (const item of items) {
+    if (item.kind === 'activity') {
+      const last = blocks.at(-1);
+      if (last?.kind === 'digest') {
+        last.items.push(item);
+        continue;
+      }
+      blocks.push({ kind: 'digest', id: `digest-${item.id}`, items: [item] });
+      continue;
+    }
+    blocks.push({ kind: 'card', id: `${item.kind}-${item.id}`, item });
+  }
+  return blocks;
+}
+
+/**
+ * Keeps a skeleton on screen for at least 250 ms once it has appeared (§D7.12,
+ * and the common convention at the head of §D).
+ *
+ * A cached or LAN-fast page one answers in ~30 ms, and three skeleton cards
+ * that appear and vanish inside two frames read as a glitch rather than as
+ * loading. This latches on the first `true` and releases on a timer, so the
+ * feed either does not flash or does not flicker.
+ */
+export function useAtLeast(active: boolean, ms = 250): boolean {
+  const [held, setHeld] = useState(active);
+  const since = useRef<number>(active ? Date.now() : 0);
+
+  useEffect(() => {
+    if (active) {
+      if (!held) since.current = Date.now();
+      setHeld(true);
+      return;
+    }
+    const elapsed = Date.now() - since.current;
+    if (elapsed >= ms) {
+      setHeld(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setHeld(false);
+    }, ms - elapsed);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [active, held, ms]);
+
+  return held;
 }
 
 /* ========================================================================== */
 /* announcements                                                               */
 /* ========================================================================== */
 
-export function useCreatePost(): UseMutationResult<PostResponse, Error, CreatePost> {
+interface FeedSnapshot {
+  previous: InfiniteData<WallFeedPage> | undefined;
+}
+
+/**
+ * Writing a note, with the card appearing before the server answers (§D7.10).
+ *
+ * **The reader's own post never goes behind the «Новое на стене» pill.** The
+ * optimistic row goes straight into page one, `markSelfWrite()` tells the feed
+ * to commit rather than hold, and a failure rolls the whole page back and
+ * says so — you always see your own note appear.
+ */
+export function useCreatePost(): UseMutationResult<PostResponse, Error, CreatePost, FeedSnapshot> {
   const queryClient = useQueryClient();
-  return useMutation({
+  const { userId } = useCan();
+  const key = wallKeys.feed();
+
+  return useMutation<PostResponse, Error, CreatePost, FeedSnapshot>({
     mutationFn: (body: CreatePost) => createPost(body),
-    onSuccess: () => {
-      notify.success(WALL_RU.post.published);
-      void queryClient.invalidateQueries({ queryKey: wallKeys.feed() });
+    onMutate: async (body) => {
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<InfiniteData<WallFeedPage>>(key);
+      const now = new Date().toISOString();
+      const draft: PostResponse = {
+        id: optimisticId(),
+        authorId: userId ?? null,
+        type: 'announcement',
+        title: body.title?.trim() ? body.title.trim() : null,
+        body: body.body,
+        pinnedUntil: body.pinnedUntil ?? null,
+        // An optimistic pin never joins the head: the head is server state, and
+        // a card that jumped there and back would be worse than one that waits.
+        isPinned: false,
+        commentCount: 0,
+        reactions: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      markSelfWrite();
+      queryClient.setQueryData<InfiniteData<WallFeedPage>>(key, (data) => {
+        if (!data) return data;
+        const [first, ...rest] = data.pages;
+        if (!first) return data;
+        return {
+          ...data,
+          pages: [
+            {
+              ...first,
+              items: [
+                { kind: 'post' as const, id: draft.id, createdAt: now, post: draft },
+                ...first.items,
+              ],
+            },
+            ...rest,
+          ],
+        };
+      });
+      return { previous };
     },
-    onError: (error) => {
+    onError: (error, _body, context) => {
+      if (context) queryClient.setQueryData(key, context.previous);
       notify.error(error);
     },
+    onSuccess: () => {
+      notify.success(WALL_RU.post.published);
+      markSelfWrite();
+      void queryClient.invalidateQueries({ queryKey: wallKeys.feed() });
+    },
   });
+}
+
+/* -------------------------------------------------------------------------- */
+/* «Новое на стене» — the pill, and who is allowed to move the feed            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Set when *this reader* wrote something, cleared when the feed commits.
+ *
+ * D12 polls `/api/changes` and invalidates `['wall']` within ~20 s, and a
+ * stream that grows above a thumb halfway down it is the classic way to lose a
+ * reader's place (§D7.10). So a refetch that arrives while the reader is
+ * scrolled down is **held** behind a pill — except when the new row is their
+ * own note, which must always appear.
+ *
+ * A module-level flag rather than context or query meta: the writer
+ * (`useCreatePost`) and the reader (`useFeedCommit`) are in different subtrees
+ * with no common owner but the page, and one boolean that is set immediately
+ * before a cache write and consumed on the very next render is easier to
+ * verify than a provider threaded through both.
+ */
+let selfWrite = false;
+
+export function markSelfWrite(): void {
+  selfWrite = true;
+}
+
+export function consumeSelfWrite(): boolean {
+  const value = selfWrite;
+  selfWrite = false;
+  return value;
+}
+
+/** What "the head of the feed changed" means: the top card, the pins, the open polls. */
+function headSignature(page: WallFeedPage | undefined): string {
+  if (!page) return '';
+  return [
+    page.items[0]?.id ?? '',
+    page.pinned.map((post) => post.id).join(','),
+    page.openPolls.map((poll) => poll.id).join(','),
+    page.clearedAt ?? '',
+  ].join('|');
+}
+
+export interface FeedCommit {
+  /** The page-one snapshot the reader is actually looking at. */
+  firstPage: WallFeedPage | undefined;
+  /** Something newer is waiting above them. The pill says so; it never says how many. */
+  hasPending: boolean;
+  /** Take the new head and go to the top, in one action. */
+  commit: () => void;
+}
+
+/**
+ * Holds a growing head above the reader's thumb (§D7.10).
+ *
+ * > New items are never inserted above the reader's viewport. If `scrollY > 0`,
+ * > page one refetches into the cache and the feed does **not** re-render its
+ * > head; a pill appears instead, and it carries no number.
+ *
+ * Only page **one** is frozen. Later pages come straight from the query, so a
+ * bounded auto-load keeps working while the pill is up, and «Показать ещё»
+ * still appends. `scrollY === 0` inserts directly and silently — the reader is
+ * at the top, content grows downward from the compose row, and nothing they
+ * are reading moves. Pull-to-refresh (§G6) only fires at the top, so it takes
+ * the same silent path and dismisses the pill on the way.
+ *
+ * No count on the pill, deliberately: «Новое на стене · 7» is an unread badge
+ * with extra steps, and that is the obligation meter §D7.2 refuses.
+ */
+export function useFeedCommit(data: InfiniteData<WallFeedPage> | undefined): FeedCommit {
+  const [frozen, setFrozen] = useState<WallFeedPage | null>(null);
+  const shown = useRef<{ page: WallFeedPage; signature: string } | null>(null);
+  const reducedMotion = usePrefersReducedMotion();
+
+  const live = data?.pages[0];
+
+  useEffect(() => {
+    if (!live) return;
+    const signature = headSignature(live);
+
+    // First page ever, or the reader is already holding an older one.
+    if (shown.current === null) {
+      shown.current = { page: live, signature };
+      return;
+    }
+    if (frozen !== null) return;
+
+    // Pagination, an edited body, a new comment count: same head, no pill.
+    if (signature === shown.current.signature) {
+      shown.current = { page: live, signature };
+      return;
+    }
+
+    // Their own note, or they are at the top and nothing they read can move.
+    if (consumeSelfWrite() || window.scrollY <= 0) {
+      shown.current = { page: live, signature };
+      return;
+    }
+
+    setFrozen(shown.current.page);
+  }, [live, frozen]);
+
+  const commit = useCallback(() => {
+    if (live) shown.current = { page: live, signature: headSignature(live) };
+    setFrozen(null);
+    window.scrollTo({ top: 0, behavior: reducedMotion ? 'auto' : 'smooth' });
+  }, [live, reducedMotion]);
+
+  return { firstPage: frozen ?? live, hasPending: frozen !== null, commit };
 }
 
 export function useSetPin(): UseMutationResult<
@@ -314,20 +637,31 @@ export function useDeleteComment(
 export function applyReactionToggle(
   summaries: readonly ReactionSummary[],
   emoji: string,
+  userId: string | null,
 ): ReactionSummary[] {
   const existing = summaries.find((item) => item.emoji === emoji);
-  if (!existing) return [...summaries, { emoji, count: 1, reacted: true }];
+  if (!existing) {
+    return [...summaries, { emoji, count: 1, reacted: true, userIds: userId ? [userId] : [] }];
+  }
 
   return summaries
-    .map((item) =>
-      item.emoji === emoji
-        ? {
-            ...item,
-            count: item.reacted ? Math.max(0, item.count - 1) : item.count + 1,
-            reacted: !item.reacted,
-          }
-        : item,
-    )
+    .map((item) => {
+      if (item.emoji !== emoji) return item;
+      const userIds = item.reacted
+        ? item.userIds.filter((id) => id !== userId)
+        : userId && !item.userIds.includes(userId)
+          ? [...item.userIds, userId]
+          : item.userIds;
+      return {
+        ...item,
+        // The faces move with the tap, not just the tally: the chip *is* the
+        // discs (§D7.7), so an optimistic toggle that left them alone would
+        // draw a chip nobody is on.
+        userIds,
+        count: item.reacted ? Math.max(0, item.count - 1) : item.count + 1,
+        reacted: !item.reacted,
+      };
+    })
     .filter((item) => item.count > 0);
 }
 
@@ -368,8 +702,10 @@ export function useReactionState(ref: EntityRef, server: readonly ReactionSummar
 }
 
 function reactionSignature(summaries: readonly ReactionSummary[]): string {
+  // The reactor ids are part of what is drawn now (§D7.7), so a chip that
+  // gained a face without changing its count is still a changed payload.
   return summaries
-    .map((item) => `${item.emoji}:${String(item.count)}:${item.reacted ? '1' : '0'}`)
+    .map((item) => `${item.emoji}:${item.userIds.join(',')}:${item.reacted ? '1' : '0'}`)
     .join('|');
 }
 
@@ -381,6 +717,7 @@ export function useToggleReaction(
   ref: EntityRef,
 ): UseMutationResult<ReactionSummary[], Error, string, ReactionSnapshot> {
   const queryClient = useQueryClient();
+  const { userId } = useCan();
   const { entityType, entityId } = ref;
   const key = useMemo(() => wallKeys.reactions({ entityType, entityId }), [entityType, entityId]);
 
@@ -391,7 +728,7 @@ export function useToggleReaction(
       await queryClient.cancelQueries({ queryKey: key });
       const previous = queryClient.getQueryData<ReactionSummary[]>(key);
       queryClient.setQueryData<ReactionSummary[]>(key, (current) =>
-        applyReactionToggle(current ?? [], emoji),
+        applyReactionToggle(current ?? [], emoji, userId),
       );
       return { previous };
     },
@@ -524,8 +861,19 @@ export function decidedOption(poll: PollResponse): { label: string; share: numbe
 
 interface PollsSnapshot {
   previous: [QueryKey, InfiniteData<PollListResponse> | undefined][];
+  /** The feed carries its own copy of every open poll, so it rolls back too. */
+  feed?: { key: QueryKey; data: InfiniteData<WallFeedPage> } | undefined;
 }
 
+/**
+ * Applies one change to every cache a poll can be sitting in.
+ *
+ * Since §D7 that is **two**: `['wall','polls']`, which «Что решили» reads, and
+ * the feed — where an open poll rides in the head and a closed one takes its
+ * chronological place. Patching only the first is how an optimistic vote used
+ * to look like it had not registered: the card the reader was actually looking
+ * at came from the feed.
+ */
 function patchPollCaches(
   queryClient: ReturnType<typeof useQueryClient>,
   pollId: string,
@@ -538,6 +886,23 @@ function patchPollCaches(
           pages: data.pages.map((page) => ({
             ...page,
             items: page.items.map((poll) => (poll.id === pollId ? update(poll) : poll)),
+          })),
+        }
+      : data,
+  );
+
+  queryClient.setQueryData<InfiniteData<WallFeedPage>>(wallKeys.feed(), (data) =>
+    data
+      ? {
+          ...data,
+          pages: data.pages.map((page) => ({
+            ...page,
+            openPolls: page.openPolls.map((poll) => (poll.id === pollId ? update(poll) : poll)),
+            items: page.items.map((item) =>
+              item.kind === 'poll' && item.poll.id === pollId
+                ? { ...item, poll: update(item.poll) }
+                : item,
+            ),
           })),
         }
       : data,
@@ -557,21 +922,27 @@ export function useVotePoll(): UseMutationResult<
     mutationFn: ({ pollId, optionIds }) => votePoll(pollId, optionIds),
     onMutate: async ({ pollId, optionIds }) => {
       await queryClient.cancelQueries({ queryKey: POLLS_ROOT });
-      const previous = queryClient.getQueriesData<InfiniteData<PollListResponse>>({
-        queryKey: POLLS_ROOT,
-      });
+      // Both caches are snapshotted, because both are patched: the rollback has
+      // to put the feed's own copy of the poll back too.
+      const previous: PollsSnapshot['previous'] = [
+        ...queryClient.getQueriesData<InfiniteData<PollListResponse>>({ queryKey: POLLS_ROOT }),
+      ];
+      const feedKey = wallKeys.feed();
+      const feedBefore = queryClient.getQueryData<InfiniteData<WallFeedPage>>(feedKey);
       patchPollCaches(queryClient, pollId, (poll) => applyVote(poll, optionIds, userId));
-      return { previous };
+      return { previous, feed: feedBefore ? { key: feedKey, data: feedBefore } : undefined };
     },
     onError: (error, _variables, context) => {
       for (const [key, data] of context?.previous ?? []) {
         queryClient.setQueryData(key, data);
       }
+      if (context?.feed) queryClient.setQueryData(context.feed.key, context.feed.data);
       // A vote that lost a race with the deadline is not a failure the user
       // caused — show the result, not a red toast (the card re-renders closed).
       if (hasErrorCode(error, 'CONFLICT')) {
         notify.info(WALL_RU.polls.closedAlready);
         void queryClient.invalidateQueries({ queryKey: POLLS_ROOT });
+        void queryClient.invalidateQueries({ queryKey: wallKeys.feed() });
         return;
       }
       notify.error(error);
@@ -589,6 +960,10 @@ export function useCreatePoll(): UseMutationResult<PollResponse, Error, CreatePo
     onSuccess: () => {
       notify.success(WALL_RU.polls.published);
       void queryClient.invalidateQueries({ queryKey: POLLS_ROOT });
+      // A question you just asked belongs in the head immediately, not behind
+      // a pill (§D7.10) — it is your own write.
+      markSelfWrite();
+      void queryClient.invalidateQueries({ queryKey: wallKeys.feed() });
     },
     onError: (error) => {
       notify.error(error);
@@ -604,6 +979,11 @@ export function useClosePoll(): UseMutationResult<PollResponse, Error, string> {
       notify.success(WALL_RU.polls.closedToast);
       patchPollCaches(queryClient, poll.id, () => poll);
       void queryClient.invalidateQueries({ queryKey: POLLS_ROOT });
+      // Closing moves the card out of the head and into its chronological
+      // place, which only the server can decide — so the feed refetches
+      // rather than being patched into a shape it would not have chosen.
+      markSelfWrite();
+      void queryClient.invalidateQueries({ queryKey: wallKeys.feed() });
     },
     onError: (error) => {
       notify.error(error);
@@ -639,8 +1019,67 @@ export function useGiveKudos(): UseMutationResult<KudosResponse, Error, KudosCre
     mutationFn: (body: KudosCreate) => giveKudos(body),
     onSuccess: () => {
       notify.success(WALL_RU.kudos.sent);
+      markSelfWrite();
       void queryClient.invalidateQueries({ queryKey: wallKeys.kudos() });
       void queryClient.invalidateQueries({ queryKey: wallKeys.feed() });
+    },
+    onError: (error) => {
+      notify.error(error);
+    },
+  });
+}
+
+/* ========================================================================== */
+/* «Очистить доску» — a horizon, not a delete                                  */
+/* ========================================================================== */
+
+/**
+ * Clear the wall, with six seconds to change your mind (§D7.11, §G4).
+ *
+ * Nothing is deleted anywhere: the server writes one column on the family
+ * settings row and the feed starts after it. The undo hands the previous
+ * horizon straight back — `null` included, which is "it had never been
+ * cleared" — and takes the marker post with it.
+ *
+ * Every other reversible action in this app is a `sonner` toast with «Вернуть»
+ * on it, and this one is no different in kind, only in blast radius.
+ */
+export function useClearWall(): UseMutationResult<WallClearResponse, Error, void> {
+  const queryClient = useQueryClient();
+
+  const undo = (result: WallClearResponse): void => {
+    void restoreWall({
+      clearedAt: result.previousClearedAt,
+      systemPostId: result.systemPostId,
+    })
+      .then(() => {
+        notify.success(WALL_RU.clear.restored);
+        markSelfWrite();
+        return queryClient.invalidateQueries({ queryKey: wallKeys.all });
+      })
+      .catch((error: unknown) => {
+        notify.error(error);
+      });
+  };
+
+  return useMutation<WallClearResponse, Error, void>({
+    mutationFn: () => clearWall(),
+    onSuccess: (result) => {
+      // The clear moves the head on purpose, so it is a self-write: the reader
+      // asked for it and must see it, not a pill.
+      markSelfWrite();
+      void queryClient.invalidateQueries({ queryKey: wallKeys.all });
+      // Six seconds, the same window every other reversible action in the app
+      // gets (§G4) — `swipe-row.tsx` raises the identical shape.
+      notify.raw(WALL_RU.clear.done, {
+        duration: 6000,
+        action: {
+          label: WALL_RU.clear.undo,
+          onClick: () => {
+            undo(result);
+          },
+        },
+      });
     },
     onError: (error) => {
       notify.error(error);
@@ -675,9 +1114,7 @@ export function useRoster(): Roster {
       byId,
       members,
       nameOf: (id) =>
-        id
-          ? (byId.get(id)?.displayName ?? WALL_RU.board.unknownAuthor)
-          : WALL_RU.board.systemAuthor,
+        id ? (byId.get(id)?.displayName ?? WALL_RU.feed.unknownAuthor) : WALL_RU.feed.systemAuthor,
     };
   }, [query.data]);
 }

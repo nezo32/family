@@ -39,7 +39,14 @@ export function MemberAdminRow(props: {
 
   return (
     <li className="flex items-center gap-3 rounded-2xl border border-border bg-card p-3">
-      <UserAvatar user={{ id: member.id, displayName: member.displayName }} size="sm" />
+      <UserAvatar
+        user={{
+          id: member.id,
+          displayName: member.displayName,
+          avatarUrl: member.avatarUrl,
+        }}
+        size="sm"
+      />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-foreground">{member.displayName}</p>
         <div className="mt-1 flex flex-wrap items-center gap-1.5">

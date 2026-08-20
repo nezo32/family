@@ -16,6 +16,7 @@ import {
 
 import {
   DELIVERY_STATUS_RANK,
+  type ClearInboxScope,
   type DeliveryStatus,
   type EscalationState,
   type NotificationType,
@@ -859,6 +860,9 @@ export async function listInbox(
   const predicates = [
     eq(notificationDeliveries.userId, userId),
     eq(notificationDeliveries.channel, 'in_app'),
+    // Cleared rows are off the bell. They are still here — the D11 receipt is
+    // the point of keeping them — but they are not the inbox any more.
+    isNull(notificationDeliveries.clearedAt),
   ];
   if (options.unreadOnly) predicates.push(isNull(notificationDeliveries.readAt));
   if (options.cursor) {
@@ -901,6 +905,10 @@ export async function countUnread(x: Executor, userId: string): Promise<number> 
         eq(notificationDeliveries.userId, userId),
         eq(notificationDeliveries.channel, 'in_app'),
         isNull(notificationDeliveries.readAt),
+        // Must match `listInbox` exactly. A badge counting rows the list
+        // refuses to show is the "badge that never clears" bug, arrived at
+        // from the inside instead of from a stale service-worker cache.
+        isNull(notificationDeliveries.clearedAt),
       ),
     );
   return first(rows)?.n ?? 0;
@@ -925,6 +933,11 @@ export async function markRead(
     eq(notificationDeliveries.userId, userId),
     eq(notificationDeliveries.channel, 'in_app'),
     isNull(notificationDeliveries.readAt),
+    // «Прочитать все» applies to the inbox, and a cleared row is not in it.
+    // Without this, `{ all: true }` would stamp `read` — an in-app signal the
+    // D11 ladder can see — onto rows the member deliberately took off the bell
+    // and therefore never read.
+    isNull(notificationDeliveries.clearedAt),
   ];
   if (selector.ids?.length) predicates.push(inArray(notificationDeliveries.id, selector.ids));
   if (selector.before) predicates.push(lte(notificationDeliveries.createdAt, selector.before));
@@ -994,6 +1007,132 @@ export async function markUnread(x: Executor, userId: string, ids: string[]): Pr
         inArray(notificationDeliveries.id, ids),
       ),
     )
+    .returning({ id: notificationDeliveries.id });
+  return rows.length;
+}
+
+/**
+ * "This row is still waiting for an explicit «Подтвердить получение»."
+ *
+ * `high` and `critical` intents are the ones D11 asks a human to confirm, and
+ * for `critical` that confirmation is the **only** signal that stops the
+ * escalation chain handing the notification to somebody else
+ * (`intentHasSignal(intentId, 'acknowledged')`). The button that produces it
+ * lives on the inbox row.
+ *
+ * So this predicate is what a clear must never touch. Hiding such a row would
+ * not stop the escalation — nothing here writes a receipt — it would leave the
+ * escalation running with nowhere left for a human to stop it, and the family's
+ * first sign of that would be the other parent's phone at 03:00.
+ *
+ * The priority lives on the intent, so this is an `exists` rather than a join:
+ * the same expression then works unchanged inside a `count(*) filter (…)` and
+ * inside an `UPDATE … WHERE`, and the two cannot drift into disagreeing about
+ * what is clearable.
+ */
+const stillNeedsAcknowledgement = sql`(
+  ${notificationDeliveries.acknowledgedAt} is null
+  and exists (
+    select 1
+    from ${notificationIntents}
+    where ${notificationIntents.id} = ${notificationDeliveries.intentId}
+      and ${inArray(notificationIntents.priority, ['high', 'critical'])}
+  )
+)`;
+
+/** Every in-app row currently on this user's bell. */
+const onTheBell = (userId: string) =>
+  and(
+    eq(notificationDeliveries.userId, userId),
+    eq(notificationDeliveries.channel, 'in_app'),
+    isNull(notificationDeliveries.clearedAt),
+  );
+
+export interface ClearableInboxCounts {
+  /** Read rows that `scope: 'read'` would clear. */
+  read: number;
+  /** Everything `scope: 'all'` would clear — a superset of `read`. */
+  all: number;
+  /** Rows no scope may clear, because they still owe a D11 acknowledgement. */
+  keptNeedsAck: number;
+}
+
+/**
+ * The numbers the confirmation dialog states before anything is destroyed.
+ *
+ * One query with three `filter` aggregates rather than three round trips: the
+ * three counts have to describe the *same* instant, or the dialog can promise
+ * to clear twelve and clear eleven.
+ */
+export async function countClearableInbox(
+  x: Executor,
+  userId: string,
+): Promise<ClearableInboxCounts> {
+  const rows = await x
+    .select({
+      read: sql<number>`count(*) filter (
+        where ${notificationDeliveries.readAt} is not null
+          and not ${stillNeedsAcknowledgement}
+      )::int`,
+      all: sql<number>`count(*) filter (where not ${stillNeedsAcknowledgement})::int`,
+      keptNeedsAck: sql<number>`count(*) filter (where ${stillNeedsAcknowledgement})::int`,
+    })
+    .from(notificationDeliveries)
+    .where(onTheBell(userId));
+
+  const row = first(rows);
+  return {
+    read: row?.read ?? 0,
+    all: row?.all ?? 0,
+    keptNeedsAck: row?.keptNeedsAck ?? 0,
+  };
+}
+
+/**
+ * «Очистить» — take rows off this user's bell without deleting anything.
+ *
+ * Scoped to `userId` for the same reason `markRead` and `markUnread` are, and
+ * it is the reason that matters most here: this is the most destructive write
+ * the inbox has. A delivery id belonging to another family member matches
+ * nothing and the call reports a smaller number — a silent no-op, never a 403
+ * that would confirm the row exists (D4). There is deliberately no `ids`
+ * selector at all, so the request cannot even name somebody else's row; the
+ * IDOR found on the receipt endpoints earlier is the precedent.
+ *
+ * ## What is written
+ *
+ * `cleared_at`, and nothing else. Not `readAt` — clearing an unread
+ * notification does not make it read, and pretending otherwise would write an
+ * in-app signal the D11 ladder can see for something no human looked at. Not
+ * `status`, not `deliveredAt`/`interactedAt`/`acknowledgedAt`: those are the
+ * delivery-confirmation record, they answer "did this reach them", and tidying
+ * a list is not an answer to that question. The receipts endpoint
+ * (`getIntentReceipts`) therefore still reports the full truth about a cleared
+ * notification, which is the property that made this safe to build at all.
+ *
+ * ## What is left behind
+ *
+ * - Rows that still owe an acknowledgement, whatever the scope — see
+ *   `stillNeedsAcknowledgement`.
+ * - With `scope: 'read'`, everything unread. That is the default, and it is the
+ *   safe half of the answer: clearing an unread notification destroys the only
+ *   copy of something nobody has seen.
+ * - Already-cleared rows, so a replayed request reports 0 rather than
+ *   re-stamping a `cleared_at` somebody could otherwise use to date the replay.
+ */
+export async function clearInbox(
+  x: Executor,
+  userId: string,
+  scope: ClearInboxScope,
+  at: Date,
+): Promise<number> {
+  const predicates = [onTheBell(userId), sql`not ${stillNeedsAcknowledgement}`];
+  if (scope === 'read') predicates.push(isNotNull(notificationDeliveries.readAt));
+
+  const rows = await x
+    .update(notificationDeliveries)
+    .set({ clearedAt: at })
+    .where(and(...predicates))
     .returning({ id: notificationDeliveries.id });
   return rows.length;
 }

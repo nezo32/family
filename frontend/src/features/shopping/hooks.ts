@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
+  keepPreviousData,
   useMutation,
   useQuery,
   useQueryClient,
@@ -250,6 +251,10 @@ export function useShoppingLists(includeArchived = false) {
   return useQuery({
     queryKey: shoppingKeys.list(includeArchived),
     queryFn: () => fetchLists(includeArchived),
+    // `includeArchived` is part of the key, so «Показать архив» asks a new
+    // query and the lists would blank out to a skeleton while it answers.
+    // Same reason as `useGoals`, and as `useShoppingItems` below.
+    placeholderData: keepPreviousData,
   });
 }
 

@@ -8,6 +8,7 @@ import {
   gte,
   inArray,
   isNotNull,
+  notInArray,
   isNull,
   lt,
   lte,
@@ -28,6 +29,7 @@ import {
 
 import { badRequest } from '../../core/errors.js';
 import { kudos, type KudosRow, type NewKudosRow } from '../chores/chores.schema.js';
+import { familySettings, type FamilySettingsRow } from '../identity/identity.schema.js';
 import {
   activityLog,
   comments,
@@ -151,19 +153,35 @@ export interface ListPostsOptions {
   authorId?: string | undefined;
   /** Pinned posts are served as a separate head block, so keep them out here. */
   excludePinned?: boolean;
+  /** The wall horizon (§D7.11): only rows created strictly after it. */
+  since?: Date | undefined;
   now?: Date;
 }
 
-/** Live pinned posts. Small by construction — pins expire (`pinned_until`). */
+/**
+ * Live pinned posts. Small by construction — pins expire (`pinned_until`).
+ *
+ * `since` is why «Очистить доску» can clear the pins without a destructive
+ * write: a pin older than the horizon simply stops being returned, and the
+ * undo puts it back. Setting `pinned_until = null` instead would take the
+ * expiry date with it and there would be nothing to restore.
+ */
 export async function listPinnedPosts(
   exec: Executor,
   now: Date = new Date(),
   limit = 20,
+  since?: Date,
 ): Promise<PostRow[]> {
+  const filters = [
+    isNull(posts.deletedAt),
+    isNotNull(posts.pinnedUntil),
+    gt(posts.pinnedUntil, now),
+  ];
+  if (since) filters.push(gt(posts.createdAt, since));
   return exec
     .select()
     .from(posts)
-    .where(and(isNull(posts.deletedAt), isNotNull(posts.pinnedUntil), gt(posts.pinnedUntil, now)))
+    .where(and(...filters))
     .orderBy(desc(posts.pinnedUntil), desc(posts.createdAt))
     .limit(limit);
 }
@@ -185,6 +203,7 @@ export async function listPosts(exec: Executor, options: ListPostsOptions): Prom
     const notPinned = or(isNull(posts.pinnedUntil), lte(posts.pinnedUntil, now));
     if (notPinned) filters.push(notPinned);
   }
+  if (options.since) filters.push(gt(posts.createdAt, options.since));
 
   return exec
     .select()
@@ -380,7 +399,14 @@ export async function deleteReactionById(exec: Executor, id: string): Promise<vo
   await exec.delete(reactions).where(eq(reactions.id, id));
 }
 
-/** All reaction facts for a page of targets — one query, folded in memory. */
+/**
+ * All reaction facts for a page of targets — one query, folded in memory.
+ *
+ * Ordered by `created_at`, because the summary carries the reactor **ids** now
+ * (§D7.7) and the chip draws them as discs: "who reacted first" is a stable,
+ * meaningful order that two clients cannot disagree about, and an unordered
+ * select would shuffle the faces between refetches.
+ */
 export async function loadReactions(
   exec: Executor,
   entityType: CommentableEntityType,
@@ -394,7 +420,8 @@ export async function loadReactions(
       userId: reactions.userId,
     })
     .from(reactions)
-    .where(and(eq(reactions.entityType, entityType), inArray(reactions.entityId, [...entityIds])));
+    .where(and(eq(reactions.entityType, entityType), inArray(reactions.entityId, [...entityIds])))
+    .orderBy(asc(reactions.createdAt), asc(reactions.id));
 }
 
 export async function deleteReactionsFor(
@@ -420,7 +447,7 @@ export function buildReactionSummaries(
   facts: readonly ReactionFact[],
   viewerId: string,
 ): Map<string, ReactionSummary[]> {
-  const byEntity = new Map<string, Map<string, { count: number; reacted: boolean }>>();
+  const byEntity = new Map<string, Map<string, { userIds: string[]; reacted: boolean }>>();
 
   for (const fact of facts) {
     let entity = byEntity.get(fact.entityId);
@@ -428,8 +455,10 @@ export function buildReactionSummaries(
       entity = new Map();
       byEntity.set(fact.entityId, entity);
     }
-    const current = entity.get(fact.emoji) ?? { count: 0, reacted: false };
-    current.count += 1;
+    const current = entity.get(fact.emoji) ?? { userIds: [], reacted: false };
+    // The unique index makes a duplicate impossible, but folding defensively
+    // costs nothing and keeps the discs honest if it ever stops being true.
+    if (!current.userIds.includes(fact.userId)) current.userIds.push(fact.userId);
     if (fact.userId === viewerId) current.reacted = true;
     entity.set(fact.emoji, current);
   }
@@ -437,7 +466,14 @@ export function buildReactionSummaries(
   const result = new Map<string, ReactionSummary[]>();
   for (const [entityId, emojis] of byEntity) {
     const summaries = [...emojis.entries()]
-      .map(([emoji, agg]) => ({ emoji, count: agg.count, reacted: agg.reacted }))
+      .map(([emoji, agg]) => ({
+        emoji,
+        count: agg.userIds.length,
+        reacted: agg.reacted,
+        // The faces. `count` is `userIds.length` and stays in the contract for
+        // non-UI consumers; Стена draws these and never the digit (§D7.7).
+        userIds: agg.userIds,
+      }))
       .sort((a, b) => b.count - a.count || a.emoji.localeCompare(b.emoji));
     result.set(entityId, summaries);
   }
@@ -514,6 +550,12 @@ export interface ListPollsOptions {
   limit: number;
   cursor?: Cursor | undefined;
   status?: 'all' | 'open' | 'closed';
+  /**
+   * The wall horizon (§D7.11). Deliberately **not** applied to open polls by
+   * the feed: a clear collapses the wall to exactly what still needs
+   * answering, so it must never silently cancel a question nobody answered.
+   */
+  since?: Date | undefined;
   now?: Date;
 }
 
@@ -528,6 +570,8 @@ export async function listPolls(exec: Executor, options: ListPollsOptions): Prom
     const closed = or(isNotNull(polls.closedAt), lte(polls.closesAt, now));
     if (closed) filters.push(closed);
   }
+
+  if (options.since) filters.push(gt(polls.createdAt, options.since));
 
   if (options.cursor) {
     const { createdAt, id } = options.cursor;
@@ -606,10 +650,13 @@ export interface ListKudosOptions {
   toUserId?: string | undefined;
   fromUserId?: string | undefined;
   occurrenceId?: string | undefined;
+  /** The wall horizon (§D7.11) — feed visibility only; nothing is un-thanked. */
+  since?: Date | undefined;
 }
 
 export async function listKudos(exec: Executor, options: ListKudosOptions): Promise<KudosRow[]> {
   const filters = [];
+  if (options.since) filters.push(gt(kudos.createdAt, options.since));
   if (options.toUserId) filters.push(eq(kudos.toUserId, options.toUserId));
   if (options.fromUserId) filters.push(eq(kudos.fromUserId, options.fromUserId));
   if (options.occurrenceId) filters.push(eq(kudos.occurrenceId, options.occurrenceId));
@@ -669,6 +716,14 @@ export interface ListActivityOptions {
   entityId?: string | undefined;
   from?: Date | undefined;
   to?: Date | undefined;
+  /**
+   * The wall horizon (§D7.11). Applied by the **feed** only: `/activity` is
+   * the family's own log and other modules read it, so clearing the wall
+   * hides activity from Стена without touching the log itself.
+   */
+  since?: Date | undefined;
+  /** Exact verbs to leave out — see the note in the query below. */
+  excludeVerbs?: readonly string[] | undefined;
 }
 
 export async function listActivity(
@@ -676,6 +731,7 @@ export async function listActivity(
   options: ListActivityOptions,
 ): Promise<ActivityLogRow[]> {
   const filters = [];
+  if (options.since) filters.push(gt(activityLog.createdAt, options.since));
   if (options.actorId) filters.push(eq(activityLog.actorId, options.actorId));
   if (options.entityType) filters.push(eq(activityLog.entityType, options.entityType));
   if (options.entityId) filters.push(eq(activityLog.entityId, options.entityId));
@@ -694,6 +750,19 @@ export async function listActivity(
    * the amount into its frozen Russian sentence and copies it into `metadata`,
    * so letting one row through is a finance disclosure.
    */
+  /**
+   * Verbs the **feed** already draws as a card of their own.
+   *
+   * `/activity` is unaffected — it is the family's own log and other modules
+   * read it. But once a post, a poll and a kudos are each a card in the
+   * stream (§D7.13 gaps 1 and 3), their activity rows say the same thing a
+   * second time, 40px below the thing they describe: «Благодарность 🙏: Мама
+   * → Лиза» directly under the Спасибо card that already draws both people.
+   */
+  if (options.excludeVerbs && options.excludeVerbs.length > 0) {
+    filters.push(notInArray(activityLog.verb, [...options.excludeVerbs]));
+  }
+
   for (const prefix of options.deniedVerbPrefixes ?? []) {
     filters.push(sql`${activityLog.verb} not like ${`${prefix}%`}`);
     // ...and the generic verbs that merely *point* at a denied entity.
@@ -717,4 +786,78 @@ export async function listActivity(
     .where(filters.length > 0 ? and(...filters) : undefined)
     .orderBy(desc(activityLog.createdAt), desc(activityLog.id))
     .limit(options.limit);
+}
+
+/* -------------------------------------------------------------------------- */
+/* The wall horizon — «Очистить доску» (§D7.11)                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Clearing the wall is a **horizon, not a delete**: `family_settings`
+ * (the singleton family row, D1) carries `wall_cleared_at`, and the feed
+ * returns only rows created after it. Nothing is destroyed — no post, no
+ * comment, no reaction, no kudos, no poll, no activity row.
+ *
+ * The table belongs to the identity module, so this reads its **schema**
+ * directly rather than calling its repository (D8, and exactly what
+ * `comments.service.ts` does for tasks, events and goals).
+ */
+export async function getFamilySettingsRow(exec: Executor): Promise<FamilySettingsRow> {
+  const [existing] = await exec.select().from(familySettings).limit(1);
+  if (existing) return existing;
+
+  // The singleton carries a unique index plus a CHECK, so this insert races
+  // harmlessly: whoever loses simply re-reads the winner's row.
+  await exec
+    .insert(familySettings)
+    .values({ singleton: true })
+    .onConflictDoNothing({ target: familySettings.singleton });
+
+  const [created] = await exec.select().from(familySettings).limit(1);
+  if (!created) throw badRequest('family_settings singleton could not be created');
+  return created;
+}
+
+/** `null` when the wall has never been cleared, which is the common case. */
+export async function getWallHorizon(exec: Executor): Promise<Date | null> {
+  const [row] = await exec
+    .select({ at: familySettings.wallClearedAt })
+    .from(familySettings)
+    .limit(1);
+  return row?.at ?? null;
+}
+
+/** Writes the horizon. `null` is a legitimate value — it is what undo restores. */
+export async function setWallHorizon(
+  exec: Executor,
+  settingsId: string,
+  at: Date | null,
+): Promise<void> {
+  await exec
+    .update(familySettings)
+    .set({ wallClearedAt: at, updatedAt: new Date() })
+    .where(eq(familySettings.id, settingsId));
+}
+
+/**
+ * Stamps the horizon from the **database** clock and hands the value back.
+ *
+ * This is not a nicety. Every `created_at` on this wall is written by Postgres
+ * (`defaultNow()`), while `new Date()` is the API process's clock, and the two
+ * are not the same clock: measured on this machine, Postgres runs ~240 ms
+ * ahead of Node. A horizon taken from the app clock therefore left rows the
+ * user had just watched disappear *still on the wall*, because their
+ * `created_at` was a quarter of a second "in the future" — a clear that looks
+ * broken, non-deterministically, and only for whatever was posted in the last
+ * few hundred milliseconds. Inside a transaction `now()` is the transaction's
+ * start time, so the marker post stamped one millisecond later survives it.
+ */
+export async function setWallHorizonNow(exec: Executor, settingsId: string): Promise<Date> {
+  const [row] = await exec
+    .update(familySettings)
+    .set({ wallClearedAt: sql`now()`, updatedAt: sql`now()` })
+    .where(eq(familySettings.id, settingsId))
+    .returning({ at: familySettings.wallClearedAt });
+  if (!row?.at) throw badRequest('family_settings horizon write returned no row');
+  return row.at;
 }

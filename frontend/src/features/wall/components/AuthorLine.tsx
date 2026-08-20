@@ -30,10 +30,18 @@ export function AuthorLine(props: {
   className?: string;
 }) {
   const name = props.roster.nameOf(props.authorId);
+  const avatarUrl = props.authorId
+    ? (props.roster.byId.get(props.authorId)?.avatarUrl ?? null)
+    : null;
 
   return (
     <div className={cn('flex min-w-0 items-center gap-2', props.className)}>
-      <MemberDisc id={props.authorId} displayName={name} size={props.size ?? 'sm'} />
+      <MemberDisc
+        id={props.authorId}
+        displayName={name}
+        avatarUrl={avatarUrl}
+        size={props.size ?? 'sm'}
+      />
       <span className="min-w-0 truncate text-[15px] leading-[22px] font-medium">{name}</span>
       <span aria-hidden className="shrink-0 text-[13px] leading-[18px] opacity-50">
         ·

@@ -11,9 +11,9 @@ import FamilyPage from './pages/FamilyPage';
  *
  * The rules under test are the ones that would quietly rot:
  *
- *  - the weekly load renders as a **neutral bar**, and the roster is never
- *    re-ordered by it — D5's "no sibling leaderboard" is a property of the DOM,
- *    not of a comment;
+ *  - the screen shows **no share of the housework at all** and never re-orders
+ *    the roster by one — D5's "no sibling leaderboard" is a property of the
+ *    DOM, not of a comment;
  *  - the role picker offers exactly `assignableRoles(me.user.role)`;
  *  - without the permission the controls **do not render** — not disabled,
  *    absent;
@@ -87,34 +87,6 @@ function installFetch(scenario: Scenario) {
         return Promise.resolve(json(200, { items: [], nextCursor: null }));
       }
 
-      // The side column's family-level load (§D9). Deliberately non-trivial:
-      // the assertion below is that this data reaches the screen **without**
-      // any rankable number surviving the render.
-      if (url.includes('/api/chores/fairness')) {
-        return Promise.resolve(
-          json(200, {
-            windowDays: 7,
-            imbalance: 0.1,
-            members: [
-              {
-                userId: CHILD_ID,
-                doneCount: 7,
-                actualShare: 0.7,
-                fairShare: 0.5,
-                coveredForOthers: 0,
-              },
-              {
-                userId: TEEN_ID,
-                doneCount: 3,
-                actualShare: 0.3,
-                fairShare: 0.5,
-                coveredForOthers: 0,
-              },
-            ],
-          }),
-        );
-      }
-
       if (url.includes('/suspend')) {
         return Promise.resolve(json(200, member({ status: 'suspended' })));
       }
@@ -159,8 +131,6 @@ describe('family roster', () => {
     });
     const { container } = renderPage();
 
-    // `findAllBy`: each member legitimately appears twice — once as a roster
-    // row, once as a bar in the side column's family-level load (§D9).
     expect((await screen.findAllByText('Петя')).length).toBeGreaterThan(0);
     expect((await screen.findAllByText('Лиза')).length).toBeGreaterThan(0);
 
@@ -176,7 +146,22 @@ describe('family roster', () => {
     expect(screen.queryByText(/место|рейтинг|лучш|больше всех|балл/i)).not.toBeInTheDocument();
   });
 
-  it('shows the week’s split without putting a number against a name (D5, §D9)', async () => {
+  /**
+   * The successor to the old "the load bar shows no numbers" pin.
+   *
+   * That test guarded a component: it let the fairness payload reach the screen
+   * and then proved no share, percentage or `aria-label` digit came out the
+   * other side. The component is gone, so the guard moves one step earlier —
+   * the split of the housework must not be *fetched*, let alone drawn, and no
+   * proportion may appear on this screen by any other route.
+   *
+   * The `aria-label` half of the assertion stays exactly as it was, because
+   * that is the failure this whole line of tests exists for: a bar that showed
+   * nothing on screen was reading «40 % (своя доля 33 %)» to a screen-reader
+   * user, handing a blind family member the scoreboard the sighted design
+   * refuses to draw.
+   */
+  it('asks for no split of the housework and shows none (D5)', async () => {
     installFetch({
       me: meBody(ADMIN_PERMISSIONS),
       members: [
@@ -187,24 +172,17 @@ describe('family roster', () => {
     const { container } = renderPage();
 
     await screen.findAllByText('Петя');
+    await screen.findAllByText('Лиза');
 
-    // The load *is* on this screen now — §D9 puts it in the side column, as one
-    // family-level picture rather than a bar glued to every member's row.
-    await waitFor(() => {
-      expect(calls.some((call) => call.url.includes('/chores/fairness'))).toBe(true);
-    });
+    expect(calls.some((call) => call.url.includes('/chores/fairness'))).toBe(false);
 
-    // …and it is neutral by construction. `doneCount` 7 vs 3 and shares of 70 %
-    // vs 30 % reached the client; **none** of those numbers may reach the DOM,
-    // including through an `aria-label`, which is how a screen-reader user used
-    // to be handed the exact scoreboard the sighted design refuses to draw.
-    await waitFor(() => {
-      expect(container.querySelectorAll('[role="img"]').length).toBeGreaterThan(0);
-    });
-    for (const bar of container.querySelectorAll('[role="img"]')) {
-      expect(bar.getAttribute('aria-label') ?? '').not.toMatch(/\d/);
-    }
+    // No bar, no percentage, and nothing said out loud that is not said on
+    // screen — an `aria-label` is a surface like any other.
+    expect(container.querySelectorAll('[role="img"]')).toHaveLength(0);
     expect(screen.queryByText(/\d+\s*%/)).not.toBeInTheDocument();
+    for (const node of container.querySelectorAll('[aria-label]')) {
+      expect(node.getAttribute('aria-label') ?? '').not.toMatch(/%|доля/i);
+    }
   });
 
   it('offers only the roles the current user may assign', async () => {

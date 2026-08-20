@@ -214,6 +214,7 @@ export function TaskCard(props: {
             <MemberDisc
               id={assignee.id}
               displayName={assignee.displayName}
+              avatarUrl={assignee.avatarUrl}
               highlighted={assignee.id === userId}
               labelled
             />

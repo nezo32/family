@@ -4,11 +4,16 @@ import type {
   ActivityItem,
   CreatePost,
   KudosCreate,
+  KudosFeedItem,
   KudosResponse,
   ListActivityQuery,
   ListPostsQuery,
+  PollResponse,
   PostResponse,
   UpdatePost,
+  WallClearResponse,
+  WallFeedItem,
+  WallRestore,
 } from '@family/shared';
 
 import type { AuthContext } from '../../core/auth/context.js';
@@ -19,8 +24,9 @@ import { users } from '../identity/users.schema.js';
 import { dispatchAfterCommit, emitIntent } from '../notifications/notifications.service.js';
 import { recordActivityEvent } from './activity.service.js';
 import { deleteCommentsFor } from './comments.service.js';
+import { hydratePolls } from './polls.service.js';
 import * as repo from './wall.repository.js';
-import type { ActivityLogRow, PostRow } from './wall.schema.js';
+import type { ActivityLogRow, PollRow, PostRow } from './wall.schema.js';
 
 /**
  * The family wall: announcements, kudos and the merged timeline.
@@ -499,34 +505,47 @@ export async function listActivity(
 }
 
 /* -------------------------------------------------------------------------- */
-/* The merged wall feed                                                        */
+/* The merged wall feed (§D7)                                                  */
 /* -------------------------------------------------------------------------- */
 
-export type FeedItem =
-  | { kind: 'post'; id: string; createdAt: string; post: PostResponse }
-  | { kind: 'activity'; id: string; createdAt: string; activity: ActivityItem };
+export type FeedItem = WallFeedItem;
 
 export interface WallFeed {
   /** Live pinned announcements, outside the cursor stream (first page only). */
   pinned: PostResponse[];
-  items: FeedItem[];
+  /**
+   * Open polls, outside the cursor stream (first page only).
+   *
+   * A card is never in two places (§D7.4): an open poll is in the head or
+   * nowhere, and when it closes it leaves the head and takes its chronological
+   * position in `items` — which may be far down, which is what «Что решили» is
+   * for.
+   */
+  openPolls: PollResponse[];
+  items: WallFeedItem[];
   nextCursor: string | null;
+  /** The «Очистить доску» horizon, echoed so the client can explain an empty wall. */
+  clearedAt: string | null;
 }
 
 interface MergeCandidate {
   id: string;
   createdAt: Date;
-  kind: 'post' | 'activity';
+  kind: 'post' | 'activity' | 'poll' | 'kudos';
   post?: PostRow;
   activity?: ActivityLogRow;
+  poll?: PollRow;
+  kudos?: KudosRow;
 }
 
 /**
- * Merges two already-sorted descending streams on `(createdAt, id)`. Pure, so
- * the interleaving is testable without a database.
+ * Merges already-sorted descending streams on `(createdAt, id)`. Pure, so the
+ * interleaving is testable without a database. Variadic because the stream has
+ * four sources now — posts, activity, closed polls and kudos — and a fold of
+ * pairwise merges would sort the same rows three times.
  */
-export function mergeStreams(a: MergeCandidate[], b: MergeCandidate[]): MergeCandidate[] {
-  const merged = [...a, ...b];
+export function mergeStreams(...streams: MergeCandidate[][]): MergeCandidate[] {
+  const merged = streams.flat();
   merged.sort((x, y) => {
     const delta = y.createdAt.getTime() - x.createdAt.getTime();
     return delta !== 0 ? delta : y.id < x.id ? -1 : y.id > x.id ? 1 : 0;
@@ -534,14 +553,92 @@ export function mergeStreams(a: MergeCandidate[], b: MergeCandidate[]): MergeCan
   return merged;
 }
 
+/** A member who no longer exists. Never an id, never an empty name. */
+const UNKNOWN_MEMBER_RU = 'Участник';
+
 /**
- * The wall: announcements, system posts and the activity feed in one timeline.
+ * Hydrates a page of kudos into feed cards.
  *
- * Each source is over-fetched by `limit + 1` and merged in memory. That is
- * correct because both streams are keyset-ordered on the same
+ * The recipient's display name rides on the card because the card *is* the
+ * record — «(П) Павел сказал спасибо · (Л) Лизе» — and the client's roster is
+ * a best-effort query that may be missing. Comment counts and reaction faces
+ * come from the same polymorphic tables everything else uses; `kudos` joined
+ * `COMMENTABLE_ENTITY_TYPES` for exactly this card (§D7.6).
+ */
+export async function hydrateKudos(
+  exec: Executor,
+  rows: readonly KudosRow[],
+  viewerId: string,
+): Promise<KudosFeedItem[]> {
+  if (rows.length === 0) return [];
+  const ids = rows.map((r) => r.id);
+  const [counts, facts, names] = await Promise.all([
+    repo.countComments(exec, 'kudos', ids),
+    repo.loadReactions(exec, 'kudos', ids),
+    displayNamesFor(
+      exec,
+      rows.map((r) => r.toUserId),
+    ),
+  ]);
+  const summaries = repo.buildReactionSummaries(facts, viewerId);
+  return rows.map((row) => ({
+    ...toKudosResponse(row),
+    toDisplayName: names.get(row.toUserId) ?? UNKNOWN_MEMBER_RU,
+    commentCount: repo.commentCountOf(counts, row.id),
+    reactions: summaries.get(row.id) ?? [],
+  }));
+}
+
+/**
+ * Activity verbs the feed now draws as a **card**, so their log rows must not
+ * also appear as a digest line (§D7.6).
+ *
+ * Found by driving the built app rather than by reading the spec: with kudos
+ * and polls as feed items, «Благодарность 🙏: Мама → Лиза» rendered 40px under
+ * the Спасибо card that already draws both people, and «Мама повесила
+ * объявление „…“» under the announcement itself. The activity layer is "a
+ * scribble in the margin" for things that have **no** card; a scribble
+ * repeating the card above it is the feed telling you the same thing twice.
+ *
+ * `/activity` keeps every row: it is the family's own log, and other modules
+ * read it.
+ */
+const VERBS_WITH_THEIR_OWN_CARD = [
+  'post.created',
+  'post.pinned',
+  'poll.created',
+  'poll.closed',
+  'kudos.given',
+] as const;
+
+/**
+ * How many open polls the head may carry.
+ *
+ * The head itself is capped at five cards on the **client** (§D7.4) — a head
+ * that fills the first viewport has become a section with the label filed off.
+ * This bound is the transport's own sanity limit, not the design rule.
+ */
+const HEAD_POLL_LIMIT = 20;
+
+/**
+ * Стена, as one continuous stream (§D7).
+ *
+ * Four sources — announcements and system posts, the activity log, **closed**
+ * polls and kudos — are each over-fetched by `limit + 1` and merged in memory.
+ * That is correct because every source is keyset-ordered on the same
  * `(created_at, id)` key, so the first `limit` merged rows are exactly the
- * first `limit` rows of the union — no `UNION ALL` view, no second sort in
+ * first `limit` rows of the union: no `UNION ALL` view, no second sort in
  * Postgres, and each source keeps its own index.
+ *
+ * Two collections ride **outside** the cursor stream and are served on the
+ * first page only — live pins and open polls. They are the feed's head: they
+ * do not move as the feed grows, they are never repeated on page two, and
+ * neither of them ever appears in `items` as well (§D7.4).
+ *
+ * Everything except open polls is filtered by the «Очистить доску» horizon
+ * (§D7.11). Open polls are exempt on purpose: a clear collapses the wall to
+ * exactly what still needs answering, and it must not silently cancel a
+ * question nobody has answered yet.
  */
 export async function getWallFeed(
   db: Db,
@@ -550,16 +647,27 @@ export async function getWallFeed(
 ): Promise<WallFeed> {
   const now = new Date();
   const cursor = query.cursor ? repo.decodeCursor(query.cursor) : undefined;
+  const horizon = await repo.getWallHorizon(db);
+  const since = horizon ?? undefined;
+  const firstPage = cursor === undefined;
 
-  const [pinnedRows, postRows, activityRows] = await Promise.all([
-    cursor ? Promise.resolve([] as PostRow[]) : repo.listPinnedPosts(db, now),
-    repo.listPosts(db, { limit: query.limit + 1, cursor, excludePinned: true, now }),
-    repo.listActivity(db, {
-      limit: query.limit + 1,
-      cursor,
-      deniedVerbPrefixes: deniedVerbPrefixesFor(auth),
-    }),
-  ]);
+  const [pinnedRows, openPollRows, postRows, activityRows, closedPollRows, kudosRows] =
+    await Promise.all([
+      firstPage ? repo.listPinnedPosts(db, now, 20, since) : Promise.resolve([] as PostRow[]),
+      firstPage
+        ? repo.listPolls(db, { limit: HEAD_POLL_LIMIT, status: 'open', now })
+        : Promise.resolve([] as PollRow[]),
+      repo.listPosts(db, { limit: query.limit + 1, cursor, excludePinned: true, since, now }),
+      repo.listActivity(db, {
+        limit: query.limit + 1,
+        cursor,
+        since,
+        excludeVerbs: VERBS_WITH_THEIR_OWN_CARD,
+        deniedVerbPrefixes: deniedVerbPrefixesFor(auth),
+      }),
+      repo.listPolls(db, { limit: query.limit + 1, cursor, status: 'closed', since, now }),
+      repo.listKudos(db, { limit: query.limit + 1, cursor, since }),
+    ]);
 
   const merged = mergeStreams(
     postRows.map((post) => ({
@@ -574,6 +682,18 @@ export async function getWallFeed(
       kind: 'activity' as const,
       activity,
     })),
+    closedPollRows.map((poll) => ({
+      id: poll.id,
+      createdAt: poll.createdAt,
+      kind: 'poll' as const,
+      poll,
+    })),
+    kudosRows.map((row) => ({
+      id: row.id,
+      createdAt: row.createdAt,
+      kind: 'kudos' as const,
+      kudos: row,
+    })),
   );
 
   const page = repo.toPage(merged, query.limit);
@@ -581,26 +701,40 @@ export async function getWallFeed(
   const postsInPage = page.items
     .map((item) => item.post)
     .filter((row): row is PostRow => row !== undefined);
-  const hydrated = await hydratePosts(db, [...pinnedRows, ...postsInPage], auth.userId, now);
-  const byId = new Map(hydrated.map((p) => [p.id, p]));
+  const pollsInPage = page.items
+    .map((item) => item.poll)
+    .filter((row): row is PollRow => row !== undefined);
+  const kudosInPage = page.items
+    .map((item) => item.kudos)
+    .filter((row): row is KudosRow => row !== undefined);
 
-  const items: FeedItem[] = [];
+  const [hydratedPosts, hydratedPolls, hydratedKudos] = await Promise.all([
+    hydratePosts(db, [...pinnedRows, ...postsInPage], auth.userId, now),
+    hydratePolls(db, [...openPollRows, ...pollsInPage], auth.userId, now),
+    hydrateKudos(db, kudosInPage, auth.userId),
+  ]);
+
+  const postById = new Map(hydratedPosts.map((p) => [p.id, p]));
+  const pollById = new Map(hydratedPolls.map((p) => [p.id, p]));
+  const kudosById = new Map(hydratedKudos.map((k) => [k.id, k]));
+
+  const items: WallFeedItem[] = [];
   for (const candidate of page.items) {
+    const createdAt = candidate.createdAt.toISOString();
     if (candidate.kind === 'post') {
-      const post = byId.get(candidate.id);
-      if (post) {
-        items.push({
-          kind: 'post',
-          id: candidate.id,
-          createdAt: candidate.createdAt.toISOString(),
-          post,
-        });
-      }
+      const post = postById.get(candidate.id);
+      if (post) items.push({ kind: 'post', id: candidate.id, createdAt, post });
+    } else if (candidate.kind === 'poll') {
+      const poll = pollById.get(candidate.id);
+      if (poll) items.push({ kind: 'poll', id: candidate.id, createdAt, poll });
+    } else if (candidate.kind === 'kudos') {
+      const card = kudosById.get(candidate.id);
+      if (card) items.push({ kind: 'kudos', id: candidate.id, createdAt, kudos: card });
     } else if (candidate.activity) {
       items.push({
         kind: 'activity',
         id: candidate.id,
-        createdAt: candidate.createdAt.toISOString(),
+        createdAt,
         activity: toActivityItem(candidate.activity),
       });
     }
@@ -608,11 +742,93 @@ export async function getWallFeed(
 
   return {
     pinned: pinnedRows
-      .map((row) => byId.get(row.id))
+      .map((row) => postById.get(row.id))
       .filter((p): p is PostResponse => p !== undefined),
+    openPolls: openPollRows
+      .map((row) => pollById.get(row.id))
+      .filter((p): p is PollResponse => p !== undefined),
     items,
     nextCursor: page.nextCursor,
+    clearedAt: horizon ? horizon.toISOString() : null,
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* «Очистить доску» — a horizon, not a delete (§D7.11)                         */
+/* -------------------------------------------------------------------------- */
+
+/** «20 августа» — the day and the month, in the family's own timezone. */
+export function formatDayMonthRu(at: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', timeZone }).format(at);
+}
+
+/** The floor the feed draws after a clear. */
+export function wallClearedBody(day: string): string {
+  return `Доску очистили ${day}`;
+}
+
+/**
+ * Clear the wall.
+ *
+ * **Nothing is deleted.** One column on the singleton family row moves, the
+ * feed stops returning rows older than it, and every post, comment, reaction,
+ * kudos, poll and activity row stays exactly where it was. Live pins clear
+ * (they are older than the horizon); open polls stay (the feed exempts them).
+ *
+ * The clear writes **one system post**, stamped just after the horizon so it
+ * survives it. That card is then the oldest thing in the feed and it is the
+ * line «Что было раньше» used to draw — a family member opening the app after
+ * a clear finds an explanation rather than an amnesia.
+ *
+ * `settings:manage`, not `post:delete:any` (§D7.11): moderating one note
+ * somebody wrote is a different thing from resetting what six people see, and
+ * the horizon lives on the family settings row (D1).
+ */
+export async function clearWall(db: Db, auth: AuthContext): Promise<WallClearResponse> {
+  if (!auth.can('settings:manage')) throw forbidden('Missing permission: settings:manage');
+
+  return db.transaction(async (tx) => {
+    const settings = await repo.getFamilySettingsRow(tx);
+
+    // The database's clock, not this process's — see `setWallHorizonNow`. Every
+    // `created_at` on the wall is written by Postgres, and the two clocks drift.
+    const clearedAt = await repo.setWallHorizonNow(tx, settings.id);
+
+    // One millisecond after the horizon, because the feed's predicate is
+    // strictly `created_at > cleared_at`. The row has to survive the line it
+    // announces.
+    const marker = await repo.insertPost(tx, {
+      authorId: null,
+      type: 'system',
+      title: null,
+      body: wallClearedBody(formatDayMonthRu(clearedAt, settings.timezone)),
+      pinnedUntil: null,
+      createdAt: new Date(clearedAt.getTime() + 1),
+    });
+
+    return {
+      clearedAt: clearedAt.toISOString(),
+      previousClearedAt: settings.wallClearedAt ? settings.wallClearedAt.toISOString() : null,
+      systemPostId: marker.id,
+    };
+  });
+}
+
+/**
+ * Undo, for the six seconds the toast is on screen (§G4).
+ *
+ * Puts the previous horizon back — `null` included, which is "the wall was
+ * never cleared" — and soft-deletes the marker post, so an undone clear leaves
+ * no trace of itself on a wall that is whole again.
+ */
+export async function restoreWall(db: Db, auth: AuthContext, input: WallRestore): Promise<void> {
+  if (!auth.can('settings:manage')) throw forbidden('Missing permission: settings:manage');
+
+  await db.transaction(async (tx) => {
+    const settings = await repo.getFamilySettingsRow(tx);
+    await repo.setWallHorizon(tx, settings.id, input.clearedAt ? new Date(input.clearedAt) : null);
+    if (input.systemPostId) await repo.softDeletePost(tx, input.systemPostId);
+  });
 }
 
 /**

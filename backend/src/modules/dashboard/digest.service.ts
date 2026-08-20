@@ -3,7 +3,6 @@ import { and, eq, gt, gte, isNull, lt, or, sql } from 'drizzle-orm';
 import {
   DEFAULT_DIGEST_SECTIONS,
   DIGEST_SECTION_LABELS_RU,
-  DIGEST_SECTIONS,
   effectivePermissions,
   PERMISSIONS,
   type DigestSection,
@@ -37,7 +36,6 @@ import {
   type DashboardPort,
   type EventRow,
   type GoalRow,
-  type LoadRow,
   type MemberRow,
   type ShoppingSnapshot,
   type TaskRow,
@@ -374,13 +372,17 @@ function toInt(value: unknown): number {
   return 0;
 }
 
-const VALID_SECTIONS: ReadonlySet<string> = new Set<string>(DIGEST_SECTIONS);
-
-/** A `text[]` column can hold a section name a later release removed. Drop it. */
-export function sanitizeSections(values: readonly string[]): DigestSection[] {
-  const kept = values.filter((v): v is DigestSection => VALID_SECTIONS.has(v));
-  return kept.length > 0 ? kept : [...DEFAULT_DIGEST_SECTIONS];
-}
+/**
+ * A `text[]` column can hold a section name a later release removed. Drop it.
+ *
+ * The filter itself lives in the notifications module, which owns
+ * `digest_subscriptions`, so that its own read of the column
+ * (`GET /api/notifications/digest`) uses the same one — it used to cast the row
+ * straight into a zod-validated response and 500 on a stale `load`. It is
+ * re-exported here because this is where it is called from most, and where the
+ * tests for it live.
+ */
+export const sanitizeSections = notifications.sanitizeSections;
 
 export function createDigestPort(exec: Executor): DigestPort {
   const base = createDashboardPort(exec);
@@ -608,8 +610,7 @@ export interface DigestData {
   goalContributed: number | null;
   shopping: ShoppingSnapshot | null;
   wall: WallCounts | null;
-  load: LoadRow[] | null;
-  /** The subscriber, for "you did N" lines. */
+  /** The subscriber, so a section can say «у вас» instead of naming them. */
   actorId: string;
 }
 
@@ -666,7 +667,6 @@ const EMPTY_LINES: Readonly<Record<DigestSection, string>> = {
   goals: 'Копилки пока стоят на месте — ничего страшного, неделя впереди.',
   shopping: 'Список покупок пуст — всё уже куплено.',
   wall: 'На стене за неделю тихо.',
-  load: 'На этой неделе дел пока никто не закрывал.',
   birthdays: 'Дней рождения на неделе нет.',
 };
 
@@ -794,29 +794,21 @@ function buildWall(data: DigestData): SectionResult {
   return { block: block('wall', lines), highlights: [] };
 }
 
-/**
- * «Как разделились дела» — two sentences, both counts of chores.
+/*
+ * There is no `buildLoad` here any more, and this is the note explaining why so
+ * that nobody writes it again.
  *
- * Your own number and the family's total, and deliberately nothing in between:
- * no score, no per-sibling breakdown, nothing to compare yourself against
- * (D5).
+ * The `load` section rendered «Вы закрыли 21 задачу.» and «Вся семья за неделю —
+ * 22 задачи.» — a per-person running total of chores done, delivered to a phone
+ * once a week. Its removal is the same decision as the score's (D5): the number
+ * is no less a scoreboard for arriving as a push notification instead of as a
+ * bar on a screen, and a digest is the one message a family will not switch off,
+ * which makes it the worst place of all to put one.
+ *
+ * `debt` still orders the rotation queue and still explains a single pick
+ * through `GET /chores/rotations/:id/preview`. It is never summed per person for
+ * display, here or anywhere else.
  */
-function buildLoad(data: DigestData): SectionResult {
-  if (!data.load) return { block: block('load', []), highlights: [] };
-
-  const lines: string[] = [];
-  const mine = data.load.find((l) => l.userId === data.actorId);
-  const totalDone = data.load.reduce((n, l) => n + l.doneCount, 0);
-
-  if (mine && mine.doneCount > 0) {
-    lines.push(`Вы закрыли ${countRu(mine.doneCount, RU_PLURALS.taskAccusative)}.`);
-  }
-  if (totalDone > 0) {
-    // Neutral, aggregate, never a ranking (D5).
-    lines.push(`Вся семья за неделю — ${countRu(totalDone, RU_PLURALS.task)}.`);
-  }
-  return { block: block('load', lines), highlights: [] };
-}
 
 const BUILDERS: Readonly<Record<DigestSection, (data: DigestData) => SectionResult>> = {
   tasks: buildTasks,
@@ -824,7 +816,6 @@ const BUILDERS: Readonly<Record<DigestSection, (data: DigestData) => SectionResu
   goals: buildGoals,
   shopping: buildShopping,
   wall: buildWall,
-  load: buildLoad,
   birthdays: buildBirthdays,
 };
 
@@ -835,7 +826,6 @@ const SUMMARY_ORDER: readonly DigestSection[] = [
   'tasks',
   'shopping',
   'goals',
-  'load',
   'wall',
 ];
 
@@ -944,9 +934,9 @@ export function actorForSubscriber(subscriber: DigestSubscriber): DashboardActor
  * Reads everything the requested sections need, and **only** what they need.
  *
  * The forward window (`[today, today+7)`) drives tasks, events and birthdays;
- * the trailing window (`[today-7, today)`) drives the load split, the wall and
- * the week's contributions. Mixing the two is how a digest ends up congratulating
- * you for chores you have not done yet.
+ * the trailing window (`[today-7, today)`) drives the wall and the week's
+ * contributions. Mixing the two is how a digest ends up telling you about
+ * something that has not happened yet.
  */
 export async function gatherDigestData(
   port: DigestPort,
@@ -976,7 +966,6 @@ export async function gatherDigestData(
   const permitted = sections.filter((section) => {
     if (section === 'goals') return access.goals;
     if (section === 'shopping') return access.shopping;
-    if (section === 'load') return access.fairness;
     if (section === 'tasks') return access.tasks;
     if (section === 'events') return access.events;
     return true;
@@ -984,7 +973,7 @@ export async function gatherDigestData(
 
   const wants = (section: DigestSection) => permitted.includes(section);
 
-  const [members, myTasks, familyTasks, events, goals, goalContributed, shopping, wall, load] =
+  const [members, myTasks, familyTasks, events, goals, goalContributed, shopping, wall] =
     await Promise.all([
       port.loadMembers(),
       wants('tasks')
@@ -1002,7 +991,6 @@ export async function gatherDigestData(
       wants('goals') ? port.loadGoalContributions(behind) : Promise.resolve<number | null>(null),
       wants('shopping') ? port.loadShopping(12) : Promise.resolve<ShoppingSnapshot | null>(null),
       wants('wall') ? port.loadWallCounts(behind) : Promise.resolve<WallCounts | null>(null),
-      wants('load') ? port.loadLoad(behind) : Promise.resolve<LoadRow[] | null>(null),
     ]);
 
   return {
@@ -1025,7 +1013,6 @@ export async function gatherDigestData(
       goalContributed,
       shopping,
       wall,
-      load,
       actorId: actor.userId,
     },
   };

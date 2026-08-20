@@ -2,24 +2,23 @@ import { useMemo, useState } from 'react';
 import { ListTodo, Plus } from 'lucide-react';
 import { Can } from '@/shared/auth/Can';
 import { SideColumn } from '@/app/layout/SideColumn';
+import { useTwoColumn } from '@/shared/hooks/use-two-column';
 import { PageHeader } from '@/shared/components/PageHeader';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
 import { Button } from '@/shared/ui/button';
-import { SectionStack } from '@/shared/ui/section';
 import { getFamilyTimeZone } from '@/shared/lib/format';
 import { TASKS_RU } from '../locale';
 import { addDaysToKey, todayKey } from '../recurrence';
 import { collectCategories, groupOccurrences } from '../grouping';
-import { useFairness, useMembers, useOccurrences, useSwaps } from '../hooks';
+import { useMembers, useOccurrences, useSwaps } from '../hooks';
 import type { OccurrenceFilters } from '../api';
 import { TaskList } from '../components/TaskList';
 import { TaskFilterPanel, TaskScopeBar } from '../components/TaskFilters';
 import { DEFAULT_FILTERS, type TaskFilterState } from '../filters';
 import { TaskEditor } from '../components/TaskEditor';
-import { WeeklyLoad } from '../components/WeeklyLoad';
 import { SwapInbox } from '../components/SwapPanel';
-import { LoadBarSkeleton, TaskListSkeleton } from '../components/Skeletons';
+import { TaskListSkeleton } from '../components/Skeletons';
 
 /**
  * «Задачи» — the section index (§D2).
@@ -54,6 +53,7 @@ export default function TasksPage() {
   const [creating, setCreating] = useState(false);
 
   const today = todayKey(getFamilyTimeZone());
+  const twoColumn = useTwoColumn();
 
   const queryFilters = useMemo<OccurrenceFilters>(
     () => ({
@@ -68,7 +68,6 @@ export default function TasksPage() {
 
   const occurrences = useOccurrences(queryFilters);
   const members = useMembers();
-  const fairness = useFairness(7);
   const swaps = useSwaps('incoming');
 
   const items = useMemo(() => occurrences.data?.items ?? [], [occurrences.data]);
@@ -174,35 +173,29 @@ export default function TasksPage() {
       </div>
 
       {/*
-        §C4: Фильтры as a real panel plus «Нагрузка за неделю», beside the list
-        on a wide screen. Both hide below 1088px rather than collapsing to the
-        bottom of the page — a filter panel *under* the list it filters is worse
-        than no panel, and the phone already has the «Фильтры · N» sheet.
+        §C4: Фильтры as a real panel beside the list on a wide screen — the one
+        place twelve chips are fine. A filter panel *under* the list it filters
+        is worse than no panel, and the phone already has the «Фильтры · N»
+        sheet, so below 1088px this column has nothing to show.
+
+        `useTwoColumn` rather than the class the panel already carries, and this
+        is the whole reason it is here: the shell's `<aside>` collapses on
+        `:empty`, and a child hidden with `display:none` is still a child. Since
+        «Нагрузка за неделю» — the one thing this column used to publish on a
+        phone — was removed, leaving the hidden panel mounted would leave the
+        aside non-empty, zero-height and still claiming its 24px of grid gap
+        under the list. Measured, not assumed.
       */}
-      <SideColumn>
-        <SectionStack>
+      {twoColumn ? (
+        <SideColumn>
           <TaskFilterPanel
             value={filters}
             onChange={setFilters}
             members={roster}
             categories={categories}
           />
-
-          {fairness.isPending && fairness.fetchStatus !== 'idle' ? (
-            <div className="rounded-xl border border-border bg-card p-4">
-              <LoadBarSkeleton />
-            </div>
-          ) : null}
-
-          {fairness.isSuccess ? (
-            <WeeklyLoad
-              members={fairness.data.members}
-              roster={roster}
-              imbalance={fairness.data.imbalance}
-            />
-          ) : null}
-        </SectionStack>
-      </SideColumn>
+        </SideColumn>
+      ) : null}
 
       <TaskEditor open={creating} onOpenChange={setCreating} members={roster} />
     </>

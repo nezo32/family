@@ -150,9 +150,14 @@ special cases sit above the general ones. Same file.
 
 Notes on the non-obvious rows:
 
-- **Chores are `tasks`.** Rotations, swaps, blackouts and fairness all render on
-  the tasks screens and share the `['tasks']` key root. `/api/chores/kudos` is
-  the exception because kudos render on the wall.
+- **Chores are `tasks`.** Rotations, swaps and blackouts all render on the tasks
+  screens and share the `['tasks']` key root. `/api/chores/kudos` is the
+  exception because kudos render on the wall. Fairness is deliberately absent
+  from that list: nothing renders a split of the housework any more (D5), and
+  the rotation's `debt` reaches a screen only through
+  `GET /chores/rotations/:id/preview`, which explains a single pick. The prefix
+  mapping itself is unchanged — a rotation write still bumps `tasks`, because
+  the assignment it produces is what the tasks screens draw.
 - **`/api/notifications/deliveries/*`** are the D11 ack endpoints. They are
   written by the service worker on behalf of the device that just received a
   push; they change no shared state and must not cause every open client to

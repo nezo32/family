@@ -1,7 +1,7 @@
 import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
 import { cn } from '../lib/utils';
 import { initials } from '../lib/format';
-import { useAuthedImage } from '../api/authed-image';
+import { useAvatarSource } from '../api/authed-image';
 import { memberSlot } from '../ui/member-disc';
 
 export interface AvatarUser {
@@ -27,13 +27,31 @@ export type AvatarSize = keyof typeof SIZES;
  * colour everywhere in the app — a family recognises each other by colour long
  * before they read the name.
  *
+ * ## Two kinds of avatar, one of which is not ours
+ *
+ * An **uploaded** avatar is `/api/users/:id/avatar?v=…`, served out of a private
+ * bucket behind the session, so the bytes have to be fetched with the bearer
+ * token and handed over as an object URL. A **linked** one is an absolute
+ * `https://lh3.googleusercontent.com/…` that Google wrote when the account was
+ * linked; it is somebody else's host and gets a plain `<img src>` with no
+ * credentials of any kind. `useAvatarSource` decides which, by origin.
+ *
+ * In production today *every* avatar is the second kind — the bucket is empty
+ * and all three accounts were created through Google — so the provider path is
+ * the one that is actually load-bearing, not the exotic case.
+ *
+ * The cost of that path is a privacy leak we have chosen to accept for now:
+ * loading an image from `lh3.googleusercontent.com` tells Google that this
+ * family member opened the app. `referrerPolicy="no-referrer"` withholds
+ * *which screen* they opened, which is the part we can fix without changing how
+ * linking works. Copying provider avatars into our own bucket at link time
+ * would close it properly.
+ *
  * ## Every failure lands on the initials
  *
- * An uploaded avatar is served from `/api/users/:id/avatar`, a private bucket
- * behind the session, so the bytes have to be fetched with the bearer token and
- * handed over as an object URL (`useAuthedImage`). That adds two more ways for
- * an image not to appear — the fetch is still in flight, or it failed — on top
- * of the two Radix already handles (no URL at all, `<img>` load error).
+ * The authenticated path adds two more ways for an image not to appear — the
+ * fetch is still in flight, or it failed — on top of the two Radix already
+ * handles (no URL at all, `<img>` load error).
  *
  * All four collapse to the same thing here: `src` is `undefined`, no
  * `AvatarImage` is rendered, and the fallback shows. There is deliberately no
@@ -51,7 +69,7 @@ export function UserAvatar(props: {
 }) {
   const size = props.size ?? 'md';
   const tint = tintFor(props.user.id ?? props.user.displayName);
-  const src = useAuthedImage(props.user.avatarUrl);
+  const { src, external } = useAvatarSource(props.user.avatarUrl);
 
   return (
     <Avatar
@@ -65,6 +83,9 @@ export function UserAvatar(props: {
         <AvatarImage
           src={src}
           alt={props.user.displayName}
+          // Provider CDNs only. Never `crossOrigin`, which would turn a plain
+          // image load into a CORS preflight Google has no reason to satisfy.
+          {...(external ? { referrerPolicy: 'no-referrer' as const } : {})}
           // Belt and braces over Radix's own error handling: an object URL that
           // was revoked under us (cache eviction mid-render) must still fall
           // through to the initials rather than render a broken image.

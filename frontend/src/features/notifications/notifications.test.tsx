@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { toast as sonnerToast } from 'sonner';
 import type { InAppNotification, PreferencesResponse } from '@family/shared';
 import { clearAccessToken, setAccessToken } from '@/shared/api/token-store';
 import { mockMediaQuery } from '@/test/media';
@@ -37,6 +38,19 @@ vi.mock('sonner', () => {
   );
   return { toast, Toaster: () => null };
 });
+
+/**
+ * The error toast, as `notify.error` raised it.
+ *
+ * `notify.error(error, title)` puts the title on the toast and the Russian text
+ * from `errorMessageRu` in its description — so asserting the *description* is
+ * what proves the server's English `message` never reached a screen (D7).
+ */
+function lastErrorToast(): [string, { description?: string }] {
+  const call = vi.mocked(sonnerToast.error).mock.calls.at(-1);
+  expect(call, 'no error toast was raised').toBeDefined();
+  return call as [string, { description?: string }];
+}
 
 interface ToastOptions {
   id?: string;
@@ -125,6 +139,10 @@ interface Scenario {
   ackErrorCode?: string;
   /** Status for `POST /notifications/unread` — the swipe's undo. */
   unreadStatus?: number;
+  /** `GET /notifications/clearable`. Omit to keep «Очистить» out of the way. */
+  clearable?: { read: number; all: number; keptNeedsAck: number };
+  /** Status for `POST /notifications/clear`. */
+  clearStatus?: number;
   /**
    * Remembers what the mark-read and un-read writes did, so a refetch answers
    * with the state the last write left behind.
@@ -149,6 +167,8 @@ const calls: Call[] = [];
 function installFetch(scenario: Scenario = {}) {
   /** Server-side `readAt`, when `scenario.stateful` is on. */
   let readAt: string | null = null;
+  /** Set by a confirmed clear, so the refetch after it answers with an empty list. */
+  let clearedRows = false;
 
   vi.stubGlobal(
     'fetch',
@@ -177,6 +197,31 @@ function installFetch(scenario: Scenario = {}) {
         readAt = null;
         return Promise.resolve(jsonResponse(200, { ok: true }));
       }
+      if (url.includes('/api/notifications/clearable')) {
+        return Promise.resolve(
+          jsonResponse(200, scenario.clearable ?? { read: 0, all: 0, keptNeedsAck: 0 }),
+        );
+      }
+      // Strictly after `/clearable`, which contains this path as a prefix.
+      if (url.includes('/api/notifications/clear')) {
+        const status = scenario.clearStatus ?? 200;
+        if (status !== 200) {
+          return Promise.resolve(
+            jsonResponse(status, { error: { code: 'FORBIDDEN', message: 'nope' } }),
+          );
+        }
+        const requested = (body as { scope?: string }).scope ?? 'read';
+        const source = scenario.clearable ?? { read: 0, all: 0, keptNeedsAck: 0 };
+        const cleared = requested === 'all' ? source.all : source.read;
+        clearedRows = true;
+        return Promise.resolve(
+          jsonResponse(200, {
+            matched: cleared,
+            cleared,
+            keptNeedsAck: source.keptNeedsAck,
+          }),
+        );
+      }
       if (url.includes('/api/notifications/preferences')) {
         return Promise.resolve(jsonResponse(200, preferences(scenario.channels)));
       }
@@ -204,7 +249,11 @@ function installFetch(scenario: Scenario = {}) {
         );
       }
       if (url.includes('/api/notifications')) {
-        const items = scenario.items ?? [notification()];
+        // A clear is not optimistic, so the empty list has to come from the
+        // server on the refetch that follows it — exactly as it would in
+        // production. A stub that kept answering with the old rows would make
+        // the "empty after a clear" assertion untestable.
+        const items = clearedRows ? [] : (scenario.items ?? [notification()]);
         return Promise.resolve(
           jsonResponse(200, {
             items: scenario.stateful ? items.map((item) => ({ ...item, readAt })) : items,
@@ -233,6 +282,8 @@ function wrapper(ui: ReactNode) {
 beforeEach(() => {
   calls.length = 0;
   toastSpy.mockClear();
+  vi.mocked(sonnerToast.error).mockClear();
+  vi.mocked(sonnerToast.success).mockClear();
   // A mouse, unless a test says otherwise: `(pointer: coarse)` is what enables
   // the swipe, and most of this file is about the buttons rather than the
   // gesture.
@@ -485,6 +536,150 @@ describe('inbox', () => {
     expect(await screen.findByText(NOTIFICATIONS_RU.emptyTitle)).toBeInTheDocument();
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* «Очистить»                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What is worth testing about clearing the inbox.
+ *
+ * Not tested: that a Radix `AlertDialog` opens, that a radio group tracks its
+ * value. Tested: the four properties that make a destructive bulk action safe
+ * to put in front of a family —
+ *
+ *  1. **The tap does not clear anything.** It opens a dialog. Delete is on no
+ *     gesture anywhere in this app, and the one-tap version of this button is
+ *     the whole failure mode.
+ *  2. **The dialog states the real count first**, from the server, before
+ *     anything happens — shopping's `clear-bought` precedent («В списке 3
+ *     позиции…»).
+ *  3. **The safe scope is the default.** «Прочитанные» is preselected;
+ *     `scope: 'all'` reaches the API only after somebody deliberately chose it.
+ *     A regression here is silent: the button still works, and it destroys more
+ *     than it was asked to.
+ *  4. **The copy tells the truth about D11.** The receipts survive, and rows
+ *     still waiting for «Подтвердить получение» will not go — the second one
+ *     matters because a clear that visibly leaves rows behind reads as broken
+ *     unless it was announced.
+ */
+describe('«Очистить» — the inbox’s one destructive action', () => {
+  const counts = { read: 3, all: 5, keptNeedsAck: 0 };
+
+  async function openDialog() {
+    const user = userEvent.setup();
+    render(wrapper(<NotificationsPanel open onOpenChange={() => undefined} />));
+    const button = await screen.findByRole('button', { name: /Очистить/ });
+    await user.click(button);
+    return { user, dialog: await screen.findByRole('alertdialog') };
+  }
+
+  it('opens a dialog instead of clearing, and states the counts before it does', async () => {
+    installFetch({ items: [notification()], clearable: counts });
+    const { dialog } = await openDialog();
+
+    // Nothing was destroyed by the tap that opened this.
+    expect(calls.some((call) => call.method === 'POST' && call.url.includes('/clear'))).toBe(false);
+
+    // Both scopes, both numbers, before any of them can be acted on.
+    expect(within(dialog).getByText(/исчезнут 3 уведомления/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/исчезнут 5 уведомлений/)).toBeInTheDocument();
+    expect(within(dialog).getByText(NOTIFICATIONS_RU.clearReceiptsNote)).toBeInTheDocument();
+  });
+
+  it('sends the safe scope by default', async () => {
+    installFetch({ items: [notification()], clearable: counts });
+    const { user, dialog } = await openDialog();
+
+    await user.click(within(dialog).getByRole('button', { name: NOTIFICATIONS_RU.clearConfirm }));
+
+    await waitFor(() => {
+      expect(clearCall()).toBeDefined();
+    });
+    // `confirm` is what makes this the destructive call rather than a dry run,
+    // and `read` is what keeps it off the unread rows nobody has seen.
+    expect(clearCall()?.body).toEqual({ scope: 'read', confirm: true });
+  });
+
+  it('sends `all` only after it has been deliberately chosen', async () => {
+    installFetch({ items: [notification()], clearable: counts });
+    const { user, dialog } = await openDialog();
+
+    await user.click(within(dialog).getByRole('radio', { name: /Все уведомления/ }));
+    await user.click(within(dialog).getByRole('button', { name: NOTIFICATIONS_RU.clearConfirm }));
+
+    await waitFor(() => {
+      expect(clearCall()).toBeDefined();
+    });
+    expect(clearCall()?.body).toEqual({ scope: 'all', confirm: true });
+  });
+
+  it('warns that the deliberate scope takes unread notifications too', async () => {
+    installFetch({ items: [notification()], clearable: counts });
+    const { dialog } = await openDialog();
+
+    expect(within(dialog).getByText(NOTIFICATIONS_RU.clearScopeAllWarning)).toBeInTheDocument();
+  });
+
+  it('says why rows awaiting a D11 acknowledgement will stay', async () => {
+    installFetch({ items: [notification()], clearable: { read: 3, all: 4, keptNeedsAck: 2 } });
+    const { dialog } = await openDialog();
+
+    // Announced *before* the clear, because a list that visibly refuses to
+    // empty reads as a bug otherwise — and the reason is the one thing here
+    // with real consequences: the reminder is still on its way to somebody.
+    expect(within(dialog).getByText(NOTIFICATIONS_RU.clearKeptNeedsAck(2))).toBeInTheDocument();
+  });
+
+  it('says the inbox was emptied, not that nothing ever came', async () => {
+    installFetch({ items: [notification()], clearable: counts });
+    const { user, dialog } = await openDialog();
+
+    await user.click(within(dialog).getByRole('button', { name: NOTIFICATIONS_RU.clearConfirm }));
+
+    expect(await screen.findByText(NOTIFICATIONS_RU.emptyClearedTitle)).toBeInTheDocument();
+    // «Пока пусто» sends the reader to настройки on the theory that nothing was
+    // ever subscribed to. After a clear that diagnosis is wrong and the trip is
+    // wasted, so the button is not offered.
+    expect(
+      screen.queryByRole('button', { name: NOTIFICATIONS_RU.emptySettingsAction }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("speaks Russian when the clear fails, and never the server's message", async () => {
+    installFetch({ items: [notification()], clearable: counts, clearStatus: 403 });
+    const { user, dialog } = await openDialog();
+
+    await user.click(within(dialog).getByRole('button', { name: NOTIFICATIONS_RU.clearConfirm }));
+
+    await waitFor(() => {
+      expect(clearCall()).toBeDefined();
+    });
+
+    const [title, options] = lastErrorToast();
+    expect(title).toBe(NOTIFICATIONS_RU.clearFailed);
+    expect(options.description).toBe(ERROR_MESSAGES_RU.FORBIDDEN);
+    expect(screen.queryByText('nope')).not.toBeInTheDocument();
+    // The list is untouched, because nothing here is optimistic: an empty panel
+    // after a failed clear is a lie the member has no way to detect.
+    expect(screen.getByText('Просрочено: выгулять собаку')).toBeInTheDocument();
+  });
+
+  it('is not offered when there is nothing on the bell', async () => {
+    installFetch({ items: [] });
+    render(wrapper(<NotificationsPanel open onOpenChange={() => undefined} />));
+
+    expect(await screen.findByText(NOTIFICATIONS_RU.emptyTitle)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Очистить/ })).not.toBeInTheDocument();
+  });
+});
+
+/** The confirmed `POST /api/notifications/clear`, if it has gone out. */
+function clearCall(): Call | undefined {
+  return calls.find(
+    (call) => call.method === 'POST' && /\/api\/notifications\/clear($|\?)/.test(call.url),
+  );
+}
 
 /* -------------------------------------------------------------------------- */
 /* the swipe and its undo (§C-gestures/G4)                                     */

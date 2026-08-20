@@ -11,6 +11,7 @@ import {
 import type { AuthContext } from '../../core/auth/context.js';
 import type { Executor } from '../../core/db.js';
 import { badRequest, forbidden, notFound } from '../../core/errors.js';
+import { kudos } from '../chores/chores.schema.js';
 import { eventAttendees, eventOccurrences, eventSeries } from '../events/events.schema.js';
 import { savingsGoals } from '../goals/goals.schema.js';
 import { canReadGoal } from '../goals/goals.service.js';
@@ -205,8 +206,23 @@ const goalResolver: EntityAccessResolver = async (exec, entityId, auth) => {
   return canReadGoal(auth, row);
 };
 
+/**
+ * A kudos is addressed from one member to another and drawn as a card the
+ * whole family reads (§D7.6). There is nothing to narrow — existence is the
+ * whole check, exactly as for a poll.
+ */
+const kudosResolver: EntityAccessResolver = async (exec, entityId) => {
+  const [row] = await exec
+    .select({ id: kudos.id })
+    .from(kudos)
+    .where(eq(kudos.id, entityId))
+    .limit(1);
+  return Boolean(row);
+};
+
 registerEntityAccessResolver('post', postResolver);
 registerEntityAccessResolver('poll', pollResolver);
+registerEntityAccessResolver('kudos', kudosResolver);
 registerEntityAccessResolver('task', taskResolver);
 registerEntityAccessResolver('event', eventResolver);
 registerEntityAccessResolver('goal', goalResolver);

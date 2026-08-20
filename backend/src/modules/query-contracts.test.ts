@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
 
 import {
-  fairnessQuerySchema,
   listGoalsQuerySchema,
   listPostsQuerySchema,
   listShoppingItemsQuerySchema,
@@ -65,15 +64,6 @@ describe('query booleans: "false" must mean false', () => {
 });
 
 describe('query numbers arrive as strings', () => {
-  it('parses `windowDays` off the wire', () => {
-    // Both callers of `GET /chores/fairness` always send this parameter, so a
-    // bare `z.number()` here 400s every fairness request there is.
-    expect(fairnessQuerySchema.parse({ windowDays: '7' }).windowDays).toBe(7);
-    expect(fairnessQuerySchema.parse({}).windowDays).toBe(28);
-    expect(() => fairnessQuerySchema.parse({ windowDays: '0' })).toThrow();
-    expect(() => fairnessQuerySchema.parse({ windowDays: '400' })).toThrow();
-  });
-
   it('parses the rotation preview `count` off the wire', () => {
     expect(rotationPreviewQuerySchema.parse({ count: '3' }).count).toBe(3);
     expect(rotationPreviewQuerySchema.parse({}).count).toBe(5);

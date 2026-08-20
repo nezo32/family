@@ -9,10 +9,19 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from '@tanstack/react-query';
-import type { DeliveryAckResponse, InAppNotification, PreferencesResponse } from '@family/shared';
+import type {
+  ClearInboxResponse,
+  ClearInboxScope,
+  ClearableInbox,
+  DeliveryAckResponse,
+  InAppNotification,
+  PreferencesResponse,
+} from '@family/shared';
 import { ackKey, enqueueAck } from '@/features/settings/push/ack-queue';
 import {
   acknowledgeDelivery,
+  clearInbox,
+  fetchClearable,
   fetchInbox,
   fetchNotificationChannels,
   fetchReceipts,
@@ -257,6 +266,61 @@ export function useMarkUnread(): UseMutationResult<void, Error, string[]> {
     },
 
     onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: notificationKeys.all });
+    },
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* clearing                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `GET /api/notifications/clearable` — how much «Очистить» would take.
+ *
+ * Only fetched while the dialog is open, and never cached: «исчезнут
+ * 12 уведомлений» is a promise about *this* instant, and a stale number turns
+ * it into a lie the user only finds out about afterwards. `staleTime: 0` plus
+ * `gcTime: 0` means every open asks again.
+ */
+export function useClearableInbox(enabled: boolean): UseQueryResult<ClearableInbox, Error> {
+  return useQuery({
+    queryKey: notificationKeys.clearable(),
+    queryFn: ({ signal }) => fetchClearable(signal),
+    enabled,
+    staleTime: 0,
+    gcTime: 0,
+    retry: 1,
+  });
+}
+
+/**
+ * `POST /api/notifications/clear` — empty my own bell.
+ *
+ * **Not optimistic, deliberately**, unlike every other write in this file.
+ * Mark-read and its undo take the dot away under the finger because the worst
+ * case is one row's grey dot arriving a beat late. Here the worst case is a
+ * list the user believes is empty when the request failed, and — for
+ * `scope: 'all'` — a list they have no way to check, because the rows they
+ * think are gone are unread ones they never read. So the panel stays exactly as
+ * it is until the server has answered, and a failure leaves the truth on
+ * screen rather than an optimistic lie.
+ *
+ * There is no undo. §G4 requires one behind every *gesture*, and this is not
+ * one: it is a confirmed action behind a dialog that states the count first,
+ * which is the shape shopping's `clear-bought` established for the same reason.
+ *
+ * Nothing here can reach another member's inbox — the request carries a scope
+ * and a confirmation, and no ids at all.
+ */
+export function useClearInbox(): UseMutationResult<ClearInboxResponse, Error, ClearInboxScope> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (scope: ClearInboxScope) => clearInbox({ scope, confirm: true }),
+    onSettled: () => {
+      // The whole feature moved: the list, the badge, and what is left to
+      // clear. `notificationKeys.all` is the root of all three.
       void queryClient.invalidateQueries({ queryKey: notificationKeys.all });
     },
   });

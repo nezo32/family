@@ -314,8 +314,11 @@ appears_:
   colour at full as the initial, used for assignee, attendee, contributor,
   requester, wall author;
 - the **day-rail tick** on a task row assigned to someone;
-- the event bar in the calendar agenda;
-- the fairness bars on Семья.
+- the event bar in the calendar agenda.
+
+(There were fairness bars on Семья in this list. They are gone — see §C4 and
+D5. Nothing draws a split of the housework any more, so nothing needs a member
+colour for one.)
 
 Stop rendering `users.color` for these. The seeded values (`#2563eb`,
 `#db2777`, `#16a34a`, `#f59e0b`, `#7c3aed`) are stock cold Tailwind hues that
@@ -418,12 +421,12 @@ currently stacked below the fold or crammed above the list on a phone.
 | Screen           | Main column                                      | Side column (≥ lg)                                                   |
 | ---------------- | ------------------------------------------------ | -------------------------------------------------------------------- |
 | Сегодня          | Attention block + Мои дела + Сегодня в календаре | Неделя (7 compact day rows) · Копилка · Заявки                       |
-| Задачи           | The task list                                    | **Фильтры** (moved out of the phone chip wall) · Нагрузка за неделю  |
+| Задачи           | The task list                                    | **Фильтры** (moved out of the phone chip wall)                       |
 | Календарь        | Agenda or month grid                             | Mini month grid · «Подписаться на календарь»                         |
 | Копилки          | Goal rows                                        | Сводка (накоплено / в работе / достигнуто)                           |
 | Покупки → список | Items                                            | «Часто покупаем» · «Уже куплено» (collapsed)                         |
-| Стена            | The board: open polls · pinned · the stream      | «Спасибо» · «Что решили» (§D7)                                       |
-| Семья            | Members                                          | Нагрузка / справедливость                                            |
+| Стена            | The feed: compose row · head · the stream        | «Что решили» · «Спасибо» — **≥ lg only** (§D7.3a)                    |
+| Семья            | Members                                          | — the fairness panel was removed (D5); nothing replaced it           |
 | Настройки        | The selected section                             | The section nav — Профиль / Уведомления / Способы входа / Оформление |
 | Участники        | The queue                                        | Roles legend + counts                                                |
 
@@ -585,8 +588,10 @@ element, and it must go.
   выполненные». The count on the row is the discoverability.
 
 **Desktop**: main = the grouped list, rows 56px, full 720 measure. Side =
-Фильтры expanded as a real panel (this is where 12 chips are fine) + «Нагрузка
-за неделю» as neutral bars with no numbers a person could rank by. **Do not**
+Фильтры expanded as a real panel (this is where 12 chips are fine), and nothing
+else. «Нагрузка за неделю» used to sit under it as neutral bars; the owner asked
+for it gone («убери "нагрузку" - это не нужно») and D5 records why it is not
+coming back — not as a bar, not as a number, not in an `aria-label`. **Do not**
 put task cards in a 3-column grid — `task-create-desktop` shows the current grid
 producing 215px cards with «Убрать в комнате» wrapping onto three lines.
 
@@ -793,223 +798,630 @@ illustration above a composer that is already the invitation.
 
 ---
 
-### D7. Стена — the board, not the feed
+### D7. Стена — the feed
 
 **What the user came for:** "what did the family say, and does anything need me."
 
-The README's line is the spine of this screen: _announcements, comments on
-anything, kudos and polls — **deliberately not a chat, Telegram already
-exists.**_ Everything below is that clause made structural. If a future pass
-finds itself adding a composer at the bottom of the page, or an auto-loading
-stream, or a tab bar over three parallel timelines, it has rebuilt the thing
-this screen exists not to be.
+#### D7.0 This section reverses the one it replaces, on purpose
 
-#### D7.1 Three refusals, and why each one is load-bearing
+Until this pass Стена was a **board**: twelve notes on one surface, ordered by
+meaning (open questions → pinned → what happened), a «Что было раньше» tail, and
+no composer anywhere on screen. The principle was the README's line —
+_deliberately not a chat, Telegram already exists_ — made structural.
 
-**No composer on screen.** A text field pinned to the bottom of a page is the
-single feature that turns a noticeboard into a messenger, and once it is there
-every other decision follows it: newest-first ordering, unread counts, presence.
-There is exactly one text field on Стена that is ever visible, and it lives
-_inside a discussion somebody deliberately opened_. Everything else starts from
-the app bar (D7.3). Get this wrong and the family now has a worse Telegram with
-fewer people in it, and the kitchen board they actually needed is gone.
+The owner has asked for the opposite shape, in these words:
 
-**The board is finite.** Twelve notes, then one quiet «Что было раньше» row. The
-old build fetched the next page from an `IntersectionObserver`, which made the
-main column unbounded — and _everything the shell puts after the main column is
-unreachable under an unbounded scroll_. That single fact is what forced the whole
-screen into tabs (D7.2). A board holds what is currently up; an archive is a
-different product and nobody opened this one to browse one.
+> «она должна быть как у VK или instagram, не делить явно на секции и тп»
 
-**Order is meaning, not recency.** Open questions, then what is pinned, then what
-has happened. A chat has exactly one ordering and it is the clock; a board is
-sorted by what needs you.
+So Стена becomes **one continuous stream of cards**, and every explicit section
+header on this screen is deleted. That is the direction, and the rest of this
+section builds it.
 
-#### D7.2 One tree at every width — the exception is retired
+But the board was not decoration, and three of its refusals were load-bearing.
+They are restated below as feed mechanics rather than as sections, because the
+failures they prevented are still available in a feed — more available, in fact.
+A future reader must not conclude the reversal was carelessness: it was a change
+of _shape_, and D7.1 is the list of what was carried across intact.
 
-Стена used to be the only screen in the app that mounted a **different component
-tree per width**: `useTwoColumn()`, tabs below 1088px, feed-plus-side-column
-above it. The reasoning recorded at the time was that letting the side column
-collapse under an infinite feed makes «Опросы» unreachable in practice, while
-rendering both copies gives one half-typed poll question two places to live.
+**Consequence of getting this wrong:** the family gets an infinite scroll they
+feel behind on, an unanswered question buried under «Лиза полила цветы», and a
+worse Telegram with fewer people in it. All three are one decision away at every
+point below, which is why each one is named where it can be lost.
 
-Both halves of that were true, and both were symptoms. The cause was that the
-panels **owned composers**. A panel that owns typed state cannot be duplicated; a
-panel that is a pure function of server state can be rendered anywhere, twice, or
-not at all, for free — which is what `use-two-column.ts`'s own doc comment says
-to prefer.
+#### D7.1 What the board was protecting, and where it now lives
 
-> **Rule.** No panel on Стена owns a composer. Every create flow is mounted once,
-> by the page, behind the board's one door. Panels are pure functions of server
-> state, and the layout is the same tree at 320px and at 1440px.
+| The board's refusal                    | Why it existed                                                                                       | Where it lives in the feed                                                                                                             |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| **Finite — twelve notes, then a tail** | An unbounded feed creates obligation. Six people must not feel behind on their own kitchen wall.     | **The feed ends, and it says so** (D7.9). Auto-load is bounded to four pages, then asks. No unread badge on the tab, ever.             |
+| **Ordered by meaning, not by clock**   | An unanswered poll and «Лиза полила цветы» are not the same kind of object.                          | **A floating head** (D7.4) and **card size** (D7.6). What needs answering never scrolls away; activity coalesces instead of competing. |
+| **No composer on screen**              | A text field at the bottom of a stream is the one feature that turns a noticeboard into a messenger. | **A compose row that cannot receive text** (D7.5), at the top, opening the same one door.                                              |
 
-With the composers hoisted and the board bounded, the ordinary shell layout is
-enough: `<SideColumn>` portals one instance into the grid's `<aside>`, which is
-the second column above 1088px and the foot of the page below it. Measured on an
-iPhone 15 with a five-note board, «Спасибо» starts at y≈1815 — one flick, not an
-endless scroll — and every action it offers is also two taps from the app bar, so
-the panel's position is never the only route to anything.
+**And the part that genuinely does not survive, stated plainly.** Below the
+floating head, the stream is ordered by `createdAt` descending and by nothing
+else. The board's «open questions → pinned → what happened» is gone as an
+_ordering_; it survives only as a _pinning rule_ for the head. That is a real
+loss and it was accepted deliberately: a stream that reorders itself by meaning
+while you read is not the shape the owner asked for, and a reader who scrolls
+past a card cannot find it again by any rule but the clock. The compensation is
+that the only two things the old ordering protected — an unanswered question and
+a pinned announcement — are exactly the two things that never enter the
+chronological body at all.
 
-**Consequence of getting it wrong:** a per-width tree means every behaviour on
-this screen has to be verified twice, and the two copies drift. The first symptom
-is always the same — something typed on a phone is not there when the window is
-widened.
+#### D7.2 What "like VK or Instagram" is allowed to mean
 
-#### D7.3 The one door
+Taken specifically, not as an aesthetic. **Kept, because they are what makes a
+stream a stream:**
 
-The board takes three kinds of note — an announcement, a question, a thank-you —
-and they are pinned up by the same hand. So there is **one** primary action,
-`⊕ «Написать»` in the app bar, opening «Что повесим на доску?»: Объявление ·
-Опрос · Спасибо, each gated by `useCan()` (`post:create`, `poll:create`,
-`kudos:give`). A reader who holds exactly one of the three skips the menu and
-lands in that composer — a menu with one item is a tap tax, and a `child`, who
-may write and may thank but may not create a poll, would otherwise pay it every
-time. A reader who holds none gets no button.
+- one column of cards flowing with no headers, labels or dividers between them;
+- author, time, content, reactions and comments inline on every card, in that
+  order, at the same coordinates on every card type;
+- a persistent, obvious way to add something, at the top of the stream;
+- media given the full width of the card, edge to edge on a phone;
+- paged loading that continues as you scroll.
 
-One door is also what fixed the empty states. Two panels used to have empty
-states with **no possible action**, because each panel's own invitation already
-sat ~60px above it in its own header: a second copy would have been the same
-button twice and a second `Dialog` for one flow.
+**Refused, because they are the scoreboard this project spent the day removing,
+or because they are engineering for a goal a family does not share:**
 
-> **Rule.** A panel that cannot say what to do next does not render an empty
-> state — it does not render. «Решаем вместе» with no open question, «Что решили»
-> with nothing decided: the board is not missing anything, so nothing is drawn.
-> The **board itself** has exactly one empty state, and its action is the one
-> door.
+| Convention                                 | Why not                                                                                                                              |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Like counts                                | Six people. A «3» under Мама's note beside a «1» under Лизы's is a comparison, and in a feed those two cards are adjacent. See D7.7. |
+| Follower counts, «в сети», last-seen       | There are six of them and they live together.                                                                                        |
+| Algorithmic or "recommended" ordering      | The clock is a rule a nine-year-old can hold in their head. An algorithm is a thing the app does to you.                             |
+| Stories                                    | A 24-hour expiry is an urgency mechanic. Pins already expire, by a date somebody chose.                                              |
+| Infinite scroll                            | Bounded instead (D7.9). Infinite scroll is engineered to keep you there; nothing in a family noticeboard wants that.                 |
+| An unread count on the «Стена» tab         | A number that rises until you clear it is the purest form of the obligation the board existed to prevent. **Never add one.**         |
+| Typing indicators, read receipts, presence | Chat furniture. Their absence is what keeps «ок» out of the stream.                                                                  |
+| Share / repost                             | There is one audience and everybody is already in it.                                                                                |
 
-**Consequence of getting it wrong:** an empty state that cannot invite is the
-composition telling you it is wrong. Adding a button to it hides the message.
+> **Rule.** Any number rendered on Стена must be the **only** way to say the
+> thing it says. A count of replies on a thread you are about to open passes —
+> nothing else tells you a conversation is in there. A count of reactions does
+> not: the faces say it better, and they say _who_. A per-person total never
+> passes, under any heading, in any tooltip, in any `aria-label` (D5).
 
-#### D7.4 Band 2 — one loud thing, by precedence
+**Consequence of getting it wrong:** every one of the refused conventions arrives
+looking like a small, reasonable, obviously-standard addition. That is what they
+looked like everywhere else too.
 
-Precedence: **an open poll nobody has answered → a pinned announcement →
-nothing.** Whichever wins takes the clay `--surface-attention` wash; the loser
-renders as an ordinary `card` section and keeps saying what it is _in words_ —
-📌 «Закреплено до 25 августа» — because colour is never the only signal (§B4).
-The precedence is evaluated live: answer the poll and the wash moves to the pin
-in the same render.
+#### D7.3 Composition, per breakpoint
 
-Two tinted blocks stacked is two loud things, which is exactly what band 2 exists
-to prevent (§C2).
+The shell's rules are unchanged; only what fills them is new.
 
-#### D7.5 The board
+| Range                | Стена                                                                                                                                                                                                |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **< 640** (`base`)   | One column. The feed surface is **full-bleed** — `-mx-4`, no side border, no radius — so a card is the full 390px and media has the whole screen. Cards separated by an inset hairline, never a gap. |
+| **640–767** (`sm`)   | The feed becomes an ordinary L1 surface: `--card`, 1px `--border`, radius 12. Still one column, gutter 16.                                                                                           |
+| **768–1023** (`md`)  | Sidebar rail 240. One column, max 640, left-aligned, gutter 32. `TopAppBar` carries the title and «Написать» (§C4).                                                                                  |
+| **1024–1279** (`lg`) | Main `minmax(420px, 720px)` + side `320px`, gap 24. The side column appears (D7.3a).                                                                                                                 |
+| **≥ 1280** (`xl`)    | Main still caps at **720** — a card is a row, and §C2 caps a row at 720. Grow the gutters and the side column; never the card.                                                                       |
+
+One tree at every width. The rule that retired `useTwoColumn` on this screen
+stands and is now easier to keep rather than harder: **no panel on Стена owns a
+composer**, every create flow is mounted once by the page behind `BoardCompose`,
+and panels are pure functions of server state.
+
+##### D7.3a The side column, and whether a feed should have one
+
+The old objection was decisive and is worth restating, because a feed makes it
+strictly worse: **everything the shell puts after the main column is unreachable
+under a scroll that grows.** On a board that fact forced tabs. On a feed it is
+simply true, and no arrangement of the grid fixes it.
+
+So the side column changes _status_ rather than contents. It is no longer a route
+to anything. It holds two panels, both of which are **indexes into the stream**,
+and everything either one offers also exists as a card in the feed:
+
+- **«Что решили»** — the last five closed polls, each stating its question and
+  what was decided, a tie reported _as a tie_. This is the one panel that earns
+  its place in a feed: a closed poll falls back to its own timestamp and is gone,
+  and «мы же решили ехать на дачу» is a thing families look up.
+- **«Спасибо»** — the roster, alphabetical, with the «спасибо есть» /
+  «пока без спасибо» chip and no count of any kind (D5, D7.7).
+
+> **Rule.** Below `lg` the side column on Стена **does not render at all**. Not
+> collapsed to the foot of the page — not rendered. Content at the bottom of an
+> unbounded stream is dead weight that still costs two requests, and every item
+> in it is redundant with a card the reader scrolls past anyway.
+
+Both panels are stateless, so hiding them is a CSS decision (`hidden lg:block`
+around `SideColumn`'s children), not a second component tree. That property is
+exactly what the previous pass bought by hoisting the composers, and it is why
+this is cheap now.
+
+**Consequence of getting it wrong:** put anything actionable in that column and
+it is reachable only by a reader who scrolls to the end of a growing list, which
+is nobody.
+
+#### D7.4 The head of the feed — pinned, not sectioned
+
+The stream begins with the compose row, and then with a small **head** of cards
+that do not move as the feed grows. There is no header, no label and no divider
+above or below the head: same surface, same card anatomy, same hairlines. What
+marks a card as part of the head is what the card **says**, in Russian, on its
+own eyebrow line.
+
+Head order, top to bottom:
+
+1. **At most one card in the attention treatment.** Precedence, evaluated live:
+   an open poll the reader has not answered → a live pin → nothing. It carries
+   `bg-surface-attention text-surface-attention-foreground` on the `<article>`
+   itself — the same mechanism a system post already uses for `--surface-calm` —
+   plus an eyebrow line: «Вас спрашивают», or 📌 «Закреплено до 25 августа».
+2. **The remaining live pins**, ordinary card ground, each still carrying its
+   📌 «Закреплено до …» line.
+3. **The remaining open polls**, ordinary card ground, eyebrow «Открытый опрос».
+4. Then the stream.
+
+Rules that make this work:
+
+- **§C2 band 2 is intact: exactly one tinted card per screen.** Two washes
+  stacked is two loud things. The precedence re-evaluates every render, so
+  answering the poll moves the wash to the pin in the same frame.
+- **Colour is never the only signal** (§B4). Every head card states its status in
+  words, so the head is legible in greyscale and to a screen reader taking the
+  cards in order.
+- **A card is never in two places.** An open poll is in the head or nowhere; when
+  it closes it leaves the head and takes its chronological position in the
+  stream, which may be far down — which is what «Что решили» is for.
+- **The head is capped at five cards.** Beyond that, excess pins stay in
+  chronological position. This is a guard, not a feature: a head that fills the
+  first viewport has become a section with the label filed off.
+
+**Consequence of getting it wrong:** put a «ЗАКРЕПЛЕНО» header above these cards
+and the screen is a board again, with worse ordering than the board had. The
+instruction was «не делить явно на секции», and this is the clause it is about.
+
+#### D7.5 The compose entry — a row that cannot receive text
+
+The first thing in the feed surface, above the head, at every width:
 
 ```
- РЕШАЕМ ВМЕСТЕ                              Вас спрашивают   ← band 2 (or card)
- ┌───────────────────────────────────────────────────────┐
- │ (П) Павел · 2 часа назад                              │
- │ Куда едем на выходных?                                │
- │ до 22 августа, 13:51                                  │
- │ ( ) На дачу     ( ) В город     ( ) Никуда            │  ← no shares yet
- │ Ответили (П)(Б)(Л)   Завершить            Обсудить    │
- └───────────────────────────────────────────────────────┘
- ЗАКРЕПЛЕНО
- ┌───────────────────────────────────────────────────────┐
- │ (П) Павел · 2 дня назад                          ⋯    │
- │ 📌 Закреплено до 25 августа                           │
- │ Ключи от дачи у соседей                               │
- │ Если едете раньше меня — ключи у Нины Петровны…       │
- │ 👍 2   ☺+                                 Обсудить    │
- └───────────────────────────────────────────────────────┘
- НА ДОСКЕ
- ┌───────────────────────────────────────────────────────┐
- │ (М) Мама · 35 минут назад                        ⋯    │
- │ В субботу едем к бабушке                              │
- │ Выезжаем в 10:00, не проспите.                        │
- │ ❤️ 3  🎉 1  ☺+                    Обсуждение · 3      │
- ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤
- │ (Л) Лиза выполнила задачу „Полить цветы“ · 55 мин…    │  ← the quiet layer
- └───────────────────────────────────────────────────────┘
-                     Что было раньше                        ← band 4
+┌────────────────────────────────────────┐
+│ (П)  Что повесить на доску?         ⊕ │  56px, one row, card ground
+├────────────────────────────────────────┤
+│ … the head, then the stream            │
 ```
 
-- **Notes are rows on one surface, not cards.** Twelve bordered cards in a column
-  is twelve boxes of near-identical weight — the "six equal tiles" failure §A2
-  removed from Сегодня. The `Section` is the board; the inset hairline between
-  rows is what makes twelve notes read as one object. The _size_ difference
-  between an announcement and an activity line is the hierarchy: if those two
-  ever start looking alike the board stops working.
-- **Announcement:** author disc + name + relative time on **one** line · title
-  (`h2`, display face) · body (`body`, clamped to four lines with «ещё») · one
-  44px line carrying the reactions **and** the thread toggle. Two stacked rows of
-  chrome under every note is ~88px per note, which on a phone is most of what the
-  board would be made of.
-- **Activity line:** member disc + the server's frozen Russian sentence, muted,
-  with the timestamp **inside** the sentence rather than beside it. Measured at
-  320px, a right-aligned time next to a wrapping summary reads as «Лиза выполнила
-  · 55 минут назад · задачу „Полить цветы“» — the clock interrupts the clause.
-- **System post:** no author disc at all and the sage `--surface-calm` ground on
-  the row. «Семейный бот» with a face beside it is an uncanny sixth family
-  member.
-- **Reactions:** at most five emoji + a `+`; tap toggles; the digit width is
-  reserved with `tabular-nums` so 9 → 10 does not shift the row. This is the one
-  count allowed on this screen — it belongs to a _note_, not to a person, it
-  cannot be accumulated across the family, and nothing sorts by it (contrast
-  D7.7).
+It is shaped exactly like VK's composer and it is a `<button>`. There is no
+`<input>`, no `contenteditable`, no autofocus, and nothing on this screen ever
+raises the software keyboard. Tapping it opens the existing one door —
+«Что повесим на доску?»: Объявление · Опрос · Спасибо, each gated by `useCan()`
+(`post:create`, `poll:create`, `kudos:give`), skipping the menu when the reader
+holds exactly one, rendering nothing at all when they hold none.
 
-#### D7.6 Polls — the result is hidden until you have answered
+> **Rule.** The compose affordance on Стена is prominent, permanent and at the
+> **top** of a newest-first stream, and it is never a field. The extra tap before
+> any character can be typed is not friction to be optimised away — it is the
+> whole mechanism that keeps «ок», «ага» and «в 10» out of the feed.
 
-The card used to draw every option's share on first paint, so the first thing a
-ten-year-old saw was «На дачу 67 %», and then they voted for на дачу. A family is
-precisely the group where that anchoring bites hardest, because the two loudest
-votes are usually the parents'.
+Why this is not the thing the board refused. The refusal was a field pinned to
+the **bottom** of the page, which is the messenger gesture: type, send, repeat,
+with the newest thing at your thumb. A button at the top of a newest-first stream
+inverts every part of that, and the sheet it opens has a title, a body field and
+the verb «Повесить» — not «Отправить». The vocabulary rules at the head of
+`features/wall/locale.ts` stay exactly as they are; «Лента», «Опубликовать» and
+«Отправить» are still not this screen's words.
+
+Two consequences to implement:
+
+- **The app bar's `⊕` on Стена goes away below `md`.** The compose row is the
+  door. In exchange, **tapping the tab of the route you are already on scrolls
+  the document to top** (`BottomTabBar.tsx`) — the standard iOS behaviour, which
+  this app should have anyway, and which is what keeps the door one tap away from
+  the bottom of a long scroll.
+- **At `≥ md` the top bar carries «Написать»** as the screen's one primary action
+  (§C4), because there is no tab bar up there and therefore no scroll-to-top
+  gesture. This is the single deliberate duplication on the screen, and it exists
+  only at the widths where the mitigation does not.
+
+The app bar's trailing slot on Стена instead holds a `⋯` overflow, which has
+exactly one item and only for `settings:manage` (D7.11).
+
+#### D7.6 Card anatomy
+
+Every card is an `<article>` on the shared feed surface. **No card draws its own
+border, radius, shadow or ground** — with the two exceptions already named, the
+attention wash and the system post's `--surface-calm`. The rule between cards is
+a 1px `--hairline` inset by the card's 16px left padding, exactly as `Section`
+already renders it. Twelve bordered boxes with gaps between them is a grid of
+tiles (§A2); one surface carrying differently-sized cards is a stream.
+
+Every card that has an author opens with the same 44px line and closes with the
+same 44px line. The middle is what differs, and the difference in **height** is
+the hierarchy: if an activity line ever grows to the size of an announcement,
+this screen has stopped working.
+
+**Common head line** — `AuthorLine` at `size="md"` (32px disc, up from the
+board's 24: in a feed the author has more presence, and the photo on the disc is
+real now):
+
+```
+(М) Мама · 35 минут назад                                            ⋯
+```
+
+**Common foot line** — one 44px row, reactions left, thread toggle right; this
+is what `CommentThread` already renders. Two stacked rows of chrome per card is
+≈88px per card, and on a phone that becomes most of the feed.
+
+##### Объявление
+
+```
+(М) Мама · 35 минут назад                                            ⋯
+В субботу едем к бабушке                        ← h2, display face, optional
+Выезжаем в 10:00, не проспите.                  ← body 15/22, clamp 4 + «ещё»
+[ media, full card width, edge-to-edge ]        ← see below
+❤️ (М)(Л)  👍 (П)   ☺+                     Обсуждение · 3
+```
+
+- The body clamps at four lines with «ещё» / «свернуть». A 2000-character post
+  otherwise owns the viewport and the reader never learns there was anything
+  below it.
+- The body keeps `select-text` and `-webkit-touch-callout: default` while the
+  card as a whole is `.no-callout` — the address and the time are the things
+  people actually copy, and the long-press belongs to the action sheet.
+- **Media has no contract today.** `createPostSchema` is `title` / `body` /
+  `pinnedUntil` and nothing else. When an image is added, its slot is here: full
+  card width (edge-to-edge below `sm`), `aspect-ratio` boxed from
+  server-supplied dimensions so nothing reflows on load, `max-height: 60dvh`,
+  radius 0 below `sm` and 8 above. Do not add it by hanging a URL off `body`.
+
+##### Системный пост
+
+No author disc — the app wrote it, and a face beside «Семейный бот» claims a
+person did. `Sparkles` glyph, «Семейный бот», `--surface-calm` ground on the
+card. Reactions and comments as normal: the family does congratulate the goal
+that filled up.
+
+##### Опрос
+
+Behaviour is unchanged, and this pass re-ratifies the rule that matters most:
 
 > **Rule.** Shares and bars render only once the reader has answered, or once the
-> poll is closed. Nothing is withheld that anybody is entitled to — the whole
-> result appears the instant you have said your own piece.
+> poll is closed. The card used to draw «На дачу 67 %» on first paint, so the
+> first thing a ten-year-old saw was the parents' answer — and a family is
+> precisely the group where that anchoring bites hardest.
 
-Who has answered is drawn as **member discs, never as «Проголосовали: 3»**. The
-discs say the thing somebody actually says out loud — "we are waiting on Папа" —
-and they are a set attached to one question, not a tally against a name. A closed
-poll renders the result and never a form (voting past the deadline is a
+Who has answered is drawn as **member discs, never «Проголосовали: 3»**. A closed
+poll renders its result and never a form (voting past the deadline is a
 server-side `409`, and a dead radio button followed by an error toast is a small
-betrayal every time). Closed polls leave the board for «Что решили» in the side
-column, where each row states the question and what was decided — and reports a
-tie _as a tie_, because «Решили: на дачу» when half the family said «в город» is
-the kind of quiet lie a family app cannot afford.
+betrayal every time). The foot line is the common one, so a poll takes comments
+like everything else — which is where «а почему на дачу?» goes instead of
+Telegram.
 
-#### D7.7 «Спасибо» — the rule is negative
+##### Спасибо
 
-Alphabetical, never sorted by count. No place, no medal, no «лидер недели». A
-member who has been thanked nothing appears in the same list at the same weight
-as everyone else, and the chip says **whether** somebody was thanked this month
-and nothing more. «7 спасибо» beside a name is a scoreboard whatever the heading
-says (D5), and the family member reading the smaller number learns exactly the
-wrong thing.
+New as a card, and the warmest thing this app renders. A kudos is a note
+addressed from one person to another, so the card draws both:
 
-> **Rule.** This holds out loud as well as on screen. The chip's visible text
-> **is** its accessible name, and the count is never written into a `title`, an
-> `aria-label` or a tooltip. A weekly-load bar on Семья was once found reading
-> «40 % (своя доля 33 %)» to a screen reader while drawing no numbers at all —
-> handing a blind family member the exact scoreboard the sighted design refused
-> to draw. `wall.test.tsx` asserts that the rendered subtree, markup included,
-> contains no such digit.
+```
+(П) Павел сказал спасибо · 2 часа назад                              ⋯
+(Л) Лизе                                        ← recipient disc + name, row 17/500
+🙏  спасибо, что полила цветы                   ← the chosen emoji, then the message
+❤️ (М)                                     Обсудить
+```
 
-#### D7.8 Gestures, states, permissions
+No total, no history, no «7 спасибо» — nowhere, including the accessible name.
+The card is the whole record; the roster panel says only _whether_.
 
-- **No swipe on a note, deliberately.** §G4 puts a swipe on rows with one
-  _reversible_ action. A note's row actions are pin and delete: one is not
+##### Активность — one card per run, not one card per line
+
+This is the mechanic that makes a chronological feed survivable, and it is the
+direct answer to "recency ordering treats an unanswered poll and «Лиза полила
+цветы» identically".
+
+> **Rule.** A run of **consecutive** activity items — nothing else between them
+> in the stream — renders as **one** card, not as one card each.
+
+```
+(Л) Лиза полила цветы · 55 минут назад
+(П) Павел выполнил задачу „Вынести мусор" · час назад
+(М) Мама купила 4 позиции в «Пятёрочке» · час назад
+и ещё 4                                          ← quiet, expands in place
+```
+
+- Three lines shown, then «и ещё N», which expands **in place**: the items are
+  already in the page, so this fetches nothing and navigates nowhere.
+- Each line is the server's frozen Russian `summary`, rendered verbatim, with the
+  timestamp **inside** the sentence rather than beside it. Measured at 320px, a
+  right-aligned time next to a wrapping summary reads as «Лиза выполнила ·
+  55 минут назад · задачу „Полить цветы"» — the clock interrupts the clause.
+- Muted, 15/22, no title, **no reactions, no thread, no `⋯`**. An activity line is
+  a scribble in the margin; a foot line would give it the weight of an
+  announcement.
+- A single activity item between two announcements still renders as a one-line
+  card of this kind. The rule is about runs, not about a minimum.
+
+**Consequence of getting it wrong:** without coalescing, a Saturday of chores
+produces twenty near-identical muted lines and the announcement about Sunday sits
+below all of them. That is exactly the burial the board's ordering prevented, and
+the digest is what replaces it.
+
+#### D7.7 Reactions — faces, never digits
+
+This is the decision the hard constraint is most likely to be lost through, so it
+is made explicitly rather than inherited.
+
+On a board a per-note count was defensible: it belonged to a note rather than to
+a person, and notes were grouped by kind. **In a feed that argument weakens**,
+and it weakens because of this very redesign: cards by different authors are now
+adjacent, in one column, with the count at a fixed position on every card. «❤️ 3»
+under Мама's note sitting 120px above «❤️ 1» under Лизы's is a comparison the
+reader performs without any effort at all, and the child reading the smaller
+number learns the same wrong thing D5 removed the points to prevent.
+
+The alternative is not "no signal". With six people in the family the useful fact
+was never the quantity — it is **who**.
+
+> **Rule.** A reaction renders as its emoji plus the **discs of the people who
+> used it**. No digit anywhere: not on the chip, not in a tooltip, not in a
+> `title`, not in an `aria-label`.
+
+```
+❤️ (М)(Л)   👍 (П)   ☺+
+```
+
+- Each chip is a 44px toggle: the emoji, then that emoji's reactors in roster
+  order — `MemberDiscGroup` at `size="sm"` with **`max` set to the family size, so
+  «+N» never renders**. Six people is the bound that makes this work: the worst
+  case is five emoji with one disc each, ≈260px, one line at 358px. This design
+  does not generalise past a household, and it does not have to. Deciding which
+  social conventions are cargo _is_ noticing which ones only exist because the
+  audience is unbounded.
+- The accessible name is exactly what is drawn: «❤️ — Мама, Лиза». `aria-pressed`
+  carries whether the reader is one of them.
+- Nobody yet: the chip does not exist. Only the `☺+` picker is drawn, keeping its
+  «Добавить реакцию» label.
+- Reacting needs `kudos:give`. A reader without it (a `guest`) gets the chips and
+  discs as **static text, not disabled buttons** — a control that can be focused
+  and pressed to no effect is worse than no control.
+- The toggle stays optimistic with rollback; the endpoint is idempotent and
+  answers with the fresh summary, so an offline double-tap converges rather than
+  oscillating.
+
+**Contract gap.** `reactionSummarySchema` carries `emoji` / `count` / `reacted`
+and no reactor ids. Until it carries `userIds`, the chip renders **the emoji
+alone**, filled when the reader reacted — and still no digit. `reactorLabel()` in
+`features/wall/locale.ts` is the single function that changes when the ids
+arrive; its own doc comment already says so.
+
+`wall.test.tsx` asserts that a rendered subtree contains no per-person digit.
+Extend that assertion to the reaction row. It is the thing that stops this
+creeping back in a year, and a screen-reader-only regression is exactly how it
+crept back last time — a load bar reading «40 % (своя доля 33 %)» aloud while
+drawing no numbers at all.
+
+#### D7.8 Comments
+
+Unchanged in kind, deliberately: comments are the one place on Стена where a text
+field is allowed to exist, and it appears only inside a thread somebody opened.
+Closed is the default, and closed is what the feed looks like.
+
+- Foot-line toggle: «Обсудить» when empty, «Обсуждение · 3» when not. **This
+  count survives the D7.2 rule** because it is the only way to say the thing: it
+  describes the object you are about to open, it is not attached to a person, and
+  nothing sorts by it. Without it every card looks identical and a live
+  conversation is invisible.
+- **No inline "last comment" preview**, though VK and Instagram both have one. It
+  is the convention that most turns a feed into a chat: the preview _is_ a reply,
+  a visible reply invites a reply, and now the stream is a conversation with a
+  scroll bar. The thread is one tap away and that is enough.
+- Comments fetch only when a thread opens, so a feed page of fifteen cards fires
+  one request and not fifteen.
+- No typing indicator, no read receipt, no threads of threads.
+
+#### D7.9 Ordering, pagination, and the fact that the feed ends
+
+- **Order** is `createdAt` descending over the merged stream, cursor-paged with
+  the existing opaque base64url keyset token. Nothing on the client constructs a
+  cursor.
+- **Page size 15** (`FEED_PAGE_SIZE`), up from the board's 12. After activity
+  coalescing that is roughly two phone viewports of mixed content.
+- **Auto-load is bounded.** An `IntersectionObserver` sentinel fetches the next
+  page automatically for **four pages**. Then it stops and renders one quiet row
+  — «Показать ещё» — which grants another four. The reader is asked, roughly every
+  sixty items, whether they actually want to keep going.
+
+> **Rule.** The feed ends, visibly. When `nextCursor` is `null` the last thing on
+> the screen is «Это всё, что было», in `meta`, with no box and no button. There
+> is no unread badge on the «Стена» tab and there never will be.
+
+This is the largest departure from the apps whose shape was borrowed, and it is
+the whole of the board's first refusal. An Instagram feed is engineered never to
+bottom out, because bottoming out is when you leave. A family noticeboard wants
+you to leave: you came to find out whether anything needs you, and «нет, это всё»
+is a good answer that the app must be able to give.
+
+**Density.** §C5's "answer the question inside 1.5 viewports" does not apply to a
+stream, and is replaced by a narrower target: **the first viewport must contain
+the compose row and whatever won band 2.** On a 390×844 phone that is the row
+(56px) plus one attention card, leaving the top of the next card visible so the
+surface reads as continuing rather than as ending.
+
+#### D7.10 New items arriving while you read
+
+D12 polls `/api/changes` and invalidates `['wall']` within ~20 s. A stream that
+grows at the top while a thumb is halfway down it is the classic way to lose a
+reader's place, so this is decided here rather than left to the refetch.
+
+> **Rule.** New items are never inserted above the reader's viewport. If
+> `scrollY > 0`, page one refetches into the cache and the feed does **not**
+> re-render its head; a pill appears instead, and it carries no number.
+
+```
+        ┌─────────────────────┐
+        │  ↑  Новое на стене  │   sticky under the app bar, 36px, --secondary
+        └─────────────────────┘
+```
+
+- Tapping it scrolls to top (smooth; `prefers-reduced-motion` jumps) and commits
+  the new head in the same action.
+- `scrollY === 0` inserts directly and silently: the reader is at the top,
+  content grows downward from the compose row, and nothing they are reading
+  moves.
+- Pull-to-refresh (§G6) commits pending items as part of the refresh and
+  dismisses the pill.
+- **No count on the pill.** «Новое на стене · 7» is an unread badge with extra
+  steps, and it is the obligation meter D7.2 refuses. The pill says something is
+  up there; the feed says what.
+- The reader's own post never goes behind the pill. `useCreatePost` gains the
+  optimistic insert-at-top that comments and reactions already have, with
+  rollback on failure — you always see your own note appear.
+
+**Consequence of getting it wrong:** silent insertion at the top is the bug where
+a family member taps «Обсудить» and the card under their thumb turns out to be a
+different one.
+
+#### D7.11 «Очистить доску»
+
+The owner asked for a way to clear it. A board could draw the line at its tail; a
+feed has no tail, so the line has to become a real object.
+
+> **Rule.** Clearing is a **horizon, not a delete.** `family_settings` gains
+> `wall_cleared_at timestamptz null`; the feed returns only rows created after
+> it. Nothing is deleted — no post, no comment, no reaction, no kudos, no poll,
+> no activity row. The data stays in the database and the family sees a clean
+> wall.
+
+Why a horizon and not a delete: a bulk delete is the one irreversible operation
+in this app that could remove several hundred rows on a single confirm, including
+other people's words and other people's thank-yous. §G4 already refuses to put
+delete behind a gesture for exactly this reason; putting a whole wall behind one
+button is worse. A horizon is one column write, it is reversible for as long as
+the row survives, and it never destroys somebody's «спасибо, что забрал Лизу».
+
+**What clears and what stays.**
+
+| Object                      | After a clear                                                                                                                            |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Announcements, system posts | Gone from the feed. Rows intact.                                                                                                         |
+| Activity lines              | Gone from the feed. Rows intact — `/activity` is still the family's own log and other modules read it.                                   |
+| Comments, reactions         | Untouched, still attached to their post. They were never separately visible; they leave with the card that carried them.                 |
+| Kudos                       | Gone from the feed. The «Спасибо» roster chip is a 30-day window and is **not** reset — a clear tidies the wall, it does not un-thank.   |
+| Live pins                   | **Cleared.** Pinning means "keep this up"; clearing means "take everything down". A pin that survived would make the clear look broken.  |
+| **Open polls**              | **Stay.** They are not "what happened", they are what is still being asked, and a clear must not silently cancel an unanswered question. |
+
+That last row is the interesting one, and it is the board's principle surviving
+inside the feed: **a clear collapses the wall to exactly what still needs
+answering.**
+
+**Who may.** `settings:manage` — admin and owner. Not a new permission: the
+horizon lives on the singleton `family_settings` row (D1), so the permission that
+governs family settings governs it. `post:delete:any` is an adult's licence to
+moderate one note somebody wrote, which is a different thing from resetting what
+six people see. A reader without `settings:manage` sees no `⋯` item — not a
+disabled one.
+
+**The flow.**
+
+1. App bar `⋯` → «Очистить доску» (`tone: 'destructive'`).
+2. `ConfirmDialog` through `ResponsiveDialog`, so it is a sheet under a thumb. It
+   names what happens, in words, and it names what stays:
+
+   > **Очистить доску?**
+   > Со стены исчезнет всё, что на ней сейчас, — у всех.
+   > Открытые опросы останутся: на них ещё никто не ответил.
+   > Ничего не удаляется навсегда.
+
+   No row count in the dialog. «Уберём 247 записей» makes the action feel bigger
+   or smaller than it is, and it is not a number the reader can act on.
+
+3. A 6-second `sonner` toast — «Доска очищена · Вернуть» — matching every other
+   reversible action in the app (§G4). Undo writes the previous `wall_cleared_at`
+   back, `null` included.
+4. The clear writes **one system post**, timestamped just after the horizon so it
+   survives it: «Доску очистили 20 августа». That card is then the oldest thing in
+   the feed, and it _is_ the line «Что было раньше» used to draw — which is why
+   the feed can afford not to have a tail. A family member opening the app after a
+   clear finds an explanation rather than an amnesia.
+
+**Consequence of getting it wrong:** implement this as `DELETE FROM posts` and the
+first time somebody clears a wall holding a thank-you their mother wrote, it is
+gone, and the app has no answer.
+
+#### D7.12 Gestures, states, permissions
+
+**Gestures.**
+
+- **No swipe on a card, anywhere on Стена.** §G4 puts a swipe on rows with one
+  _reversible_ action. A card's row actions are pin and delete: one is not
   reversible, and the other is a toggle _with an expiry date_, which is not a
-  thing a thumb should set by accident. Long-press opens the same sheet the
-  visible `⋯` opens (§G5), built from one list so the two doors cannot drift.
+  thing a thumb should set by accident. Unchanged from the board, and still right.
+- **Long-press** opens the same `ActionSheet` the visible `⋯` opens, built from
+  one list so the two doors cannot drift (§G5). Coarse pointers only — swallowing
+  right-click on a desktop is a gesture nobody asked for.
+- **Pull-to-refresh** as §G6; on this screen it also commits and dismisses the
+  «Новое на стене» pill.
 - **Pinning always expires.** «Закреплено до 25 августа» self-clears; a boolean
-  would stay pinned forever. The date is rendered day-and-month — the minute of a
-  pin's expiry is a number nobody set and nobody can act on.
-- **Loading** is a skeleton of the same shape and count. **The board's** error is
-  a full `ErrorState` with a retry; a _panel's_ error is a quiet inline line with
-  a retry and never `role="alert"`, because a side query that failed must not
-  become the loudest thing on a board that loaded perfectly well.
-- **Permissions** go through `useCan()`, never a role comparison (D4). Verified
-  against `ROLE_PERMISSIONS` rather than assumed: a `child` holds `post:create`,
-  `comment:create`, `kudos:give` and `poll:vote` but **not** `poll:create`,
-  `poll:close` or `post:pin` — so their door offers two notes and not three,
-  their polls carry no «Завершить», and a pinned note somebody else wrote carries
-  no `⋯` at all. A `guest` holds none of them: they read the board, and the empty
-  state says «Когда кто-нибудь что-то напишет, это появится здесь» rather than
-  offering a button that would 403.
+  would stay pinned forever. Rendered day-and-month — the minute of a pin's expiry
+  is a number nobody set and nobody can act on.
 
-**Desktop**: board at 720; side column = «Спасибо» · «Что решили».
-**Empty**: «На доске пусто» + «Написать».
+**Loading.** Three card skeletons of the same shape and count, minimum 250 ms so
+they cannot flash. A refetch keeps the old cards on screen with the 2px
+`--primary` bar under the app bar; the feed never blanks. A page-two fetch renders
+one skeleton card at the foot, never a spinner in the middle of the stream.
+
+**Error.** Page one failing is a full `ErrorState` with a retry, in place of the
+feed. A **later** page failing is a quiet inline row at the foot with a retry, and
+never `role="alert"` — fifteen cards that loaded perfectly well must not be
+shouted over by page four.
+
+**Offline.** Page one renders from cache (`gcTime` 30 min) and the compose row
+still works: creating a post is optimistic, so the card appears immediately and
+rolls back with a toast if the write never lands. `['changes']` is already the one
+query that pauses while offline (D12), so the pill never appears against stale
+data.
+
+**Empty.**
+
+- A reader who may write: the compose row **is** the invitation, so no
+  `EmptyState` illustration is drawn above it — the same rule §D6 applies to the
+  shopping composer. One quiet `body` line under the row: «Повесьте первую
+  записку — её увидят все дома.»
+- A reader who may not write (a `guest`): a two-line `<p>` on the feed surface —
+  «Когда кто-нибудь что-то напишет, это появится здесь.» **Not `EmptyState`**: §E
+  made `EmptyState.action` required, and there is no honest action to offer
+  somebody whose every write would 403. This is the one place in the app where
+  that requirement is met by not using the component.
+
+**Permissions** go through `useCan()`, never a role comparison (D4). Verified
+against `ROLE_PERMISSIONS` rather than assumed:
+
+| Role          | The compose row offers | On a card                                                                                 |
+| ------------- | ---------------------- | ----------------------------------------------------------------------------------------- |
+| `guest`       | not rendered           | reads; reactions and discs as **static text**; no thread composer; no `⋯`                 |
+| `child`       | Объявление · Спасибо   | may react, comment and vote; `⋯` only on their own post, and only «Снять с доски»; no pin |
+| `teen`        | + Опрос                | + «Завершить» on their own poll                                                           |
+| `adult`       | all three              | + pin (день / 3 дня / неделю), + delete any post, + delete any comment                    |
+| `admin/owner` | all three              | + the app bar's «Очистить доску»                                                          |
+
+A `child` holds `post:create`, `comment:create`, `kudos:give` and `poll:vote` but
+**not** `poll:create`, `poll:close` or `post:pin` — so their door offers two kinds
+of note and not three, their polls carry no «Завершить», and a pinned note
+somebody else wrote carries no `⋯` at all.
+
+#### D7.13 Contract gaps this spec depends on
+
+Four, all small, all the implementer's to raise before building the card that
+needs them. None is a reason to delay the rest of the screen.
+
+1. **Polls are not feed items.** `feedItemSchema` in `wall.routes.ts` is
+   `post | activity`; polls are fetched separately by `usePolls`. The feed needs
+   `kind: 'poll'` in that union so a closed poll can take its chronological place.
+   Until then, open polls come from `usePolls('open')` into the head — which works
+   today — and closed polls exist only in «Что решили». That interim is workable,
+   and it is the reason «Что решили» is not optional.
+2. **`pollResponseSchema` carries no `commentCount`.** The common foot line needs
+   it. Until it lands, the poll card's toggle reads «Обсудить» unconditionally,
+   which understates a thread rather than inventing a number.
+3. **Kudos are not feed items either.** Same union, `kind: 'kudos'`, carrying the
+   existing `kudosResponseSchema` plus the recipient's display name. Until then
+   there is no Спасибо card and the roster panel is the only surface — which is
+   today's behaviour, so nothing regresses.
+4. **`reactionSummarySchema` has no `userIds`** (D7.7). Its interim is specified
+   in place and never renders a digit, so the hard constraint holds either way.
+
+**Desktop**: feed at 720; side column (≥ lg only) = «Что решили» · «Спасибо».
+**Empty**: the compose row and one line — never a button that would 403.
 
 ---
 
@@ -1574,35 +1986,39 @@ Named against the real tree.
 
 ### Change — `src/app/layout/`
 
-| File                 | Change                                                                                                                                                                                                                                                                                                                                                                                    |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AppShell.tsx`       | The §C1 grid: `main` + optional `aside` slot, per-route. Hosts `PullToRefresh`. Container maxes per breakpoint, not one `max-w-3xl xl:max-w-5xl`.                                                                                                                                                                                                                                         |
-| `BottomTabBar.tsx`   | **Opaque `--card` surface** — drop `bg-background/95` and `backdrop-blur-md`; they are literally the page colour and are why the bar does not read as a bar. Keep the 1px top border. Active tab gets a 48×32 `--secondary` pill behind the icon plus `--primary` icon and label. Surface extends into `env(safe-area-inset-bottom)`; the icon+label block stays centred in the top 56px. |
-| `TopAppBar.tsx`      | On `≥ md`, carry the page title and the screen's one primary action. Today it is 1200×57 holding two controls.                                                                                                                                                                                                                                                                            |
-| `DesktopSidebar.tsx` | Fine as is. Add the pending-approval count badge on «Участники».                                                                                                                                                                                                                                                                                                                          |
+| File                 | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AppShell.tsx`       | The §C1 grid: `main` + optional `aside` slot, per-route. Hosts `PullToRefresh`. Container maxes per breakpoint, not one `max-w-3xl xl:max-w-5xl`.                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `BottomTabBar.tsx`   | **Opaque `--card` surface** — drop `bg-background/95` and `backdrop-blur-md`; they are literally the page colour and are why the bar does not read as a bar. Keep the 1px top border. Active tab gets a 48×32 `--secondary` pill behind the icon plus `--primary` icon and label. Surface extends into `env(safe-area-inset-bottom)`; the icon+label block stays centred in the top 56px. **Tapping the tab of the route you are already on scrolls the document to top** — the standard iOS behaviour, and what keeps Стена's compose row one tap from the bottom of a long feed (§D7.5). |
+| `TopAppBar.tsx`      | On `≥ md`, carry the page title and the screen's one primary action. Today it is 1200×57 holding two controls.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `DesktopSidebar.tsx` | Fine as is. Add the pending-approval count badge on «Участники».                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 ### Change — features
 
-| File                                                | Change                                                                                                                                                                                                                                               |
-| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `features/shopping/pages/ListPage.tsx`              | The sticky offset fix (§D6). Composer top-of-list at `≥ md`.                                                                                                                                                                                         |
-| `features/shopping/components/QuickAddBar.tsx`      | Opaque; ≤ 3 rows; suggestions above the field; hint inline.                                                                                                                                                                                          |
-| `features/shopping/components/FrequentStrip.tsx`    | Edge fade + a `›` affordance; currently the last chip is clipped mid-word at 390px.                                                                                                                                                                  |
-| `features/shopping/components/ItemRow.tsx`          | Wrap in `SwipeRow` (куплено). 56/68px.                                                                                                                                                                                                               |
-| `features/today/components/WidgetCard.tsx`          | **Delete.** Replaced by `Section`.                                                                                                                                                                                                                   |
-| `features/today/pages/TodayPage.tsx`                | The band model (§C2/D1). One attention block, one «все ›» per section.                                                                                                                                                                               |
-| `features/today/components/LoadWidget.tsx`          | Delete with points.                                                                                                                                                                                                                                  |
-| `features/tasks/components/TaskCard.tsx`            | 56px row, member disc, member tick. Remove the coloured footer band. Wrap in `SwipeRow`.                                                                                                                                                             |
-| `features/tasks/components/TaskFilters.tsx`         | Segmented `Мои/Все` + one «Фильтры · N» row → sheet on phone; side-column panel on desktop.                                                                                                                                                          |
-| `features/tasks/components/TaskForm.tsx`            | Rebuild per §F3–F5. Remove Баллы.                                                                                                                                                                                                                    |
-| `features/calendar/components/EventFormDialog.tsx`  | Rebuild per §F3–F5.                                                                                                                                                                                                                                  |
-| `features/calendar/pages/CalendarPage.tsx`          | Month into the app-bar title; remove `SubscribePanel` from the page.                                                                                                                                                                                 |
-| `features/calendar/components/AgendaList.tsx`       | Adopt `DayRail`.                                                                                                                                                                                                                                     |
-| `features/goals/components/GoalCard.tsx`            | Row, one indicator, no floating «Пополнить».                                                                                                                                                                                                         |
-| `features/goals/components/ProgressRing.tsx`        | Detail screen only.                                                                                                                                                                                                                                  |
-| `features/settings/components/PreferenceMatrix.tsx` | Become an actual matrix (§D8a).                                                                                                                                                                                                                      |
-| `features/family/components/WeekLoadBar.tsx`        | Remove points; `choreCount` only.                                                                                                                                                                                                                    |
-| `features/wall/components/AnnouncementComposer.tsx` | Into a `FormSheet` behind the app-bar `⊕` — which is `BoardCompose`, the board's one door for all three kinds of note (§D7.3). Стена's panels own no state and the screen mounts one tree at every width; `useTwoColumn` is not used there any more. |
+| File                                                | Change                                                                                                                                                                                                                                                                                              |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `features/shopping/pages/ListPage.tsx`              | The sticky offset fix (§D6). Composer top-of-list at `≥ md`.                                                                                                                                                                                                                                        |
+| `features/shopping/components/QuickAddBar.tsx`      | Opaque; ≤ 3 rows; suggestions above the field; hint inline.                                                                                                                                                                                                                                         |
+| `features/shopping/components/FrequentStrip.tsx`    | Edge fade + a `›` affordance; currently the last chip is clipped mid-word at 390px.                                                                                                                                                                                                                 |
+| `features/shopping/components/ItemRow.tsx`          | Wrap in `SwipeRow` (куплено). 56/68px.                                                                                                                                                                                                                                                              |
+| `features/today/components/WidgetCard.tsx`          | **Delete.** Replaced by `Section`.                                                                                                                                                                                                                                                                  |
+| `features/today/pages/TodayPage.tsx`                | The band model (§C2/D1). One attention block, one «все ›» per section.                                                                                                                                                                                                                              |
+| `features/today/components/LoadWidget.tsx`          | Delete with points.                                                                                                                                                                                                                                                                                 |
+| `features/tasks/components/TaskCard.tsx`            | 56px row, member disc, member tick. Remove the coloured footer band. Wrap in `SwipeRow`.                                                                                                                                                                                                            |
+| `features/tasks/components/TaskFilters.tsx`         | Segmented `Мои/Все` + one «Фильтры · N» row → sheet on phone; side-column panel on desktop.                                                                                                                                                                                                         |
+| `features/tasks/components/TaskForm.tsx`            | Rebuild per §F3–F5. Remove Баллы.                                                                                                                                                                                                                                                                   |
+| `features/calendar/components/EventFormDialog.tsx`  | Rebuild per §F3–F5.                                                                                                                                                                                                                                                                                 |
+| `features/calendar/pages/CalendarPage.tsx`          | Month into the app-bar title; remove `SubscribePanel` from the page.                                                                                                                                                                                                                                |
+| `features/calendar/components/AgendaList.tsx`       | Adopt `DayRail`.                                                                                                                                                                                                                                                                                    |
+| `features/goals/components/GoalCard.tsx`            | Row, one indicator, no floating «Пополнить».                                                                                                                                                                                                                                                        |
+| `features/goals/components/ProgressRing.tsx`        | Detail screen only.                                                                                                                                                                                                                                                                                 |
+| `features/settings/components/PreferenceMatrix.tsx` | Become an actual matrix (§D8a).                                                                                                                                                                                                                                                                     |
+| `features/family/components/WeekLoadBar.tsx`        | Remove points; `choreCount` only.                                                                                                                                                                                                                                                                   |
+| `features/wall/components/AnnouncementComposer.tsx` | Stays a `FormSheet` behind `BoardCompose`, the one door for all three kinds of note. Its trigger moves from the app-bar `⊕` to the feed's **compose row** below `md` (§D7.5). Стена's panels own no state and the screen mounts one tree at every width; `useTwoColumn` is not used there any more. |
+| `features/wall/components/WallStream.tsx`           | Becomes the feed (§D7.4–D7.9): compose row, floating head with no section headers, bounded auto-load, a visible end, the «Новое на стене» pill. `Section` is used once, for the whole surface — never once per group.                                                                               |
+| `features/wall/components/ActivityRow.tsx`          | Consecutive activity items coalesce into **one** digest card, 3 lines + «и ещё N» expanding in place (§D7.6).                                                                                                                                                                                       |
+| `features/wall/components/ReactionBar.tsx`          | **Remove the digit.** Emoji chip + the reactors' discs; interim is the emoji alone until `reactionSummarySchema` carries `userIds` (§D7.7). `reactorLabel()` in `locale.ts` changes with it.                                                                                                        |
+| `features/wall/pages/WallPage.tsx`                  | App-bar `⋯` → «Очистить доску» for `settings:manage` (§D7.11). `SideColumn` children wrapped `hidden lg:block`.                                                                                                                                                                                     |
 
 ---
 

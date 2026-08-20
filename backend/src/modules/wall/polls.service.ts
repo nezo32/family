@@ -96,6 +96,12 @@ export function computePollResults(
   votes: readonly Pick<PollVoteRow, 'pollId' | 'optionId' | 'userId'>[],
   viewerId: string,
   now: Date = new Date(),
+  /**
+   * The card's common foot line (§D7.6): a thread count and the faces who
+   * reacted. Both are hydrated per page by `hydratePolls`, never per row, and
+   * both default to "nothing yet" so every other caller is unaffected.
+   */
+  extras: { commentCount?: number; reactions?: PollResponse['reactions'] } = {},
 ): PollResponse {
   const ownOptions = options
     .filter((o) => o.pollId === poll.id)
@@ -137,6 +143,8 @@ export function computePollResults(
     }),
     totalVoters: allVoters.size,
     myOptionIds: mine,
+    commentCount: extras.commentCount ?? 0,
+    reactions: extras.reactions ?? [],
     createdAt: poll.createdAt.toISOString(),
   };
 }
@@ -145,7 +153,7 @@ export function computePollResults(
 /* Loading                                                                     */
 /* -------------------------------------------------------------------------- */
 
-/** Hydrates a page of polls with options and votes in two queries, not 2×N. */
+/** Hydrates a page of polls with options, votes, threads and faces — four queries, not 4×N. */
 export async function hydratePolls(
   exec: Executor,
   pollRows: readonly PollRow[],
@@ -154,11 +162,19 @@ export async function hydratePolls(
 ): Promise<PollResponse[]> {
   if (pollRows.length === 0) return [];
   const ids = pollRows.map((p) => p.id);
-  const [options, votes] = await Promise.all([
+  const [options, votes, counts, facts] = await Promise.all([
     repo.loadPollOptions(exec, ids),
     repo.loadPollVotes(exec, ids),
+    repo.countComments(exec, 'poll', ids),
+    repo.loadReactions(exec, 'poll', ids),
   ]);
-  return pollRows.map((poll) => computePollResults(poll, options, votes, viewerId, now));
+  const summaries = repo.buildReactionSummaries(facts, viewerId);
+  return pollRows.map((poll) =>
+    computePollResults(poll, options, votes, viewerId, now, {
+      commentCount: repo.commentCountOf(counts, poll.id),
+      reactions: summaries.get(poll.id) ?? [],
+    }),
+  );
 }
 
 export async function getPoll(

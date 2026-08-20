@@ -1,55 +1,160 @@
-import { ClipboardList } from 'lucide-react';
-import { EmptyState, ErrorState } from '@/shared/components';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowUp } from 'lucide-react';
+import type { WallFeedItem } from '@family/shared';
+import { ErrorState } from '@/shared/components';
 import { Button } from '@/shared/ui/button';
-import { Section, type SectionSurface } from '@/shared/ui/section';
+import { Section } from '@/shared/ui/section';
 import { Skeleton } from '@/shared/ui/skeleton';
-import { pinnedFrom, useRoster, useWallFeed } from '../hooks';
+import { COMMON } from '@/shared/lib/i18n';
+import { cn } from '@/shared/lib/utils';
+import {
+  AUTO_LOAD_PAGES,
+  buildHead,
+  coalesceFeed,
+  headFrom,
+  useAtLeast,
+  useFeedCommit,
+  useRoster,
+  useWallFeed,
+} from '../hooks';
 import { WALL_RU } from '../locale';
+import { ActivityDigest } from './ActivityRow';
 import { AnnouncementNote } from './AnnouncementNote';
-import { ActivityRow } from './ActivityRow';
-import { BoardComposeInvite, useBoardCompose } from './BoardCompose';
+import { useBoardCompose } from './BoardCompose';
+import { ComposeRow } from './ComposeRow';
+import { KudosCard } from './KudosCard';
+import { PollCard } from './PollCard';
 
 /**
- * The board itself: what is pinned up, and what has happened since.
+ * Стена — one continuous stream of cards (§D7, D13).
  *
- * ## Paginated, and deliberately **not** auto-loading
+ * ```
+ * ┌────────────────────────────────────────┐
+ * │ (П)  Что повесить на доску?         ⊕ │  the one door, never a field
+ * ├────────────────────────────────────────┤
+ * │ the head: at most one wash, then pins, │  no header, no label, no divider
+ * │ then open polls, capped at five        │
+ * ├────────────────────────────────────────┤
+ * │ the stream, createdAt desc             │
+ * └────────────────────────────────────────┘
+ *              Это всё, что было
+ * ```
  *
- * The previous build fetched the next page from an `IntersectionObserver` as
- * soon as the sentinel came near the viewport, which made the main column
- * unbounded. That is the single fact that forced Стена to mount a different
- * tree per width: everything the shell places *after* the main column — the
- * side column, which collapses to the bottom of the page below 1088px — is
- * unreachable in practice under a scroll that never ends, so «Спасибо» had to
- * become a tab, and a tab needs a phone-only tree.
+ * ## Three departures from the apps whose shape this borrows
  *
- * A board is finite. Twelve notes (≈1.5 phone viewports, §C5's density target)
- * and then one quiet «Что было раньше» row that the reader taps if they want
- * more. The side column below is then one flick away, `useTwoColumn` is gone
- * from this screen, and the board reads as a thing with edges rather than as a
- * feed — which is also the difference between a noticeboard and a chat.
+ * 1. **The feed ends, visibly.** When `nextCursor` is `null` the last thing on
+ *    screen is «Это всё, что было», in `meta`, with no box and no button. Auto
+ *    load is bounded to four pages and then *asks*. There is no unread badge
+ *    on the «Стена» tab and there never will be. An Instagram feed is
+ *    engineered never to bottom out, because bottoming out is when you leave;
+ *    a family noticeboard wants you to leave — you came to find out whether
+ *    anything needs you, and «нет, это всё» is a good answer.
+ * 2. **Reactions are faces, not digits** (`ReactionBar`, §D7.7).
+ * 3. **No inline "last comment" preview** (`CommentThread`, §D7.8): the preview
+ *    *is* a reply, a visible reply invites a reply, and now the stream is a
+ *    conversation with a scroll bar.
  *
- * ## Two layers, one surface
+ * ## One surface, hairlines, and full bleed on a phone
  *
- * Announcements and activity lines share a single `Section`, hairline-separated
- * (§B3). Twelve bordered cards is twelve boxes of near-identical weight; one
- * surface with notes of different sizes on it is a board. The size difference
- * *is* the hierarchy: «Лиза полила цветы» is a muted line, «В субботу едем к
- * бабушке» is a heading with a body and a discussion under it.
+ * Below `sm` the surface is full-bleed — `-mx-4`, no side border, no radius —
+ * so a card is the full 390px and media (when it has a contract) has the whole
+ * screen. From `sm` up it is an ordinary L1 surface. `Section` is used **once**,
+ * for the whole feed, never once per group: there are no groups, because there
+ * are no section headers on this screen at all.
  */
-export function WallStream(props: {
-  /** Set by `WallPage`'s band-2 precedence. Never decided here (§C2). */
-  pinnedSurface: SectionSurface;
-}) {
+export function WallStream() {
   const roster = useRoster();
   const query = useWallFeed();
   const compose = useBoardCompose();
+  const feed = useFeedCommit(query.data);
 
-  if (query.isPending) return <BoardSkeleton />;
+  /**
+   * How many batches of four the reader has granted (§D7.9). The first is
+   * free; every «Показать ещё» grants another. Roughly every sixty items the
+   * feed stops and asks whether they actually want to keep going.
+   */
+  const [grants, setGrants] = useState(1);
+  const pagesLoaded = query.data?.pages.length ?? 0;
+  const autoLoadAllowed = pagesLoaded < AUTO_LOAD_PAGES * grants;
+
+  /**
+   * The sentinel is held in **state**, not in a ref, and that is load-bearing.
+   *
+   * With a ref, the effect below runs on the render where `hasNextPage` flips
+   * to `true` — which, because the skeleton is latched on screen for 250 ms
+   * (§D7.12), is one render *before* the foot exists in the DOM. `ref.current`
+   * is `null`, the effect returns, its dependencies never change again, and
+   * the observer is never attached: the feed silently stops after page one.
+   * Measured in the built app — fifteen cards, sentinel plainly on screen,
+   * exactly one `/wall/feed` request. A callback ref re-runs the effect when
+   * the node appears, which is the only signal that cannot be missed.
+   */
+  const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
+  /*
+    Read off the query *before* the early returns below: `isPending` and
+    `isError` narrow the result union, and inside the success branch
+    `isFetchNextPageError` is the literal `false`, so the foot's error row
+    would be unreachable code rather than an unreachable state.
+  */
+  const fetchNext = query.fetchNextPage;
+  const fetchingNext = query.isFetchingNextPage;
+  const nextPageFailed = query.isFetchNextPageError;
+  const hasNextPage = query.hasNextPage;
+  const canFetch = hasNextPage && !fetchingNext && !nextPageFailed;
+
+  useEffect(() => {
+    if (!sentinel || !canFetch || !autoLoadAllowed) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void fetchNext();
+      },
+      // A little early, so the next page is usually there before the reader is.
+      { rootMargin: '400px' },
+    );
+    observer.observe(sentinel);
+    return () => {
+      observer.disconnect();
+    };
+  }, [sentinel, canFetch, autoLoadAllowed, fetchNext, pagesLoaded]);
+
+  /**
+   * The view: page one as the reader last committed it (§D7.10), then every
+   * later page live from the query. Ids are de-duplicated because a refetch
+   * that grew the top can push a row across a page boundary, and the same card
+   * twice is worse than one card late.
+   */
+  const items = useMemo(() => {
+    const pages = query.data?.pages ?? [];
+    const first = feed.firstPage;
+    const source: WallFeedItem[] = [
+      ...(first?.items ?? []),
+      ...pages.slice(1).flatMap((p) => p.items),
+    ];
+    const seen = new Set<string>();
+    return source.filter((item) => (seen.has(item.id) ? false : (seen.add(item.id), true)));
+  }, [query.data, feed.firstPage]);
+
+  const head = useMemo(
+    () =>
+      buildHead(
+        feed.firstPage
+          ? { pinned: feed.firstPage.pinned, openPolls: feed.firstPage.openPolls }
+          : headFrom(undefined),
+      ),
+    [feed.firstPage],
+  );
+
+  const blocks = useMemo(() => coalesceFeed(items), [items]);
+  // Minimum 250 ms on screen, so a cached or LAN-fast page one cannot make the
+  // skeletons flash (§D7.12).
+  const loading = useAtLeast(query.isPending);
+
+  if (loading) return <FeedSkeleton />;
   if (query.isError) {
     return (
       <ErrorState
         error={query.error}
-        title={WALL_RU.board.loadError}
+        title={WALL_RU.feed.loadError}
         onRetry={() => {
           void query.refetch();
         }}
@@ -57,99 +162,197 @@ export function WallStream(props: {
     );
   }
 
-  const pinned = pinnedFrom(query.data);
-  const items = query.data.pages.flatMap((page) => page.items);
-
-  if (pinned.length === 0 && items.length === 0) {
-    return (
-      <EmptyState
-        icon={ClipboardList}
-        title={WALL_RU.board.empty}
-        description={
-          compose.available.length > 0
-            ? WALL_RU.board.emptyDescription
-            : WALL_RU.board.emptyReadOnly
-        }
-        /*
-          The one door, as a secondary control — the filled primary is already
-          in the app bar (§B4). `BoardComposeInvite` renders nothing for a
-          reader who holds no `post:create`, so a guest gets an honest empty
-          board instead of a button that would 403.
-        */
-        action={<BoardComposeInvite kind="post" label={WALL_RU.compose.open} />}
-      />
-    );
-  }
+  const mayWrite = compose.available.length > 0;
+  const isEmpty = head.length === 0 && blocks.length === 0;
 
   return (
-    <>
-      {pinned.length > 0 ? (
-        <Section label={WALL_RU.board.pinnedLabel} surface={props.pinnedSurface}>
-          {pinned.map((post) => (
-            <AnnouncementNote key={post.id} post={post} roster={roster} />
-          ))}
-        </Section>
-      ) : null}
+    <div className="flex flex-col">
+      {feed.hasPending ? <NewItemsPill onCommit={feed.commit} /> : null}
 
-      <Section label={WALL_RU.board.label} surface="card">
-        {items.map((item) => (
+      <Section
+        surface="card"
+        // Full bleed below `sm` (§D7.3): the card is the screen down there.
+        bodyClassName="-mx-4 rounded-none border-x-0 sm:mx-0 sm:rounded-xl sm:border-x"
+      >
+        <ComposeRow />
+
+        {head.map((card) =>
+          card.kind === 'post' ? (
+            <AnnouncementNote
+              key={`head-${card.id}`}
+              post={card.post}
+              roster={roster}
+              tone={card.tone}
+            />
+          ) : (
+            <PollCard
+              key={`head-${card.id}`}
+              poll={card.poll}
+              roster={roster}
+              tone={card.tone}
+              // The card states its own status, because there is no heading
+              // above it and colour is never the only signal (§B4).
+              eyebrow={
+                card.tone === 'attention' ? WALL_RU.polls.needsYou : WALL_RU.polls.openEyebrow
+              }
+            />
+          ),
+        )}
+
+        {blocks.map((block) => (
           <div
-            key={`${item.kind}-${item.id}`}
-            // Cheap off-screen skipping: the browser stops laying out rows that
-            // are nowhere near the viewport, and the intrinsic size keeps the
+            key={block.id}
+            // Cheap off-screen skipping: the browser stops laying out cards
+            // nowhere near the viewport, and the intrinsic size keeps the
             // scrollbar honest so nothing jumps when they come back.
-            style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 120px' }}
+            style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 140px' }}
           >
-            {item.kind === 'post' ? (
-              <AnnouncementNote post={item.post} roster={roster} />
+            {block.kind === 'digest' ? (
+              <ActivityDigest items={block.items.map((item) => item.activity)} roster={roster} />
+            ) : block.item.kind === 'post' ? (
+              <AnnouncementNote post={block.item.post} roster={roster} />
+            ) : block.item.kind === 'poll' ? (
+              <PollCard poll={block.item.poll} roster={roster} />
             ) : (
-              <ActivityRow activity={item.activity} roster={roster} />
+              <KudosCard kudos={block.item.kudos} roster={roster} />
             )}
           </div>
         ))}
+
+        {isEmpty && !mayWrite ? (
+          /*
+            A reader who may not write anything. **Not `EmptyState`**: §E made
+            `action` required, and there is no honest action to offer somebody
+            whose every write would 403. This is the one place in the app where
+            that requirement is met by not using the component.
+          */
+          <p className="w-full max-w-row-measure px-4 py-6 text-[15px] leading-[22px] text-pretty text-muted-foreground">
+            {WALL_RU.feed.emptyReadOnly}
+          </p>
+        ) : null}
       </Section>
 
+      {isEmpty && mayWrite ? (
+        // The compose row *is* the invitation, so no illustration above it —
+        // the same rule §D6 applies to the shopping composer.
+        <p className="px-4 pt-3 text-[13px] leading-[18px] font-medium text-muted-foreground">
+          {WALL_RU.feed.emptyInvite}
+        </p>
+      ) : null}
+
       {/* Band 4 (§C2): quiet, no box, no chrome. */}
-      <div className="flex justify-center">
-        {query.hasNextPage ? (
-          <Button
-            type="button"
-            variant="ghost"
-            className="min-h-11 text-[13px] leading-[18px] font-medium text-muted-foreground"
-            disabled={query.isFetchingNextPage}
-            onClick={() => {
-              void query.fetchNextPage();
-            }}
-          >
-            {query.isFetchingNextPage ? WALL_RU.board.loadingMore : WALL_RU.board.more}
-          </Button>
-        ) : (
+      <div ref={setSentinel} className="flex flex-col items-center gap-1 pt-4">
+        {fetchingNext ? (
+          <div className="w-full" aria-hidden>
+            <SkeletonCard />
+          </div>
+        ) : nextPageFailed ? (
+          /*
+            A later page failed. Quiet, inline, and never `role="alert"`:
+            fifteen cards that loaded perfectly well must not be shouted over
+            by page four.
+          */
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <p className="text-[13px] leading-[18px] font-medium text-muted-foreground">
+              {WALL_RU.feed.moreError}
+            </p>
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-11 text-[13px] font-medium"
+              onClick={() => {
+                void fetchNext();
+              }}
+            >
+              {COMMON.retry}
+            </Button>
+          </div>
+        ) : hasNextPage ? (
+          autoLoadAllowed ? null : (
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-11 text-[13px] leading-[18px] font-medium text-muted-foreground"
+              onClick={() => {
+                setGrants((value) => value + 1);
+                void fetchNext();
+              }}
+            >
+              {WALL_RU.feed.more}
+            </Button>
+          )
+        ) : !isEmpty ? (
           <p className="py-2 text-[13px] leading-[18px] font-medium text-muted-foreground">
-            {WALL_RU.board.end}
+            {WALL_RU.feed.end}
           </p>
-        )}
+        ) : null}
       </div>
-    </>
+    </div>
   );
 }
 
 /**
- * The same shape and count as the real thing (§D), so the board does not
- * change size when it arrives.
+ * «Новое на стене» (§D7.10) — sticky under the app bar, and carrying **no
+ * number**.
+ *
+ * «Новое на стене · 7» is an unread badge with extra steps, which is the
+ * obligation meter §D7.2 refuses. The pill says something is up there; the
+ * feed says what.
+ *
+ * **`h-0`, and that is the whole point of the wrapper.** A sticky element is
+ * still in normal flow, so the first version of this pushed the entire feed
+ * down by its own height the moment it appeared — measured: the reader's
+ * scroll position moved under their thumb while they were reading, which is
+ * precisely the failure the pill exists to prevent. Zero height means it
+ * floats over the stream and nothing below it moves at all.
  */
-function BoardSkeleton() {
+function NewItemsPill(props: { onCommit: () => void }) {
   return (
-    <Section label={WALL_RU.board.label} surface="card">
+    <div
+      className={cn(
+        'pointer-events-none sticky z-20 flex h-0 justify-center',
+        'top-[calc(var(--spacing-appbar)+env(safe-area-inset-top,0px)+0.5rem)]',
+      )}
+    >
+      <Button
+        type="button"
+        variant="secondary"
+        className="pointer-events-auto h-11 rounded-full border border-border px-4 text-[13px] font-medium shadow-none"
+        onClick={props.onCommit}
+      >
+        <ArrowUp className="size-4" aria-hidden />
+        {WALL_RU.feed.newItems}
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Three card skeletons of the same shape and count as the real thing (§D7.12),
+ * so the feed does not change size when it arrives.
+ */
+function FeedSkeleton() {
+  return (
+    <Section
+      surface="card"
+      bodyClassName="-mx-4 rounded-none border-x-0 sm:mx-0 sm:rounded-xl sm:border-x"
+    >
       {[0, 1, 2].map((index) => (
-        <div key={index} className="space-y-2 px-4 py-3" aria-hidden>
-          <div className="flex items-center gap-2">
-            <Skeleton className="size-6 rounded-full" />
-            <Skeleton className="h-4 w-32" />
-          </div>
-          <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-4 w-2/3" />
-        </div>
+        <SkeletonCard key={index} />
       ))}
     </Section>
+  );
+}
+
+function SkeletonCard() {
+  return (
+    <div className="space-y-2 px-4 py-3" aria-hidden>
+      <div className="flex items-center gap-2">
+        <Skeleton className="size-8 rounded-full" />
+        <Skeleton className="h-4 w-32" />
+      </div>
+      <Skeleton className="h-4 w-full" />
+      <Skeleton className="h-4 w-2/3" />
+    </div>
   );
 }

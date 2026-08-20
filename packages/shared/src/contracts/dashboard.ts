@@ -30,8 +30,18 @@ import { digestSectionSchema } from './notifications.js';
  * load-bearing for the frontend, which shows a widget for the second case and
  * nothing at all for the first.
  *
- * The same rule applies to `fairness` (needs `task:read:any`) and
- * `pendingApprovals` (needs `member:approve`).
+ * The same rule applies to `pendingApprovals` (needs `member:approve`).
+ *
+ * ## There is no split of the housework on this wire, and there must not be
+ *
+ * `today` used to carry a `fairness` object: `doneCount` and `sharePercent` for
+ * every active member, gated on `task:read:any`. The widget that drew it went
+ * with the score system (D5) and the payload outlived it by a release — which is
+ * exactly how a removed feature comes back, because a field that is already on
+ * the wire is a field somebody will render. It is gone. `debt` may be computed
+ * and ordered by inside the rotation, and explained for a **single** pick
+ * through `GET /chores/rotations/:id/preview`; it may not be totalled per person
+ * and shipped to a client. Do not add it back here.
  *
  * ## Time
  *
@@ -134,43 +144,6 @@ export const dashboardMilestoneSchema = z.object({
 });
 export type DashboardMilestone = z.infer<typeof dashboardMilestoneSchema>;
 
-/**
- * This week's split of the housework — deliberately **not** a leaderboard (D5).
- *
- * There are no points here and there never will be again: a number that follows
- * a person around and goes up when they do chores turns siblings into rivals.
- * `members` is ordered by display name, never by effort, and there is no rank,
- * no medal and no "лучший" field. `sharePercent` is a share of the family's
- * total for the week, so a member who did nothing reads as `0` rather than as
- * "last place". The frontend renders a neutral bar.
- */
-export const dashboardLoadMemberSchema = z.object({
-  userId: idSchema,
-  displayName: z.string(),
-  doneCount: z.number().int().min(0),
-  /** `numeric(4,2)` as a decimal string — see `choreWeightSchema`. */
-  weight: z.string(),
-  /**
-   * A share of the family's own weekly total, so it is bounded at 100 by
-   * construction (`doneCount <= total`). The cap stays here because it is a
-   * genuine invariant of a share, not a clamp hiding an over-funded value.
-   */
-  sharePercent: z.number().int().min(0).max(100),
-});
-export type DashboardLoadMember = z.infer<typeof dashboardLoadMemberSchema>;
-
-export const dashboardFairnessSchema = z.object({
-  /** Local dates of the window, inclusive start / exclusive end. */
-  weekStart: isoDateSchema,
-  weekEnd: isoDateSchema,
-  me: dashboardLoadMemberSchema,
-  /** Every active member, sorted by name. Never by effort. */
-  members: z.array(dashboardLoadMemberSchema),
-  /** A neutral Russian sentence. Never comparative, never a ranking. */
-  note: z.string(),
-});
-export type DashboardFairness = z.infer<typeof dashboardFairnessSchema>;
-
 export const dashboardPendingMemberSchema = z.object({
   id: idSchema,
   displayName: z.string(),
@@ -217,8 +190,6 @@ export const todayResponseSchema = z.object({
 
   unreadNotifications: z.number().int().min(0),
 
-  /** `null` when the caller cannot read the family's tasks. */
-  fairness: dashboardFairnessSchema.nullable(),
   /** `null` unless the caller holds `member:approve`. Empty array = nobody waiting. */
   pendingApprovals: z.array(dashboardPendingMemberSchema).nullable(),
 });

@@ -48,16 +48,3 @@ export function TaskDetailSkeleton() {
     </div>
   );
 }
-
-export function LoadBarSkeleton() {
-  return (
-    <div className="space-y-3" aria-hidden>
-      {[0, 1, 2].map((row) => (
-        <div key={row} className="space-y-1.5">
-          <Skeleton className="h-3 w-24" />
-          <Skeleton className="h-2.5 w-full rounded-full" />
-        </div>
-      ))}
-    </div>
-  );
-}

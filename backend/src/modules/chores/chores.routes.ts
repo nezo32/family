@@ -7,8 +7,6 @@ import {
   blackoutListQuerySchema,
   blackoutListResponseSchema,
   blackoutResponseSchema,
-  fairnessQuerySchema,
-  fairnessSummaryResponseSchema,
   idSchema,
   kudosCreateSchema,
   kudosListQuerySchema,
@@ -61,16 +59,13 @@ import { ChoresService, type ChoreActor } from './chores.service.js';
  * `chore:swap:accept` on the accept branch specifically, so the taking-over
  * decision stays in the service where the rest of the swap rules live.
  *
- * `GET /chores/fairness` is `task:read:any` and returns the neutral load bar.
- * It has no rank field and must never grow one (D5).
- *
  * ## 404, not 403
  *
  * Every read here carries `notFoundOnDeny: true`. A caller without
  * `task:read:*` — a guest — must not learn the family runs rotations at all,
- * and one without `task:read:any` must not learn there is a family-wide
- * fairness board (D4). Writes keep 403: they are all reachable by somebody who
- * can already see what they are asking to change.
+ * and one without `task:read:any` must not learn which of them are family-wide
+ * (D4). Writes keep 403: they are all reachable by somebody who can already see
+ * what they are asking to change.
  */
 
 const idParamsSchema = z.object({ id: idSchema });
@@ -293,22 +288,6 @@ const choresRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request) => service.swaps.cancel(actorOf(request), request.params.id),
-  );
-
-  /* ------------------------------ fairness ----------------------------- */
-
-  app.get(
-    '/chores/fairness',
-    {
-      config: { permission: 'task:read:any', notFoundOnDeny: true },
-      schema: {
-        tags: ['chores'],
-        summary: 'Как разделились дела за период — распределение, без рейтинга',
-        querystring: fairnessQuerySchema,
-        response: { 200: fairnessSummaryResponseSchema },
-      },
-    },
-    async (request) => service.fairnessSummary(request.query),
   );
 
   /* -------------------------------- kudos ------------------------------ */

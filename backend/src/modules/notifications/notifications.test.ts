@@ -1013,6 +1013,7 @@ function delivery(overrides: Partial<NotificationDeliveryRow> = {}): Notificatio
     scheduledFor: null,
     sentAt: new Date('2026-08-19T11:00:00Z'),
     readAt: null,
+    clearedAt: null,
     deliveredAt: null,
     interactedAt: null,
     acknowledgedAt: null,

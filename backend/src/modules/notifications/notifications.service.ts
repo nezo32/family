@@ -1,6 +1,8 @@
 import {
+  DEFAULT_DIGEST_SECTIONS,
   DEFAULT_NOTIFICATION_PREFERENCES,
   defaultNotificationPreference,
+  DIGEST_SECTIONS,
   ESCALATION_DEADLINE_MINUTES,
   NOTIFICATION_LIMITS,
   NOTIFICATION_TYPE_DEFAULT_PRIORITY,
@@ -12,6 +14,9 @@ import {
   nextEscalationState,
   requiresExplicitAcknowledgement,
   requiredAckSignal,
+  type ClearableInbox,
+  type ClearInboxResponse,
+  type ClearInboxScope,
   type DeliveryStatus,
   type DigestSection,
   type EscalationState,
@@ -1508,6 +1513,66 @@ export async function markUnread(db: Db, userId: string, ids: string[]): Promise
   return repo.markUnread(db, userId, ids);
 }
 
+/**
+ * `GET /api/notifications/clearable` — what «Очистить» would take, in numbers,
+ * before it takes anything.
+ *
+ * Read-only, and a GET on purpose: `core/plugins/revisions` bumps the
+ * `notifications` domain on every successful non-GET under `/api/notifications`,
+ * so a dry run shaped like `clear-bought`'s `confirm: false` POST would make
+ * every other device in the family refetch its inbox because somebody opened a
+ * dialog and then cancelled.
+ */
+export async function getClearableInbox(db: Db, userId: string): Promise<ClearableInbox> {
+  const counts = await repo.countClearableInbox(db, userId);
+  return { read: counts.read, all: counts.all, keptNeedsAck: counts.keptNeedsAck };
+}
+
+/**
+ * «Очистить» the caller's own bell.
+ *
+ * Scoped to the actor and nobody else: there is no id list and no target user
+ * in the request, so the most this endpoint can do to another family member's
+ * inbox is nothing at all.
+ *
+ * ## Hidden, not deleted (D11)
+ *
+ * The repository writes `cleared_at` and no other column. Every delivery
+ * receipt survives — `sentAt`, `deliveredAt`, `interactedAt`, `acknowledgedAt`
+ * and `status` — so `GET /notifications/intents/:id/receipts` still answers
+ * "did this actually reach them" about a notification the recipient has tidied
+ * away, and the escalation sweep, which reads exactly those columns, cannot
+ * tell that anything happened. A clear stops no chain and starts none.
+ *
+ * The one row a clear could genuinely have broken is a `high`/`critical`
+ * delivery still waiting for «Подтвердить получение», because that button only
+ * exists on the inbox row and for a `critical` intent it is the only thing that
+ * ends the ladder. Those are excluded from every scope and reported back as
+ * `keptNeedsAck`, so the panel can say why something is still on the bell.
+ *
+ * ## `confirm`
+ *
+ * Without it this counts and returns, exactly like shopping's `clear-bought`.
+ * Delete is on no gesture anywhere in this app, and the count is what the
+ * dialog states before the destructive call is made.
+ */
+export async function clearInbox(
+  db: Db,
+  userId: string,
+  input: { scope: ClearInboxScope; confirm: boolean },
+  now = new Date(),
+): Promise<ClearInboxResponse> {
+  const counts = await repo.countClearableInbox(db, userId);
+  const matched = input.scope === 'read' ? counts.read : counts.all;
+
+  if (!input.confirm) {
+    return { matched, cleared: 0, keptNeedsAck: counts.keptNeedsAck };
+  }
+
+  const cleared = await repo.clearInbox(db, userId, input.scope, now);
+  return { matched, cleared, keptNeedsAck: counts.keptNeedsAck };
+}
+
 /* ========================================================================== */
 /* Subscriptions                                                               */
 /* ========================================================================== */
@@ -1899,6 +1964,37 @@ export async function sendTestNotification(
  * implementation was written to make impossible.
  */
 
+const VALID_DIGEST_SECTIONS: ReadonlySet<string> = new Set<string>(DIGEST_SECTIONS);
+
+/**
+ * Keep only the values still in `DIGEST_SECTIONS`; fall back to the defaults if
+ * nothing survives.
+ *
+ * `digest_subscriptions.sections` is a plain `text[]`, so it holds whatever a
+ * past release wrote there — `points` first, then `load`. Filtering on read is
+ * what lets a section be retired with no migration, and both removals used it.
+ *
+ * **Every read of that column must go through this.** Skipping it does not cost
+ * a stale value, it costs the whole request: `sections` is returned straight
+ * into a zod-validated response, so while the read below was
+ * `row.sections as DigestSection[]` a subscriber whose row still said `load`
+ * got a 500 from `GET /api/notifications/digest` rather than a digest without
+ * that block.
+ *
+ * A *request body* is deliberately not sanitized: `digestSubscriptionSchema`
+ * rejects an unknown section with a 400 on `PUT /api/notifications/digest`.
+ * Tolerating history in storage and refusing nonsense from a client are
+ * different jobs.
+ *
+ * It lives here rather than in `dashboard/digest.service.ts`, which called it
+ * first, because this module owns the table — and because the dashboard already
+ * imports this service, so the reverse import would close a cycle.
+ */
+export function sanitizeSections(values: readonly string[]): DigestSection[] {
+  const kept = values.filter((v): v is DigestSection => VALID_DIGEST_SECTIONS.has(v));
+  return kept.length > 0 ? kept : [...DEFAULT_DIGEST_SECTIONS];
+}
+
 export async function getDigestSubscription(
   db: Db,
   userId: string,
@@ -1915,7 +2011,7 @@ export async function getDigestSubscription(
       enabled: false,
       weekday: 0,
       timeOfDay: '19:00',
-      sections: ['tasks', 'events', 'goals', 'birthdays'],
+      sections: [...DEFAULT_DIGEST_SECTIONS],
       lastSentAt: null,
     };
   }
@@ -1923,7 +2019,7 @@ export async function getDigestSubscription(
     enabled: row.enabled,
     weekday: row.weekday,
     timeOfDay: row.timeOfDay,
-    sections: row.sections as DigestSection[],
+    sections: sanitizeSections(row.sections),
     lastSentAt: row.lastSentAt?.toISOString() ?? null,
   };
 }

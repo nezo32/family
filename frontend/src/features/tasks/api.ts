@@ -1,6 +1,5 @@
 import { api } from '@/shared/api/client';
 import type {
-  FairnessSummaryResponse,
   MemberListResponse,
   Paginated,
   PublicUser,
@@ -65,7 +64,6 @@ export const taskKeys = {
    *  another feature's differently-shaped `['members']` entry cannot collide. */
   members: () => [...taskKeys.all, 'members'] as const,
   swaps: (direction: SwapDirection) => [...taskKeys.all, 'swaps', direction] as const,
-  fairness: (windowDays: number) => [...taskKeys.all, 'fairness', windowDays] as const,
 } as const;
 
 export type SwapDirection = 'incoming' | 'outgoing' | 'all';
@@ -142,7 +140,7 @@ export const deleteSeries = (seriesId: string, body: TaskSeriesDelete) =>
   api.del<void>(`/tasks/series/${seriesId}`, { body });
 
 /* -------------------------------------------------------------------------- */
-/* Chores: roster, swaps, fairness                                             */
+/* Chores: roster and swaps                                                   */
 /* -------------------------------------------------------------------------- */
 
 /**
@@ -172,9 +170,3 @@ export const respondToSwap = (swapId: string, body: SwapRespond) =>
 
 export const cancelSwap = (swapId: string) =>
   api.post<SwapResponse>(`/chores/swaps/${swapId}/cancel`, {});
-
-export const fetchFairness = (windowDays: number, signal?: AbortSignal) =>
-  api.get<FairnessSummaryResponse>('/chores/fairness', {
-    query: { windowDays },
-    ...(signal ? { signal } : {}),
-  });

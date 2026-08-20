@@ -15,6 +15,7 @@ import {
   parseMinorUnits,
   parsePositiveAmount,
 } from './money';
+import { groupGoals } from './grouping';
 import { useGoalAbilities } from './hooks';
 import { GoalCard } from './components/GoalCard';
 import { ContributeDialog } from './components/ContributeDialog';
@@ -325,5 +326,41 @@ describe('goal form vs. a refetch mid-edit', () => {
     );
 
     expect(screen.getByLabelText(GOALS_RU.formName)).toHaveValue('Велосипед');
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* grouping — what «Показать архив» reveals                                    */
+/* -------------------------------------------------------------------------- */
+
+describe('goal grouping (D4)', () => {
+  const open = makeGoal({ id: 'a', currentAmount: 10_000_00, targetAmount: 50_000_00 });
+  const reached = makeGoal({ id: 'b', status: 'reached', currentAmount: 50_000_00 });
+  const archived = makeGoal({ id: 'c', status: 'archived', currentAmount: 7_000_00 });
+  const cancelled = makeGoal({ id: 'd', status: 'cancelled', currentAmount: 3_000_00 });
+
+  it('gives the archive a group of its own instead of listing it under «Копим»', () => {
+    const groups = groupGoals([open, reached, archived, cancelled]);
+
+    expect(groups.open.map((goal) => goal.id)).toEqual(['a']);
+    expect(groups.reached.map((goal) => goal.id)).toEqual(['b']);
+    // Cancelled is archived too: both are what `includeArchived` reveals.
+    expect(groups.archived.map((goal) => goal.id)).toEqual(['c', 'd']);
+  });
+
+  it('counts a full-but-archived goal as archived, not as «Собрано»', () => {
+    const full = makeGoal({ id: 'e', status: 'archived', currentAmount: 99_000_00 });
+    const groups = groupGoals([full]);
+
+    expect(groups.reached).toEqual([]);
+    expect(groups.archived.map((goal) => goal.id)).toEqual(['e']);
+  });
+
+  it('leaves «Накоплено» exactly where it was when the archive is revealed', () => {
+    const hidden = groupGoals([open, reached]);
+    const shown = groupGoals([open, reached, archived, cancelled]);
+
+    expect(shown.totalSaved).toBe(hidden.totalSaved);
+    expect(shown.summarised).toHaveLength(hidden.summarised.length);
   });
 });

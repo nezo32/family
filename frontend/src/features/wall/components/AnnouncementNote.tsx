@@ -24,29 +24,36 @@ import { ReactionBar } from './ReactionBar';
 import { CommentThread } from './CommentThread';
 
 /**
- * One announcement, as a note on the board (§D7).
+ * One announcement, as a card in the stream (§D7.6).
  *
- * ## Why this is a row on a shared surface and not a card
+ * ## No card draws its own border, radius, shadow or ground
  *
- * It used to be a bordered, padded card, and twelve of them in a column is
- * twelve boxes of near-identical weight — the same "six equal tiles" failure
- * §A2 removed from Сегодня, one screen further along. A board holds notes of
- * different sizes pinned to *one* surface, so the note draws no border and no
- * ground of its own: the `Section` around it is the board, and the hairline
- * between rows is what makes twelve of them read as one object.
+ * With two exceptions, both of them named here: the `--surface-calm` ground a
+ * system post carries, and the `--surface-attention` wash the **one** head
+ * card in band 2 may take (§C2, §D7.4). Everything else is separated by a 1px
+ * `--hairline` inset by the card's 16px left padding, exactly as `Section`
+ * renders it. Twelve bordered boxes with gaps between them is a grid of tiles
+ * (§A2); one surface carrying differently-sized cards is a stream.
  *
- * The three rules that survive from the previous pass, because they were right:
+ * The rules that survive from the board, because they were right:
  *
  * - **A system post is visibly not a person talking.** No author disc at all,
- *   and the sage `--surface-calm` ground on the row itself. «Семейный бот» with
- *   a face beside it is an uncanny sixth family member.
+ *   and the sage ground on the card itself. «Семейный бот» with a face beside
+ *   it is an uncanny sixth family member.
  * - **The body clamps at four lines** with «ещё». A single 2000-character post
- *   otherwise owns the whole board, and on a phone the reader never learns
- *   there was anything under it.
- * - **Pinned states its own expiry** — 📌 «закреплено до 25 августа» in `meta`.
- *   The tinted ground now belongs to the *section* (and only when pinning won
- *   band 2, §C2), so the note carries the fact in words. Colour is never the
- *   only signal (§B4), which is exactly why this line is not decoration.
+ *   otherwise owns the viewport, and the reader never learns there was
+ *   anything below it.
+ * - **Pinned states its own expiry** — 📌 «Закреплено до 25 августа» in `meta`,
+ *   which is also this card's eyebrow line when it floats in the head. Colour
+ *   is never the only signal (§B4), so the head is legible in greyscale and to
+ *   a screen reader taking the cards in order.
+ *
+ * **Media has no contract today** (§D7.6). `createPostSchema` is `title` /
+ * `body` / `pinnedUntil` and nothing else. When an image is added, its slot is
+ * between the body and the foot line: full card width, edge-to-edge below
+ * `sm`, `aspect-ratio` boxed from server-supplied dimensions so nothing
+ * reflows on load, `max-height: 60dvh`. Do not add it by hanging a URL off
+ * `body`.
  *
  * ## Gestures (§C-gestures)
  *
@@ -60,7 +67,15 @@ import { CommentThread } from './CommentThread';
  * once, so the two doors cannot drift apart, and «Снять с доски» goes through
  * `ConfirmDialog` from both.
  */
-export function AnnouncementNote(props: { post: PostResponse; roster: Roster }) {
+export function AnnouncementNote(props: {
+  post: PostResponse;
+  roster: Roster;
+  /**
+   * Band 2 (§C2): at most one card on the screen wears the wash, and which one
+   * is decided by the head's precedence — never here.
+   */
+  tone?: 'attention' | 'plain';
+}) {
   const { post } = props;
   const setPin = useSetPin();
   const remove = useDeletePost();
@@ -105,7 +120,11 @@ export function AnnouncementNote(props: { post: PostResponse; roster: Roster }) 
         // `onContextMenu` would, and swallowing right-click on a desktop is a
         // gesture nobody asked for.
         {...(coarse ? longPress.handlers : {})}
-        className={cn('no-callout', isSystem && 'bg-surface-calm text-surface-calm-foreground')}
+        className={cn(
+          'no-callout',
+          isSystem && 'bg-surface-calm text-surface-calm-foreground',
+          props.tone === 'attention' && 'bg-surface-attention text-surface-attention-foreground',
+        )}
       >
         <div className="flex w-full max-w-row-measure flex-col gap-1.5 px-4 py-3">
           {isSystem ? (
@@ -114,15 +133,18 @@ export function AnnouncementNote(props: { post: PostResponse; roster: Roster }) 
             <div className="flex min-w-0 items-center gap-2">
               <Sparkles className="size-4 shrink-0 opacity-70" aria-hidden />
               <span className="min-w-0 flex-1 truncate text-[15px] leading-[22px] font-medium opacity-80">
-                {WALL_RU.board.systemAuthor}
+                {WALL_RU.feed.systemAuthor}
               </span>
               {menu ? <div className="shrink-0">{menu}</div> : null}
             </div>
           ) : (
+            // 32px disc, up from the board's 24: in a feed the author has more
+            // presence, and the photo on the disc is real now (§D7.6).
             <AuthorLine
               roster={props.roster}
               authorId={post.authorId}
               createdAt={post.createdAt}
+              size="md"
               trailing={menu}
             />
           )}
@@ -183,6 +205,7 @@ export function AnnouncementNote(props: { post: PostResponse; roster: Roster }) 
               <ReactionBar
                 target={{ entityType: 'post', entityId: post.id }}
                 reactions={post.reactions}
+                roster={props.roster}
               />
             }
           />

@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import {
+  keepPreviousData,
   useInfiniteQuery,
   useMutation,
   useQuery,
@@ -63,6 +64,16 @@ export function useGoals(params: GoalListParams = {}): UseQueryResult<GoalListRe
     // A child holds no `goal:*` permission at all and must never fire this
     // request; the route guard already hides the section, this is the belt.
     enabled: isReady && can('goal:read'),
+    /*
+      `scope` and `includeArchived` are part of the key, so changing either
+      starts a *different* query — and without this the screen answered
+      «Показать архив» by replacing the whole list, «Накоплено» included, with
+      a skeleton for as long as the round trip took. The design's own loading
+      rule (§D preamble) is that a refetch keeps the old data on screen, and
+      widening a filter is that, not a first load. `isPlaceholderData` is what
+      the page reads to know the answer is not settled yet.
+    */
+    placeholderData: keepPreviousData,
   });
 }
 

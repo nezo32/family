@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BellOff, CheckCheck } from 'lucide-react';
-import type { InAppNotification } from '@family/shared';
+import { BellOff, CheckCheck, Eraser } from 'lucide-react';
+import type { ClearInboxScope, InAppNotification } from '@family/shared';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/shared/ui/sheet';
 import { Button } from '@/shared/ui/button';
 import { Skeleton } from '@/shared/ui/skeleton';
@@ -15,12 +15,14 @@ import { cn } from '@/shared/lib/utils';
 import {
   inboxItems,
   useAcknowledge,
+  useClearInbox,
   useInbox,
   useMarkRead,
   useMarkUnread,
   useUnreadCount,
 } from '../hooks';
 import { NOTIFICATIONS_RU } from '../locale';
+import { ClearInboxDialog } from './ClearInboxDialog';
 import { NotificationItem } from './NotificationItem';
 import { PushHealthBanner } from './PushHealthBanner';
 
@@ -45,6 +47,13 @@ import { PushHealthBanner } from './PushHealthBanner';
  *  3. **`pushHealthy === false` is visible.** The server has been reporting a
  *     dead subscription on every request; the banner at the top is the first
  *     thing that reads it.
+ *  4. **«Очистить» hides rows and destroys no receipt.** The server writes
+ *     `cleared_at` and nothing else, so «дошло ли до Ани» is still answerable
+ *     about a notification somebody tidied away, and the escalation ladder —
+ *     which reads `status` and the receipts — cannot tell it happened. The
+ *     button opens a dialog that states the real count first and preselects the
+ *     safe scope; it never acts on its own tap, because delete is on no gesture
+ *     anywhere in this app.
  *
  * Every failure is rendered through `errorMessageRu` / `ErrorState`, keyed on
  * `ErrorCode`. The server's English `message` never reaches a screen (D7).
@@ -63,8 +72,18 @@ export function NotificationsPanel(props: {
   const markRead = useMarkRead();
   const markUnread = useMarkUnread();
   const acknowledge = useAcknowledge();
+  const clear = useClearInbox();
 
   const [acknowledgingId, setAcknowledgingId] = useState<string | null>(null);
+  const [clearOpen, setClearOpen] = useState(false);
+  /**
+   * The list is empty *because the member emptied it*, which is a different
+   * sentence from «Пока пусто» — that one implies nothing ever arrived and
+   * points at the notification settings, which would be a wrong diagnosis and a
+   * pointless trip. Local state, not derived: the server has no "was cleared"
+   * flag and should not grow one for a piece of copy.
+   */
+  const [justCleared, setJustCleared] = useState(false);
 
   const items = inboxItems(inbox.data);
   const unread = unreadCount.data ?? 0;
@@ -131,6 +150,31 @@ export function NotificationsPanel(props: {
       });
     },
     [markUnread],
+  );
+
+  /**
+   * The confirmed «Очистить».
+   *
+   * Not optimistic: the panel keeps showing the real list until the server has
+   * answered. A failure therefore leaves the truth on screen and the dialog
+   * open, rather than an empty list the member cannot tell is a lie — which for
+   * `scope: 'all'` they would have no way to check, the rows they think are
+   * gone being ones they never read.
+   */
+  const onClearConfirm = useCallback(
+    (scope: ClearInboxScope) => {
+      clear.mutate(scope, {
+        onSuccess: (result) => {
+          setClearOpen(false);
+          setJustCleared(true);
+          notify.success(NOTIFICATIONS_RU.cleared(result.cleared));
+        },
+        onError: (error) => {
+          notify.error(error, NOTIFICATIONS_RU.clearFailed);
+        },
+      });
+    },
+    [clear],
   );
 
   const onAcknowledge = useCallback(
@@ -207,6 +251,44 @@ export function NotificationsPanel(props: {
                 </>
               )}
             </Button>
+
+            {/*
+              «Очистить» never acts on its own tap. It opens the dialog, which
+              asks the server what is actually there and states the number
+              before anything is destroyed — the shape shopping's
+              `clear-bought` established, and the reason delete is on no
+              gesture anywhere in this app.
+
+              Hidden when the **whole** inbox is empty rather than rendered
+              disabled: there is nothing to tidy, and a permanently greyed
+              control in a three-button header is clutter that teaches nothing.
+              The «только непрочитанные» filter deliberately does not hide it —
+              an inbox that is all read shows no rows under that filter and is
+              exactly the one most worth clearing. The dialog reports the real
+              numbers either way.
+            */}
+            {items.length > 0 || unreadOnly ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={clear.isPending}
+                onClick={() => {
+                  setClearOpen(true);
+                }}
+              >
+                {clear.isPending ? (
+                  <>
+                    <InlineSpinner />
+                    {NOTIFICATIONS_RU.clearing}
+                  </>
+                ) : (
+                  <>
+                    <Eraser className="size-4" aria-hidden />
+                    {NOTIFICATIONS_RU.clear}
+                  </>
+                )}
+              </Button>
+            ) : null}
           </div>
         </SheetHeader>
 
@@ -226,9 +308,24 @@ export function NotificationsPanel(props: {
           ) : items.length === 0 ? (
             <EmptyState
               icon={BellOff}
-              title={unreadOnly ? NOTIFICATIONS_RU.emptyUnreadTitle : NOTIFICATIONS_RU.emptyTitle}
+              title={
+                unreadOnly
+                  ? NOTIFICATIONS_RU.emptyUnreadTitle
+                  : justCleared
+                    ? NOTIFICATIONS_RU.emptyClearedTitle
+                    : NOTIFICATIONS_RU.emptyTitle
+              }
               description={
-                unreadOnly ? NOTIFICATIONS_RU.emptyUnreadText : NOTIFICATIONS_RU.emptyText
+                unreadOnly
+                  ? NOTIFICATIONS_RU.emptyUnreadText
+                  : justCleared
+                    ? // A third kind of empty, so a third way out — or rather,
+                      // none. «Пока пусто» sends the reader to настройки on the
+                      // theory that nothing was ever subscribed to; after a
+                      // clear that diagnosis is simply wrong, and the trip is
+                      // wasted.
+                      NOTIFICATIONS_RU.emptyClearedText
+                    : NOTIFICATIONS_RU.emptyText
               }
               /*
                 Two different kinds of empty, so two different ways out. "Всё
@@ -247,7 +344,7 @@ export function NotificationsPanel(props: {
                   >
                     {NOTIFICATIONS_RU.showAll}
                   </Button>
-                ) : (
+                ) : justCleared ? undefined : (
                   <Button
                     variant="outline"
                     className="h-11"
@@ -302,6 +399,13 @@ export function NotificationsPanel(props: {
             {COMMON.close}
           </Button>
         </div>
+
+        <ClearInboxDialog
+          open={clearOpen}
+          onOpenChange={setClearOpen}
+          isPending={clear.isPending}
+          onConfirm={onClearConfirm}
+        />
       </SheetContent>
     </Sheet>
   );

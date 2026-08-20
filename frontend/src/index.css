@@ -400,6 +400,40 @@
 }
 
 /**
+ * Where the bottom of the screen is, for the app's fixed bottom chrome.
+ *
+ * `bottom: 0` means "the bottom of the layout viewport", and on an installed
+ * iOS app that is neither the bottom of the screen nor the bottom of what the
+ * user can see. Two custom properties, published by
+ * `app/layout/viewport-insets.ts`, say where it really is:
+ *
+ *   --viewport-keyboard   how much of the layout viewport's bottom the software
+ *                         keyboard is covering (WebKit shrinks only the *visual*
+ *                         viewport, so `bottom: 0` is behind the keyboard)
+ *   --viewport-shortfall  how far the bottom of the layout viewport is *above*
+ *                         the bottom of the display, which WebKit can leave it
+ *                         after the keyboard in standalone (Apple 158055568)
+ *
+ * Both are **absent** on a browser that is behaving, so these compile to
+ * `bottom: calc(0px)` and change nothing at all — which is the safety argument
+ * for shipping them without a device to test on.
+ *
+ * `bottom-viewport` is for chrome that belongs on the physical bottom whatever
+ * the keyboard is doing (the tab bar — a nav bar riding on top of the keyboard
+ * is not what any iOS app does). `bottom-above-keyboard` is for surfaces that
+ * must stay reachable while typing (every bottom sheet).
+ *
+ * `@utility` rather than a repeated arbitrary value: the same calc in two
+ * component files is the shape that ends up corrected in only one of them.
+ */
+@utility bottom-viewport {
+  bottom: calc(-1 * var(--viewport-shortfall, 0px));
+}
+@utility bottom-above-keyboard {
+  bottom: calc(var(--viewport-keyboard, 0px) - var(--viewport-shortfall, 0px));
+}
+
+/**
  * Height a page gets inside `AppShell`'s `<main>`: the viewport minus the app
  * bar, the tab bar, both vertical insets and `main`'s own 1rem of padding at
  * each end. A screen that pins something to its bottom edge (the shopping

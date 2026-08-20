@@ -1,10 +1,8 @@
 import { z } from 'zod';
 import {
-  activityItemSchema,
   commentListResponseSchema,
   commentResponseSchema,
   idSchema,
-  isoDateTimeSchema,
   kudosListResponseSchema,
   kudosResponseSchema,
   pollListResponseSchema,
@@ -12,6 +10,8 @@ import {
   postResponseSchema,
   publicUserSchema,
   reactionListResponseSchema,
+  wallClearResponseSchema,
+  wallFeedResponseSchema,
   type CommentListResponse,
   type CommentResponse,
   type CommentableEntityType,
@@ -26,6 +26,9 @@ import {
   type PostResponse,
   type PublicUser,
   type ReactionListResponse,
+  type WallClearResponse,
+  type WallFeedResponse,
+  type WallRestore,
 } from '@family/shared';
 import { api } from '@/shared/api/client';
 
@@ -73,35 +76,17 @@ export const wallKeys = {
 /* -------------------------------------------------------------------------- */
 
 /**
- * `GET /api/wall/feed`. The envelope itself is not exported from
- * `@family/shared` — it is assembled in `wall.routes.ts` out of schemas that
- * are — so it is composed here from the shared parts rather than redeclared.
+ * `GET /api/wall/feed`.
  *
- * `pinned` is served **outside** the cursor stream so page 2 never repeats a
- * pinned announcement.
+ * The envelope is `wallFeedResponseSchema` from `@family/shared` now: it used
+ * to be assembled in `wall.routes.ts` and re-composed here from the shared
+ * parts, which is two declarations of one shape and exactly the drift this
+ * package exists to prevent. Both ends parse the same object.
+ *
+ * `pinned` and `openPolls` are served **outside** the cursor stream, so page 2
+ * never repeats them and the head does not move as the feed grows (§D7.4).
  */
-export const wallFeedItemSchema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('post'),
-    id: idSchema,
-    createdAt: isoDateTimeSchema,
-    post: postResponseSchema,
-  }),
-  z.object({
-    kind: z.literal('activity'),
-    id: idSchema,
-    createdAt: isoDateTimeSchema,
-    activity: activityItemSchema,
-  }),
-]);
-export type WallFeedItem = z.infer<typeof wallFeedItemSchema>;
-
-export const wallFeedPageSchema = z.object({
-  pinned: z.array(postResponseSchema),
-  items: z.array(wallFeedItemSchema),
-  nextCursor: z.string().nullable(),
-});
-export type WallFeedPage = z.infer<typeof wallFeedPageSchema>;
+export type WallFeedPage = WallFeedResponse;
 
 export const kudosTotalsSchema = z.object({
   items: z.array(
@@ -136,6 +121,9 @@ export const ENTITY_SEGMENTS: Record<CommentableEntityType, string> = {
   event: 'events',
   goal: 'goals',
   poll: 'polls',
+  // «Спасибо» is a card in the feed (§D7.6), so it takes the common foot line
+  // — reactions and a thread — through the same generic endpoints.
+  kudos: 'kudos',
 };
 
 export function entityPath(ref: EntityRef, suffix: string): string {
@@ -151,10 +139,24 @@ export async function fetchWallFeed(
   signal?: AbortSignal,
 ): Promise<WallFeedPage> {
   const raw = await api.get<unknown>('/wall/feed', {
-    query: { limit: params.limit ?? 20, cursor: params.cursor ?? undefined },
+    query: { limit: params.limit ?? 15, cursor: params.cursor ?? undefined },
     ...(signal ? { signal } : {}),
   });
-  return wallFeedPageSchema.parse(raw);
+  return wallFeedResponseSchema.parse(raw);
+}
+
+/* -------------------------------------------------------------------------- */
+/* «Очистить доску» — a horizon, not a delete (§D7.11)                         */
+/* -------------------------------------------------------------------------- */
+
+/** Nothing is deleted: the server moves one column and the feed starts after it. */
+export async function clearWall(): Promise<WallClearResponse> {
+  return wallClearResponseSchema.parse(await api.post<unknown>('/wall/clear', null));
+}
+
+/** The six-second «Вернуть». Hands the previous horizon straight back, `null` included. */
+export async function restoreWall(input: WallRestore): Promise<void> {
+  await api.post<unknown>('/wall/clear/undo', input);
 }
 
 /* -------------------------------------------------------------------------- */

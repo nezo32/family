@@ -71,9 +71,23 @@ const drawerSize: Record<ResponsiveDialogSize, string> = {
   // have pushed its own header — and «Создать» with it — back off the top. That
   // is precisely the defect §F3 exists to make impossible, reintroduced by a
   // string interpolation. Never build a Tailwind class from a variable.
-  full: 'h-[calc(100dvh_-_max(env(safe-area-inset-top,0px),0.75rem)_-_0.75rem)]',
-  tall: 'h-[85dvh]',
-  auto: 'max-h-[60dvh]',
+  //
+  // The `- var(--viewport-keyboard,0px)` term in each is the keyboard
+  // avoidance, and it is inside the *size* rather than a separate `max-h`
+  // utility on purpose. As its own class it sorted **after** `max-h-[60dvh]`
+  // in the built stylesheet and silently won, which let an `auto` sheet grow to
+  // nearly the whole screen — verified in `dist/assets/*.css`, which is where
+  // this file's other cautionary tale was verified too. One height declaration
+  // per size, no ordering to reason about.
+  //
+  // With the sheet's bottom on `--viewport-keyboard` (see the surface below),
+  // subtracting the same term here is what makes the keyboard *shorten* the
+  // sheet instead of sliding its header off the top of the screen. On any
+  // browser without a keyboard overlaying the page the property is absent, the
+  // term is `- 0px`, and all three are exactly the sizes they were.
+  full: 'h-[calc(100dvh_-_max(env(safe-area-inset-top,0px),0.75rem)_-_0.75rem_-_var(--viewport-keyboard,0px))]',
+  tall: 'h-[min(85dvh,calc(100dvh_-_max(env(safe-area-inset-top,0px),0.75rem)_-_0.75rem_-_var(--viewport-keyboard,0px)))]',
+  auto: 'max-h-[min(60dvh,calc(100dvh_-_max(env(safe-area-inset-top,0px),0.75rem)_-_0.75rem_-_var(--viewport-keyboard,0px)))]',
 };
 
 const dialogSize: Record<ResponsiveDialogSize, string> = {
@@ -116,7 +130,24 @@ export function ResponsiveDialogFrame({
   if (coarse) {
     return (
       <SurfaceContext.Provider value={{ coarse: true }}>
-        <DrawerPrimitive.Root open={open} onOpenChange={onOpenChange} dismissible={dismissible}>
+        {/*
+          `repositionInputs={false}`: vaul's own keyboard avoidance writes an
+          inline `bottom` computed as `innerHeight - visualViewport.height`,
+          with no `visualViewport.offsetTop` term and no `scroll` listener. iOS
+          scrolls the visual viewport to reveal a focused input, so that offset
+          becomes tens of pixels and is never recomputed — and the sheet is
+          lifted that much too far, leaving a band of background beneath it for
+          as long as it is open. That band is the photograph that came with the
+          «снизу появляется отступ» report. `--viewport-keyboard` in
+          `viewport-insets.ts` is the same measurement with the missing term,
+          updated on `scroll` as well, and it is applied in CSS below.
+        */}
+        <DrawerPrimitive.Root
+          open={open}
+          onOpenChange={onOpenChange}
+          dismissible={dismissible}
+          repositionInputs={false}
+        >
           <DrawerPrimitive.Portal>
             <DrawerPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50" />
             <DrawerPrimitive.Content
@@ -124,7 +155,10 @@ export function ResponsiveDialogFrame({
               data-surface="sheet"
               data-size={size}
               className={cn(
-                'fixed inset-x-0 bottom-0 z-50 flex flex-col overflow-hidden outline-none',
+                // `bottom-above-keyboard`, not `bottom-0`: see `index.css`.
+                // The sheet is the surface the reported gap was photographed
+                // under, and it has to stay reachable while a keyboard is up.
+                'fixed inset-x-0 bottom-above-keyboard z-50 flex flex-col overflow-hidden outline-none',
                 // L2 (§B3): --popover, 1px border, radius 16. The shadow is the
                 // only one in the system that is allowed to exist.
                 'rounded-t-2xl border-t border-border bg-popover text-popover-foreground',

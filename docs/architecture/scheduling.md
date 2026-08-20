@@ -266,10 +266,38 @@ what makes the loop self-correcting: covering for your brother raises your debt,
 so the rotation gives you less next week — the system pays you back in time off
 rather than in a leaderboard position.
 
-**The count is never shown to anybody as a personal total.** It exists to order
-a queue. The only surface built on it is `GET /chores/fairness`, which the UI
-renders as one week's split of the housework: bars against each member's own
-fair share, alphabetical, no per-person numbers, no ranking.
+**The count is never shown to anybody, as a personal total or otherwise.** It
+exists to order a queue. It had three read surfaces and all three are gone. In
+the order they were found:
+
+1. `GET /chores/fairness`, drawn as a family-level load bar in the side column
+   of Задачи and Семья. The endpoint, its `FairnessSummaryResponse` contract and
+   the bar went together.
+2. The `fairness` object on `GET /dashboard/today` — `doneCount` and
+   `sharePercent` for every active member, gated on `task:read:any`. It outlived
+   the widget that drew it by a release, computed on every open of the home
+   screen and serialised for nobody. A payload field that exists is a payload
+   field somebody renders, so it was removed rather than left dormant.
+3. The `load` section of the **weekly digest** — «Вы закрыли N дел» plus the
+   family's weekly total, pushed to a phone. This one was the furthest from a
+   "display" and the closest to the thing D5 forbids: a per-person running total
+   is no less a scoreboard for arriving as a notification, and the digest is the
+   one message a family will not switch off.
+
+Removing a digest section needs no migration. `digest_subscriptions.sections` is
+a `text[]`, and `sanitizeSections()` in `dashboard/digest.service.ts` filters
+every stored value through `DIGEST_SECTIONS` on read, falling back to the
+defaults when nothing survives — the same route `points` took before `load`.
+(One caveat, recorded where it was found: `notifications.service`'s
+`getDigestSubscription` casts `row.sections` instead of sanitizing it, so a row
+still holding a removed value 500s that one endpoint. It wants the same call.)
+
+See D5 for why, and do not add any of them back.
+
+What remains is `GET /chores/rotations/:id/preview`, which explains a _single
+pick_ to the person who got it. That is auditability, not display: it answers
+"why did I get the bins again?" for one occurrence rather than reporting what
+everybody's week added up to.
 
 Idempotency is structural rather than enforced. Completion is the one action a
 user can fire twice (double tap, retry after a timeout, an offline queue
@@ -470,7 +498,6 @@ All routes are under `/api`. Every one declares a permission guard (D4);
 | `POST`   | `/chores/swaps`                 | `task:update:own`        | one pending per occurrence (409)              |
 | `POST`   | `/chores/swaps/:id/respond`     | `task:update:own`        | accept ⇒ reassign                             |
 | `POST`   | `/chores/swaps/:id/cancel`      | `task:update:own`        | asker only                                    |
-| `GET`    | `/chores/fairness`              | `task:read:any`          | the week's split of the housework, no ranking |
 | `GET`    | `/chores/kudos`                 | `kudos:give`             |                                               |
 | `POST`   | `/chores/kudos`                 | `kudos:give`             | 409 on the unique `(from, occurrence, emoji)` |
 

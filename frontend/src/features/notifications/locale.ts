@@ -1,3 +1,4 @@
+import { RU_PLURALS, countRu } from '@family/shared';
 import type {
   DeliveryStatus,
   EscalationState,
@@ -63,6 +64,60 @@ export const NOTIFICATIONS_RU = {
    * state again anyway.
    */
   markUnreadFailed: 'Не удалось вернуть в непрочитанные',
+
+  /* --- «Очистить» --------------------------------------------------------- */
+
+  /**
+   * Clearing the inbox. Two scopes, and the wording carries the whole safety
+   * argument, so it is worth being precise about each sentence.
+   *
+   * - The **title is a question**, and the dialog states a real count before
+   *   anything happens — the shape shopping's `clear-bought` established
+   *   («В списке 3 позиции…»). A destructive action that does not say what it
+   *   will destroy is a trap however many confirmations it has.
+   * - «Прочитанные» is preselected. «Все» is one deliberate tap further, and
+   *   its own line says what makes it different — that unread notifications go
+   *   too, unseen.
+   * - Every scope's line ends with the same promise: **отчёты о доставке
+   *   останутся**. That is not reassurance, it is the truth about what the
+   *   server does (`cleared_at` and nothing else), and it is what makes
+   *   «дошло ли до Ани» still answerable afterwards (D11).
+   * - `keptNeedsAck` gets a sentence of its own rather than silence. A member
+   *   who clears everything and still sees two rows must be told **why** they
+   *   are there, or the clear reads as broken — and the reason is the one thing
+   *   on this screen with real consequences: nobody has confirmed receipt yet,
+   *   so the reminder is still on its way to somebody else.
+   */
+  clear: 'Очистить',
+  clearTitle: 'Что убрать из списка?',
+  clearScopeRead: 'Прочитанные',
+  clearScopeAll: 'Все уведомления',
+  clearCount: (n: number) =>
+    n === 0 ? 'убирать нечего' : `исчезнут ${countRu(n, RU_PLURALS.notification)}`,
+  /** Under the «Все» option — the one thing that makes it the deliberate choice. */
+  clearScopeAllWarning: 'Непрочитанные тоже исчезнут — вы их так и не увидите.',
+  clearReceiptsNote: 'Отметки о доставке останутся: кому дошло, всегда можно посмотреть.',
+  /**
+   * Phrased as «Не уберём N уведомлений», not «N уведомлений останется».
+   *
+   * Russian numerals govern the case of the noun *and* the agreement of the
+   * verb, and «останется» is only right for the many-form: «2 уведомления
+   * останется» is wrong, «останутся» is. Putting the count in the **accusative
+   * object** of a first-person verb sidesteps the agreement entirely —
+   * уведомление is neuter inanimate, so its accusative forms are its nominative
+   * ones and `RU_PLURALS.notification` is correct for 1, 2 and 5 alike.
+   */
+  clearKeptNeedsAck: (n: number) =>
+    `Не уберём ${countRu(n, RU_PLURALS.notification)}: ` +
+    'их получение ещё никто не подтвердил, и пока это не сделано, напоминание идёт дальше.',
+  clearConfirm: 'Убрать',
+  clearing: 'Убираем…',
+  clearNothing: 'Убирать нечего',
+  cleared: (n: number) => `Убрали ${countRu(n, RU_PLURALS.notification)}`,
+  clearFailed: 'Не удалось очистить список',
+  /** The list is empty because the member emptied it, not because nothing ever came. */
+  emptyClearedTitle: 'Список пуст',
+  emptyClearedText: 'Вы убрали всё из списка. Новые уведомления будут приходить сюда как обычно.',
 
   /* --- acknowledgement (D11) ---------------------------------------------- */
 

@@ -14,4 +14,4 @@ e2e/.auth/
 # Verification screenshots. Agents write these to prove a screen renders;
 # they are evidence for a review, not source, and 5.7MB of PNGs does not
 # belong in git history.
-shots/
+shots*/

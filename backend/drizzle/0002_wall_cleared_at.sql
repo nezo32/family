@@ -1,0 +1,1 @@
+ALTER TABLE "family_settings" ADD COLUMN "wall_cleared_at" timestamp with time zone;

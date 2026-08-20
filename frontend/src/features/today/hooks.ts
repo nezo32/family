@@ -86,8 +86,9 @@ export function useCompleteTask(): UseMutationResult<
     },
 
     onSettled: () => {
-      // Completion also moves the fairness window and the day's counts, both of
-      // which live in the same payload.
+      // Completion moves the day's counts and the week strip, both of which
+      // come from the same two payloads. (It used to move a fairness window
+      // too; that object is no longer on the wire — D5.)
       void queryClient.invalidateQueries({ queryKey: todayKeys.today() });
       void queryClient.invalidateQueries({ queryKey: todayKeys.weeks() });
     },

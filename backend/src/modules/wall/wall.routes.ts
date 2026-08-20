@@ -31,6 +31,9 @@ import {
   updatePollSchema,
   updatePostSchema,
   votePollSchema,
+  wallClearResponseSchema,
+  wallFeedResponseSchema,
+  wallRestoreSchema,
   type CommentableEntityType,
 } from '@family/shared';
 
@@ -66,28 +69,6 @@ import * as wall from './wall.service.js';
 
 const idParams = z.object({ id: idSchema });
 
-const feedItemSchema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('post'),
-    id: idSchema,
-    createdAt: isoDateTimeSchema,
-    post: postResponseSchema,
-  }),
-  z.object({
-    kind: z.literal('activity'),
-    id: idSchema,
-    createdAt: isoDateTimeSchema,
-    activity: activityItemSchema,
-  }),
-]);
-
-const feedResponseSchema = z.object({
-  /** Live pins, served outside the cursor stream so page 2 never repeats them. */
-  pinned: z.array(postResponseSchema),
-  items: z.array(feedItemSchema),
-  nextCursor: z.string().nullable(),
-});
-
 const activityListSchema = z.object({
   items: z.array(activityItemSchema),
   nextCursor: z.string().nullable(),
@@ -120,6 +101,10 @@ const COMMENT_MOUNTS: ReadonlyArray<{ segment: string; entityType: CommentableEn
   { segment: 'events', entityType: 'event' },
   { segment: 'goals', entityType: 'goal' },
   { segment: 'polls', entityType: 'poll' },
+  // «Спасибо» is a card in the feed now (§D7.6), and a card carries the common
+  // foot line: reactions on the left, a thread toggle on the right. The mount
+  // is `/kudos/:id/...`; `/wall/kudos` is the collection and does not collide.
+  { segment: 'kudos', entityType: 'kudos' },
 ];
 
 function callerOf(request: FastifyRequest): AuthContext {
@@ -138,12 +123,55 @@ const wallRoutes: FastifyPluginAsync = async (fastify) => {
       config: { authenticated: true },
       schema: {
         tags: ['wall'],
-        summary: 'Announcements, system posts and activity in one timeline',
+        summary: 'Стена: one stream of posts, activity, closed polls and kudos, plus the head',
         querystring: cursorPaginationSchema,
-        response: { 200: feedResponseSchema },
+        response: { 200: wallFeedResponseSchema },
       },
     },
     async (request) => wall.getWallFeed(getDb(), callerOf(request), request.query),
+  );
+
+  /* ---------------------------- «Очистить доску» --------------------------- */
+
+  /**
+   * A horizon, not a delete (§D7.11). `settings:manage` — the horizon lives on
+   * the singleton family settings row (D1), so the permission that governs
+   * family settings governs it. `post:delete:any` is an adult's licence to
+   * moderate one note, which is a different thing from resetting what six
+   * people see.
+   */
+  app.post(
+    '/wall/clear',
+    {
+      config: { permission: 'settings:manage' },
+      schema: {
+        tags: ['wall'],
+        summary: 'Hide everything currently on the wall. Nothing is deleted.',
+        // A bodyless POST arrives as `null`, not `undefined` (CONVENTIONS), so
+        // the schema has to be `.nullish()` or Fastify rejects a legitimate
+        // empty POST as a validation error.
+        body: z.object({}).nullish(),
+        response: { 200: wallClearResponseSchema },
+      },
+    },
+    async (request) => wall.clearWall(getDb(), callerOf(request)),
+  );
+
+  app.post(
+    '/wall/clear/undo',
+    {
+      config: { permission: 'settings:manage' },
+      schema: {
+        tags: ['wall'],
+        summary: 'Put the previous horizon back — the six-second «Вернуть» (§G4)',
+        body: wallRestoreSchema,
+        response: { 200: okSchema },
+      },
+    },
+    async (request) => {
+      await wall.restoreWall(getDb(), callerOf(request), request.body);
+      return { ok: true as const };
+    },
   );
 
   /* --------------------------------- posts -------------------------------- */

@@ -183,10 +183,32 @@ Never random — re-running the materializer must reproduce the same schedule.
   of the still-scheduled ones. Every chore counts as exactly one — no per-chore
   weighting, so the family never has to argue about whether the bins beat the
   dishes.
-- **It is a scheduling input, never a display.** Nothing in the app shows a
-  person a running total of anything they have done. The only surface is a
-  family-level view of how one week's work split, on the chores screen, with no
-  per-person numbers and no ordering by effort.
+- **It is a scheduling input, and now not a display at all.** Nothing in the
+  app shows a person a running total of anything they have done, and nothing
+  shows the family how the week's work split either. The last surface — a
+  family-level load bar in the side column of Задачи and Семья, alphabetical,
+  with no per-person numbers — was removed too, at the owner's request: «так же
+  убери "нагрузку" - это не нужно». It had already been trimmed twice (the
+  per-person totals, then the bar stamped down the roster), and a screen-reader
+  audit had caught its `aria-label` reading «40 % (своя доля 33 %)» aloud while
+  the sighted design showed no numbers at all. A distribution of housework is
+  still a distribution of housework; the family talks about that at the table,
+  not through a bar chart. It was not in fact the last: two further surfaces
+  survived precisely because that word was believed — the `fairness` object on
+  `GET /dashboard/today` (per-person `doneCount` and `sharePercent`, on the wire
+  on every home-screen load) and the digest's `load` section («Вы закрыли N
+  дел», «Вся семья за неделю — N дел», pushed to a phone once a week) — and both
+  are now gone too, so read any inventory here as what was known when it was
+  written and go looking anyway.
+
+  Concretely, and this is the line a future change is most likely to cross:
+  `debt` may be **computed and ordered by**, and it may be **explained for one
+  pick** through `GET /chores/rotations/:id/preview` ("why did I get the bins
+  again?"), which is auditability rather than display. It may not be totalled
+  per person, drawn, narrated, or turned back into a family-wide read model.
+  `GET /chores/fairness` and its `FairnessSummaryResponse` contract were deleted
+  when the bar went; do not resurrect them.
+
 - **Idempotency comes free.** An occurrence can be `done` once, so a double tap
   or an offline replay cannot inflate anybody's share. The ledger needed a
   partial unique index to promise that; counting rows just is the promise.
@@ -565,3 +587,88 @@ alongside a shopping outbox that is busy queueing writes.
 `docs/architecture/sync.md` — exact files, the route-prefix→domain map, the
 query-key map, the failure-mode table, the open questions and the test plan.
 Build from that, not from this entry.
+
+## D13 — Стена is a feed. The "board" direction is superseded.
+
+**This entry reverses a decision taken hours earlier, deliberately, and records
+why — so that a future reader does not repair it back.**
+
+Стена was rebuilt as a _board_: twelve notes on one surface, ordered by meaning
+(open questions -> pinned -> what happened), a quiet «Что было раньше» tail, and
+no composer anywhere on screen. The principle was the README's line —
+_announcements, comments on anything, kudos and polls; deliberately not a chat,
+Telegram already exists_ — made structural.
+
+The owner has asked for the opposite shape:
+
+> «она должна быть как у VK или instagram, не делить явно на секции и тп»
+
+That is their call. Стена becomes **one continuous stream of cards with no
+section headers**. The full specification is `docs/design/DESIGN.md` §D7; build
+from that, not from this entry.
+
+### What is superseded
+
+- The board's _ordering_ — «open questions -> pinned -> what happened» — is gone.
+  Below the head, the stream is `createdAt` descending and nothing else.
+- The explicit sections «Решаем вместе» / «Закреплено» / «На доске» are gone as
+  **headers**. Their content is now pinned cards at the top of the same surface,
+  labelled in words on their own eyebrow line rather than by a heading above a
+  group.
+- «Что было раньше» as a tail is gone. A feed has no tail; §D7.11 gives it a
+  floor instead.
+
+### What is not superseded, because it was protecting something real
+
+Three of the board's refusals answered failures that a feed makes _more_
+available, not fewer. Each is carried across as a mechanic:
+
+1. **An unbounded feed creates obligation.** A family of six must not feel behind
+   on their own kitchen wall. So: the feed **ends, visibly** («Это всё, что
+   было»), auto-load is bounded to four pages before it asks, and there is **no
+   unread badge on the «Стена» tab, ever**.
+2. **Recency buries the thing that needs answering.** So: an unanswered poll and
+   a live pin never enter the chronological body at all — they float in a head
+   that does not move as the feed grows — and consecutive activity lines
+   («Лиза полила цветы») coalesce into one digest card instead of competing with
+   an announcement one at a time.
+3. **A composer on screen invites chat.** So: the compose affordance is a
+   **`<button>` at the top of a newest-first stream, not a field at the bottom**.
+   It cannot receive text and never raises the keyboard; it opens the same one
+   door, whose verb is «Повесить». The `locale.ts` vocabulary rule stands —
+   «Лента», «Опубликовать», «Отправить» are still not this screen's words.
+
+### The scoreboard constraint tightened rather than relaxed
+
+D5 is unchanged and this redesign strengthens one part of it. On a board, a
+per-note reaction **count** was defensible — it belonged to a note, not a person.
+In a feed, cards by different authors are adjacent in one column with the count
+at a fixed position on every card, which is a comparison the reader performs for
+free. So reactions render as **the emoji plus the discs of the people who used
+it — no digit, in the drawn text, in a `title`, or in an `aria-label`**. Six
+people is what makes faces fit; that is the test for which social-feed
+conventions are cargo here. Kudos still grow no visible count anywhere.
+
+### «Очистить доску» is a horizon, not a delete
+
+`family_settings` gains `wall_cleared_at`; the feed returns only rows created
+after it. Nothing is deleted — comments, reactions and kudos stay attached to
+their rows. Live pins clear; **open polls stay**, because a clear must not
+silently cancel a question nobody has answered. Gated on `settings:manage`
+(the horizon is a family setting, D1), confirmed in a dialog that names what
+stays, undoable for 6 seconds, and it writes one system post — «Доску очистили
+20 августа» — which becomes the feed's visible floor.
+
+### For the implementer: the README needs one line changed
+
+`README.md`'s feature table still reads:
+
+> **Лента** — Announcements, comments on anything, kudos and polls. Deliberately
+> not a chat — Telegram already exists.
+
+That clause is now half-wrong and half-load-bearing. The shape is a feed; the
+refusal of a message box is intact. **Do not delete the line — revise it**, and
+keep the second half. Something in the shape of: «Общая лента: объявления,
+комментарии к чему угодно, спасибо и опросы. Без счётчиков и без поля для
+сообщений — это не мессенджер.» It is flagged here rather than edited because
+the README is not this pass's file.

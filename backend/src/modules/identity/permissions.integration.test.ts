@@ -264,7 +264,6 @@ describe.skipIf(!hasTestDb)('permissions (integration)', () => {
         '/api/tasks/series',
         '/api/shopping/lists',
         '/api/chores/rotations',
-        '/api/chores/fairness',
       ]) {
         const response = await request(h.app, { method: 'GET', url, token: guest.accessToken });
         expect({ url, status: response.statusCode }).toEqual({ url, status: 404 });

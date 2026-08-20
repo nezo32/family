@@ -88,7 +88,7 @@ describe.skipIf(!hasTestDb)('weekly digest sweep (integration)', () => {
         enabled: true,
         weekday: weekdayIn(now),
         timeOfDay,
-        sections: ['tasks', 'events', 'goals', 'shopping', 'wall', 'load', 'birthdays'],
+        sections: ['tasks', 'events', 'goals', 'shopping', 'wall', 'birthdays'],
       },
     });
     expectStatus(response, 200);
@@ -218,6 +218,62 @@ describe.skipIf(!hasTestDb)('weekly digest sweep (integration)', () => {
     expectStatus(response, 200);
     const blocks = response.json<{ blocks: { section: string }[] }>().blocks;
     expect(blocks.map((b) => b.section)).toEqual(['goals', 'wall']);
+  });
+
+  /**
+   * A stored section that a later release retired must stay **readable**.
+   *
+   * `digest_subscriptions.sections` is a `text[]`, so dropping a value from
+   * `DIGEST_SECTIONS` leaves live rows saying `points`, and then `load`, behind
+   * on purpose: filtering them out on read is exactly what makes retiring a
+   * section need no migration. `GET /api/notifications/digest` broke that
+   * promise by casting the row into its zod-validated response unchecked, so
+   * every such subscriber got a **500** on the notification settings screen
+   * instead of a digest without that block.
+   *
+   * `load` is the value that is actually sitting in dev and test databases
+   * today, but the invariant is about any retired one — the next removal lands
+   * in the identical trap.
+   */
+  it('reads a subscription whose stored sections still name a retired one', async () => {
+    await subscribe(owner, new Date());
+
+    // Written in SQL because the API cannot produce it any more, which is the
+    // point: only history can put `load` in that column now.
+    await db.execute(sql`
+      update digest_subscriptions
+         set sections = array['tasks', 'load', 'events']::text[]
+       where user_id = ${owner.id}::uuid
+    `);
+
+    const response = await request(h.app, {
+      method: 'GET',
+      url: '/api/notifications/digest',
+      token: owner.accessToken,
+    });
+    expectStatus(response, 200);
+    expect(response.json<{ sections: string[] }>().sections).toEqual(['tasks', 'events']);
+
+    // And it is still sendable — the sweep reads the same column.
+    const results = await sweep(new Date());
+    expect(results.map((r) => r.userId)).toContain(owner.id);
+  });
+
+  /**
+   * The write path deliberately does **not** extend the same tolerance. Storage
+   * has history in it; a request body does not. A client sending a section this
+   * release does not have is a broken client, and a 400 says so — where
+   * silently dropping it would answer a `PUT` with a body different from the
+   * one that was sent, which is the harder bug to notice.
+   */
+  it('rejects a retired section in the request body instead of dropping it', async () => {
+    const response = await request(h.app, {
+      method: 'PUT',
+      url: '/api/notifications/digest',
+      token: owner.accessToken,
+      payload: { enabled: true, weekday: 1, timeOfDay: '19:00', sections: ['tasks', 'load'] },
+    });
+    expect(response.statusCode).toBe(400);
   });
 
   it('still records a result for a subscriber whose slot has not arrived', async () => {

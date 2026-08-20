@@ -96,7 +96,11 @@ export function KudosComposer(props: { open: boolean; onOpenChange: (open: boole
               value={
                 recipient ? (
                   <span className="flex items-center gap-2">
-                    <MemberDisc id={recipient.id} displayName={recipient.displayName} />
+                    <MemberDisc
+                      id={recipient.id}
+                      displayName={recipient.displayName}
+                      avatarUrl={recipient.avatarUrl}
+                    />
                     {recipient.displayName}
                   </span>
                 ) : undefined
@@ -151,7 +155,14 @@ export function KudosComposer(props: { open: boolean; onOpenChange: (open: boole
               key={member.id}
               label={member.displayName}
               selected={toUserId === member.id}
-              leading={<MemberDisc id={member.id} displayName={member.displayName} size="md" />}
+              leading={
+                <MemberDisc
+                  id={member.id}
+                  displayName={member.displayName}
+                  avatarUrl={member.avatarUrl}
+                  size="md"
+                />
+              }
               onSelect={() => {
                 setToUserId(member.id);
                 setOpenSheet(null);

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { kudosResponseSchema } from './chores.js';
 import {
   cursorPaginationSchema,
   idSchema,
@@ -19,7 +20,14 @@ import {
  * closed enum **here** — the contract is the integrity boundary.
  */
 
-export const COMMENTABLE_ENTITY_TYPES = ['post', 'task', 'event', 'goal', 'poll'] as const;
+/**
+ * `kudos` joined this enum with the feed (§D7.6, «Спасибо» as a card): a
+ * thank-you is now a card in the stream with the common foot line, and the
+ * common foot line is reactions plus a thread. Adding the member here is the
+ * whole change — the generic comment/reaction endpoints are mounted once per
+ * entry, and `comments.service.ts` gains the matching access resolver.
+ */
+export const COMMENTABLE_ENTITY_TYPES = ['post', 'task', 'event', 'goal', 'poll', 'kudos'] as const;
 export const entityTypeSchema = z.enum(COMMENTABLE_ENTITY_TYPES);
 export type CommentableEntityType = z.infer<typeof entityTypeSchema>;
 
@@ -52,12 +60,27 @@ export type CreatePost = z.infer<typeof createPostSchema>;
 export const updatePostSchema = postWritableFields.partial();
 export type UpdatePost = z.infer<typeof updatePostSchema>;
 
-/** Aggregated reactions for one target: `emoji -> count` plus the caller's own. */
+/**
+ * Aggregated reactions for one target.
+ *
+ * `userIds` is the field the UI actually renders (§D7.7): a reaction is drawn
+ * as its emoji plus the **discs of the people who used it**, and no digit
+ * appears anywhere — not on the chip, not in a `title`, not in an
+ * `aria-label`. Six people in a family is what makes faces fit where a count
+ * would otherwise go, and «❤️ 3» sitting 120px above «❤️ 1» in a single-column
+ * feed is a comparison the reader performs for free (D5, D13).
+ *
+ * `count` stays in the contract because it is `userIds.length` and other
+ * consumers (the OpenAPI surface, a future digest) may want the scalar. It is
+ * **not** a licence to render it on Стена.
+ */
 export const reactionSummarySchema = z.object({
   emoji: z.string(),
   count: z.number().int().min(0),
   /** Whether the requesting user is one of the reactors. */
   reacted: z.boolean(),
+  /** Who reacted, in the order they reacted. The family is small; faces fit. */
+  userIds: z.array(idSchema).default([]),
 });
 export type ReactionSummary = z.infer<typeof reactionSummarySchema>;
 
@@ -199,6 +222,14 @@ export const pollResponseSchema = z.object({
   totalVoters: z.number().int().min(0),
   /** The option ids the caller picked; empty when they have not voted. */
   myOptionIds: z.array(idSchema).default([]),
+  /**
+   * Live comment count, for the card's common foot line (§D7.6/D7.8). This is
+   * the one number Стена is allowed to draw: it describes the object you are
+   * about to open, it is not attached to a person, and nothing sorts by it.
+   */
+  commentCount: z.number().int().min(0).default(0),
+  /** Reactions on the poll itself — «а почему на дачу?» goes in the thread. */
+  reactions: z.array(reactionSummarySchema).default([]),
   createdAt: isoDateTimeSchema,
 });
 export type PollResponse = z.infer<typeof pollResponseSchema>;
@@ -248,3 +279,108 @@ export type ListActivityQuery = z.infer<typeof listActivityQuerySchema>;
 
 export const activityListResponseSchema = paginatedSchema(activityItemSchema);
 export type ActivityListResponse = z.infer<typeof activityListResponseSchema>;
+
+/* -------------------------------------------------------------------------- */
+/* The wall feed (§D7)                                                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * «Спасибо» as a feed card.
+ *
+ * A kudos is a note addressed **from** one person **to** another, so the card
+ * draws both — which is why the recipient's display name rides on the item
+ * rather than being looked up client-side: the roster is a best-effort query
+ * that a guest may not get, and «(Л) Лизе» is the whole point of the card.
+ */
+export const kudosFeedItemSchema = kudosResponseSchema.extend({
+  /** The recipient, resolved server-side. Never an id in the UI. */
+  toDisplayName: z.string(),
+  commentCount: z.number().int().min(0).default(0),
+  reactions: z.array(reactionSummarySchema).default([]),
+});
+export type KudosFeedItem = z.infer<typeof kudosFeedItemSchema>;
+
+/**
+ * One card in the stream.
+ *
+ * Four kinds, one clock. `post` and `activity` were the original union;
+ * `poll` and `kudos` joined it so that a closed poll can take its
+ * chronological place and a thank-you can be a card instead of a roster chip
+ * (§D7.13 gaps 1 and 3). **Open** polls and **live** pins never appear here —
+ * they are served in the head, so a card is never in two places (§D7.4).
+ */
+export const wallFeedItemSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('post'),
+    id: idSchema,
+    createdAt: isoDateTimeSchema,
+    post: postResponseSchema,
+  }),
+  z.object({
+    kind: z.literal('activity'),
+    id: idSchema,
+    createdAt: isoDateTimeSchema,
+    activity: activityItemSchema,
+  }),
+  z.object({
+    kind: z.literal('poll'),
+    id: idSchema,
+    createdAt: isoDateTimeSchema,
+    poll: pollResponseSchema,
+  }),
+  z.object({
+    kind: z.literal('kudos'),
+    id: idSchema,
+    createdAt: isoDateTimeSchema,
+    kudos: kudosFeedItemSchema,
+  }),
+]);
+export type WallFeedItem = z.infer<typeof wallFeedItemSchema>;
+
+/**
+ * A page of Стена.
+ *
+ * `pinned` and `openPolls` are the **head** (§D7.4): they are served outside
+ * the cursor stream, so page two never repeats them and they do not move as
+ * the feed grows. Everything else is `items`, ordered `createdAt` descending
+ * and by nothing else.
+ *
+ * `clearedAt` is the horizon (§D7.11) — the feed returns only rows created
+ * after it. It is echoed back so the client can tell "the wall is empty"
+ * apart from "the wall was cleared", without a second request.
+ */
+export const wallFeedResponseSchema = z.object({
+  pinned: z.array(postResponseSchema),
+  openPolls: z.array(pollResponseSchema),
+  items: z.array(wallFeedItemSchema),
+  nextCursor: z.string().nullable(),
+  clearedAt: isoDateTimeSchema.nullable(),
+});
+export type WallFeedResponse = z.infer<typeof wallFeedResponseSchema>;
+
+/* -------------------------------------------------------------------------- */
+/* «Очистить доску» — a horizon, not a delete (§D7.11, D13)                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The answer to a clear.
+ *
+ * Nothing is deleted: `clearedAt` is written to `family_settings` and the feed
+ * stops returning rows older than it. `previousClearedAt` and `systemPostId`
+ * are the undo token — six seconds of «Вернуть» hand them straight back.
+ */
+export const wallClearResponseSchema = z.object({
+  clearedAt: isoDateTimeSchema,
+  /** What the horizon was before this clear. `null` means "never cleared". */
+  previousClearedAt: isoDateTimeSchema.nullable(),
+  /** The system post that becomes the feed's visible floor — «Доску очистили …». */
+  systemPostId: idSchema,
+});
+export type WallClearResponse = z.infer<typeof wallClearResponseSchema>;
+
+/** Undo: put the previous horizon back, `null` included, and drop the marker post. */
+export const wallRestoreSchema = z.object({
+  clearedAt: isoDateTimeSchema.nullable(),
+  systemPostId: idSchema.nullish(),
+});
+export type WallRestore = z.infer<typeof wallRestoreSchema>;

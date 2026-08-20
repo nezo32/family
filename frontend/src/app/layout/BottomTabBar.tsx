@@ -19,6 +19,13 @@ import { NAV_ITEMS, isNavItemActive } from './nav-items';
  *    not glass (§A3): `--card` is the same white every row group already uses,
  *    so the bar reads as a surface sitting on the sand ground, and the 1px top
  *    border becomes a real edge instead of a hairline drawn on nothing.
+ *  - `bottom-viewport`, not `bottom-0`. Identical on every healthy browser —
+ *    it resolves to `bottom: calc(-1 * 0px)` — but on an installed iOS app
+ *    whose layout viewport WebKit has left short after the keyboard, it puts
+ *    the bar back on the physical bottom of the screen instead of floating it
+ *    above a band of bare background (`viewport-insets.ts`). Deliberately
+ *    **not** `bottom-above-keyboard`: while the keyboard is up the bar belongs
+ *    behind it, not riding on top of it. Bottom sheets get that one.
  *  - The bar sits above `env(safe-area-inset-bottom)` so the home indicator
  *    never overlaps a tap target, and the bar's background extends *into* the
  *    inset so there is no strip of page content showing through. The band of
@@ -56,7 +63,7 @@ export function BottomTabBar() {
     <>
       <nav
         aria-label="Основная навигация"
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card px-safe pb-safe md:hidden"
+        className="fixed inset-x-0 bottom-viewport z-40 border-t border-border bg-card px-safe pb-safe md:hidden"
       >
         <ul className="flex h-tabbar items-stretch">
           {primary.map((item) => (

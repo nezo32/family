@@ -1,50 +1,71 @@
-import type { ReactionSummary } from '@family/shared';
+import type { PublicUser, ReactionSummary } from '@family/shared';
 
 /**
- * Russian strings for the family board.
+ * Russian strings for Стена.
  *
  * Tone rules for anything added here (they are the whole point of this
- * section): warm, «вы», never corporate, never comparative. The board is the
- * one screen people open because they want to, not because something is due.
+ * section): warm, «вы», never corporate, never comparative. Стена is the one
+ * screen people open because they want to, not because something is due.
  *
- * ## The vocabulary is deliberately a *board's*, not a *feed's*
+ * ## The vocabulary is still a *board's*, even though the shape is a feed's
  *
- * «Лента», «Опубликовать», «Отправить», «Показать ещё» are the words of a
- * timeline, and a timeline with a text field at the bottom is a chat. The
- * family already has one. So the nouns here are the nouns of the note surface
- * by the front door: «доска», «повесить», «закреплено», «решаем вместе» — and
- * the one verb that starts everything is «написать», which is what you do with
- * a note, not with a message.
+ * §D7 turned the board into one continuous stream, and D13 records why. What
+ * it did **not** change is the language: «Лента», «Опубликовать» and
+ * «Отправить» are the words of a messenger, and a stream with a message box at
+ * the bottom is a chat. The family already has one. So the nouns here stay the
+ * nouns of the note surface by the front door — «доска», «повесить»,
+ * «закреплено» — and the one verb that starts everything is «написать», which
+ * is what you do with a note, not with a message.
+ *
+ * «Показать ещё» is the one word from that old list the redesign takes back:
+ * §D7.9 gives the feed a bounded auto-load that stops and *asks*, and asking
+ * needs a verb. It is the opposite of infinite scroll, not an instance of it.
+ *
+ * ## No section headers live here any more
+ *
+ * The board's «Решаем вместе» / «Закреплено» / «На доске» labels are gone as
+ * headings (§D7.0). What is left of them are **eyebrow lines a card says about
+ * itself** — «Вас спрашивают», «Открытый опрос», «Закреплено до 25 августа» —
+ * because colour is never the only signal (§B4) and a head card has to be
+ * legible in greyscale and to a screen reader taking the cards in order.
  */
 export const WALL_RU = {
   title: 'Стена',
   description: 'Доска дома: объявления, общие решения и спасибо.',
 
-  /* -------------------------------- board -------------------------------- */
-  board: {
-    /** The stream section's label — everything that is not asking for you. */
-    label: 'На доске',
-    /** Band 2, when open polls take it. */
-    pollsLabel: 'Решаем вместе',
-    /** Band 2 or a quiet section, depending on what won the wash (§C2). */
-    pinnedLabel: 'Закреплено',
-    decidedLabel: 'Что решили',
-    empty: 'На доске пусто',
-    emptyDescription: 'Повесьте первую записку — её увидят все дома.',
-    /** A reader who may not write anything. Guests see the board, not a lie. */
+  /* --------------------------------- feed -------------------------------- */
+  feed: {
+    /** The compose row's own text. It is a button, never a field (§D7.5). */
+    composePlaceholder: 'Что повесить на доску?',
+    /** A reader who may write: the row *is* the invitation, so this is a line, not a state. */
+    emptyInvite: 'Повесьте первую записку — её увидят все дома.',
+    /**
+     * A reader who may not write (a `guest`). Not an `EmptyState`: §E made
+     * `action` required, and there is no honest action to offer somebody whose
+     * every write would 403.
+     */
     emptyReadOnly: 'Когда кто-нибудь что-то напишет, это появится здесь.',
-    more: 'Что было раньше',
-    loadingMore: 'Смотрим…',
+    /** The feed ends, visibly, and this is what it says (§D7.9). */
     end: 'Это всё, что было',
+    /** After four auto-loaded pages the feed stops and asks. */
+    more: 'Показать ещё',
+    loadingMore: 'Смотрим…',
+    /** New items arrived while the reader was scrolled down. No count, ever. */
+    newItems: 'Новое на стене',
     systemAuthor: 'Семейный бот',
     unknownAuthor: 'Участник',
-    loadError: 'Не удалось открыть доску',
+    loadError: 'Не удалось открыть стену',
+    /** A later page failed. Quiet, never `role="alert"` (§D7.12). */
+    moreError: 'Не получилось загрузить дальше',
+    /** The activity digest's expander — the items are already on the page. */
+    andMore: (n: number) => `и ещё ${String(n)}`,
+    collapse: 'свернуть',
   },
 
   /* ------------------------------- compose ------------------------------- */
   /**
-   * The one door (§D7). Three kinds of note, one button, one place — which is
-   * what lets every panel on this screen be stateless and therefore live
+   * The one door (§D7.5). Three kinds of note, one button, one place — which
+   * is what lets every panel on this screen be stateless and therefore live
    * wherever the layout wants it.
    */
   compose: {
@@ -93,6 +114,12 @@ export const WALL_RU = {
   /* ------------------------------ comments ------------------------------- */
   comments: {
     toggle: 'Обсудить',
+    /**
+     * The one count Стена is allowed to draw (§D7.2, §D7.8): it describes the
+     * object you are about to open, it is not attached to a person, and
+     * nothing sorts by it. Without it every card looks identical and a live
+     * conversation is invisible.
+     */
     count: (n: number) => `Обсуждение · ${String(n)}`,
     empty: 'Пока никто не ответил.',
     placeholder: 'Что скажете?',
@@ -107,10 +134,8 @@ export const WALL_RU = {
   /* ----------------------------- reactions ------------------------------- */
   reactions: {
     addAria: 'Добавить реакцию',
-    you: 'Вы',
-    youAndOthers: (others: number) => `Вы и ещё ${String(others)}`,
-    others: (n: number) => `${String(n)} — уже отметили`,
-    nobody: 'Первым отметить',
+    /** Somebody reacted but the roster has not resolved their name. */
+    someone: 'кто-то из своих',
   },
 
   /* ------------------------------- kudos --------------------------------- */
@@ -127,6 +152,8 @@ export const WALL_RU = {
     emoji: 'Значок',
     send: 'Сказать спасибо',
     sent: 'Спасибо отправлено',
+    /** The card's eyebrow. Verb-free on purpose — see `KudosCard`. */
+    cardEyebrow: 'Спасибо',
     /**
      * No count, deliberately. A per-person total that grows is a scoreboard
      * whatever the heading says (D5) — «Спасибо» is the one screen that exists
@@ -164,8 +191,10 @@ export const WALL_RU = {
     published: 'Опрос на доске',
     vote: 'Ответить',
     voting: 'Считаем…',
-    /** The one line that makes band 2 a question and not a card. */
+    /** The eyebrow on the one card that takes the attention wash (§D7.4). */
     needsYou: 'Вас спрашивают',
+    /** The eyebrow on every other open poll in the head. */
+    openEyebrow: 'Открытый опрос',
     answered: 'Вы ответили',
     closedBadge: 'Завершён',
     yourChoice: 'ваш выбор',
@@ -179,9 +208,30 @@ export const WALL_RU = {
     answeredBy: 'Ответили',
     noVotesYet: 'Пока никто не ответил',
     /** «Что решили» rows: the option that got the most answers. */
+    decidedLabel: 'Что решили',
     decidedOn: (label: string) => `Решили: ${label}`,
     decidedTie: 'Без явного большинства',
     resultShare: (percent: number) => `${String(percent)}%`,
+  },
+
+  /* -------------------------- «Очистить доску» --------------------------- */
+  /**
+   * A horizon, not a delete (§D7.11). The dialog names what happens **and what
+   * stays**, and it carries no row count: «Уберём 247 записей» makes the action
+   * feel bigger or smaller than it is, and it is not a number the reader can
+   * act on.
+   */
+  clear: {
+    action: 'Очистить доску',
+    /** The app bar's `⋯`, for a screen reader. */
+    menuAria: 'Ещё действия со стеной',
+    confirmTitle: 'Очистить доску?',
+    confirmDescription:
+      'Со стены исчезнет всё, что на ней сейчас, — у всех. Открытые опросы останутся: на них ещё никто не ответил. Ничего не удаляется навсегда.',
+    confirmLabel: 'Очистить',
+    done: 'Доска очищена',
+    undo: 'Вернуть',
+    restored: 'Вернули как было',
   },
 } as const;
 
@@ -192,16 +242,35 @@ export const REACTION_EMOJI = ['❤️', '\u{1F44D}', '\u{1F389}', '\u{1F602}', 
 export const KUDOS_EMOJI = ['\u{1F44F}', '❤️', '\u{1F31F}', '\u{1F917}', '\u{1F4AA}'] as const;
 
 /**
- * Who is behind a reaction chip.
+ * The accessible name of a reaction chip: **exactly what is drawn**.
  *
- * The summary contract carries `count` and "did I react", not the reactor ids,
- * so this says exactly as much as is actually known. When the backend starts
- * returning reactor ids, this is the one function that has to change.
+ * A reaction renders as its emoji plus the discs of the people who used it
+ * (§D7.7), so the name is «❤️ — Мама, Лиза» and there is no digit in it. That
+ * is not a stylistic preference: a screen-reader-only count is precisely how
+ * the scoreboard crept back last time — a load bar on Семья read «40 % (своя
+ * доля 33 %)» aloud while drawing no numbers at all.
+ *
+ * `userIds` arrived with the contract (§D7.13 gap 4), so this now says who.
+ * When a name is missing from the roster the chip says «кто-то из своих»
+ * rather than falling back to a quantity.
  */
-export function reactorLabel(summary: ReactionSummary): string {
-  if (!summary.reacted) {
-    return summary.count > 0 ? WALL_RU.reactions.others(summary.count) : WALL_RU.reactions.nobody;
-  }
-  const others = summary.count - 1;
-  return others > 0 ? WALL_RU.reactions.youAndOthers(others) : WALL_RU.reactions.you;
+export function reactorLabel(
+  summary: ReactionSummary,
+  nameOf: (id: string) => string | undefined,
+): string {
+  const names = summary.userIds.map((id) => nameOf(id) ?? WALL_RU.reactions.someone);
+  if (names.length === 0) return summary.emoji;
+  return `${summary.emoji} — ${names.join(', ')}`;
+}
+
+/** The reactors of one chip, as the shape `MemberDiscGroup` wants. */
+export function reactorMembers(
+  summary: ReactionSummary,
+  roster: { byId: ReadonlyMap<string, PublicUser>; nameOf: (id: string) => string },
+): { id: string; displayName: string; avatarUrl: string | null }[] {
+  return summary.userIds.map((id) => ({
+    id,
+    displayName: roster.nameOf(id),
+    avatarUrl: roster.byId.get(id)?.avatarUrl ?? null,
+  }));
 }

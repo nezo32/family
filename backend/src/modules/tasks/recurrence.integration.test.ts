@@ -468,21 +468,12 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
   });
 
   /**
-   * `chores.repository.ts:430/439` (`loadRotationRoster`) and `:559-587`
-   * (`loadFairnessRows`) have the same defect. The roster query is on the
-   * critical path of *creating* a rotated series, so the failure is a write
-   * failure, not just a read one.
+   * `loadRotationRoster` is raw SQL, and it is on the critical path of
+   * *creating* a rotated series — so a defect in it is a write failure, not
+   * just a read one. The preview endpoint is the only thing that runs it
+   * outside materialization, which makes it the cheapest way to exercise it.
    */
-  describe('rotation and fairness reads', () => {
-    it('serves GET /chores/fairness', async () => {
-      const response = await request(h.app, {
-        method: 'GET',
-        url: '/api/chores/fairness',
-        token: owner.accessToken,
-      });
-      expectStatus(response, 200);
-    });
-
+  describe('rotation reads', () => {
     it('serves GET /chores/rotations/:id/preview', async () => {
       const create = await request(h.app, {
         method: 'POST',

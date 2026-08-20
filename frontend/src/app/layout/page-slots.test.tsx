@@ -39,23 +39,23 @@ describe('the side column', () => {
     render(
       <PageSlotsContext.Provider value={slots({ side: aside })}>
         <SideColumn>
-          <p>Нагрузка за неделю</p>
+          <p>Фильтры</p>
         </SideColumn>
       </PageSlotsContext.Provider>,
     );
 
-    expect(aside.textContent).toBe('Нагрузка за неделю');
+    expect(aside.textContent).toBe('Фильтры');
     aside.remove();
   });
 
   it('renders in place outside the shell, so nothing vanishes from a screen test', () => {
     render(
       <SideColumn>
-        <p>Нагрузка за неделю</p>
+        <p>Фильтры</p>
       </SideColumn>,
     );
 
-    expect(screen.getByText('Нагрузка за неделю')).toBeInTheDocument();
+    expect(screen.getByText('Фильтры')).toBeInTheDocument();
   });
 });
 

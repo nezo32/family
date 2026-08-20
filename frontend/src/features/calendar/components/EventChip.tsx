@@ -1,6 +1,7 @@
 import type { EventOccurrenceResponse, PublicUser } from '@family/shared';
 import { Cake } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
+import { useAvatarSource } from '@/shared/api/authed-image';
 import { occurrenceColor, startTimeLabel } from '../calendar-model';
 import { CALENDAR_RU } from '../locale';
 
@@ -57,6 +58,47 @@ export function EventDot(props: { occurrence: EventOccurrenceResponse }) {
   );
 }
 
+/**
+ * One 20px face in the attendee row.
+ *
+ * Its own component because resolving an avatar takes a hook, and this used to
+ * be a bare `<img src={member.avatarUrl}>` inside a `.map()`. That worked for
+ * the Google URLs every account currently has and would have broken silently
+ * the day somebody uploaded a photo through the cropper: an uploaded avatar is
+ * `/api/users/:id/avatar`, behind the session, and an `<img>` sends no bearer
+ * token — 401, broken image. `useAvatarSource` handles both shapes and falls
+ * back to the initial.
+ */
+function AttendeeFace(props: { member: PublicUser | undefined; declined: boolean }) {
+  const name = props.member?.displayName ?? '?';
+  const { src, external } = useAvatarSource(props.member?.avatarUrl);
+
+  return (
+    <span
+      title={name}
+      className={cn(
+        'flex size-5 items-center justify-center overflow-hidden rounded-full bg-secondary text-[9px] font-medium text-secondary-foreground ring-2 ring-background',
+        props.declined && 'opacity-45',
+      )}
+    >
+      {src ? (
+        <img
+          src={src}
+          alt=""
+          decoding="async"
+          {...(external ? { referrerPolicy: 'no-referrer' as const } : {})}
+          className="size-full object-cover"
+          onError={(event) => {
+            event.currentTarget.style.display = 'none';
+          }}
+        />
+      ) : (
+        name.slice(0, 1).toUpperCase()
+      )}
+    </span>
+  );
+}
+
 /** Overlapping attendee avatars, resolved against the family roster. */
 export function AttendeeAvatars(props: {
   occurrence: EventOccurrenceResponse;
@@ -69,26 +111,13 @@ export function AttendeeAvatars(props: {
 
   return (
     <span className="flex shrink-0 items-center -space-x-1.5" aria-label={CALENDAR_RU.attendees}>
-      {shown.map((attendee) => {
-        const member = props.members.get(attendee.userId);
-        const name = member?.displayName ?? '?';
-        return (
-          <span
-            key={attendee.userId}
-            title={name}
-            className={cn(
-              'flex size-5 items-center justify-center overflow-hidden rounded-full bg-secondary text-[9px] font-medium text-secondary-foreground ring-2 ring-background',
-              attendee.rsvp === 'no' && 'opacity-45',
-            )}
-          >
-            {member?.avatarUrl ? (
-              <img src={member.avatarUrl} alt="" className="size-full object-cover" />
-            ) : (
-              name.slice(0, 1).toUpperCase()
-            )}
-          </span>
-        );
-      })}
+      {shown.map((attendee) => (
+        <AttendeeFace
+          key={attendee.userId}
+          member={props.members.get(attendee.userId)}
+          declined={attendee.rsvp === 'no'}
+        />
+      ))}
       {rest > 0 ? (
         <span className="flex size-5 items-center justify-center rounded-full bg-muted text-[9px] font-medium text-muted-foreground ring-2 ring-background">
           +{rest}

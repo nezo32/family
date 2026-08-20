@@ -444,7 +444,8 @@ export const notificationIntents = pgTable(
  * One row per (intent × recipient × channel × device). This is simultaneously:
  *
  * - the **work queue payload** for the dispatcher,
- * - the **in-app inbox** (channel `in_app`; `read_at` is what clears the bell),
+ * - the **in-app inbox** (channel `in_app`; `read_at` is what clears the bell,
+ *   `cleared_at` is what takes the row off it entirely),
  * - the **audit log** of what we actually sent, when, and why it failed.
  *
  * Deliveries are never deleted by the app; the cleanup job trims old rows.
@@ -475,6 +476,38 @@ export const notificationDeliveries = pgTable(
     /** We handed it to the push service / Telegram and it accepted. Not proof. */
     sentAt: timestamp({ withTimezone: true }),
     readAt: timestamp({ withTimezone: true }),
+
+    /**
+     * The in-app inbox's own «Очистить»: this row no longer appears on the
+     * bell, for this user, from this instant.
+     *
+     * **A clear must not be a delete, and this column is the whole reason.**
+     * The same row is simultaneously the inbox entry, the dispatcher's work
+     * record and the **D11 delivery receipt** — the evidence answering "did
+     * «дать лекарство в 20:00» actually reach a human". Deleting it to tidy a
+     * list would answer that question with silence forever, retroactively, for
+     * exactly the notifications most worth auditing. So a clear writes here and
+     * nowhere else: `sentAt`, `deliveredAt`, `interactedAt`, `acknowledgedAt`,
+     * `status` and `readAt` are all left exactly as they were.
+     *
+     * Two consequences worth stating, because both are load-bearing:
+     *
+     * - **The escalation ladder cannot notice.** It reads `status` and the
+     *   receipt columns (`listUnconfirmedDeliveries`, `intentHasSignal`) and
+     *   never this one, so a clear can neither stop a running chain nor restart
+     *   a finished one. That is the same property `markUnread` had to be
+     *   written for — status restored *from the receipts* rather than guessed.
+     * - **A row still waiting for «Подтвердить получение» is never cleared.**
+     *   Not even by `scope: 'all'`. For a `critical` intent that button is the
+     *   only signal that stops the chain waking somebody else, and it lives on
+     *   the inbox row; hiding it would leave an escalation running with nowhere
+     *   left to stop it. The predicate lives in `clearInbox` in the repository.
+     *
+     * NULL => on the bell. Every inbox read (`listInbox`, `countUnread`) and
+     * `markRead` filter on `is null`; a badge counting rows the list refuses to
+     * show is the "badge that never clears" bug from the other end.
+     */
+    clearedAt: timestamp({ withTimezone: true }),
 
     /* --- D11: four distinct timestamps, never collapsed into one another --- */
 

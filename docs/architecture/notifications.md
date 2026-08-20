@@ -341,6 +341,8 @@ Every route requires an authenticated session. Personal routes are guarded by
 | `GET`    | `/api/notifications`                   | session                   | `cursor`, `limit`, `unreadOnly`  | `paginated(inAppNotificationSchema)` |
 | `GET`    | `/api/notifications/unread-count`      | session                   | —                                | `unreadCountSchema`                  |
 | `POST`   | `/api/notifications/read`              | session                   | `markReadRequestSchema`          | `okSchema`                           |
+| `GET`    | `/api/notifications/clearable`         | `notification:manage:own` | —                                | `clearableInboxSchema`               |
+| `POST`   | `/api/notifications/clear`             | `notification:manage:own` | `clearInboxRequestSchema`        | `clearInboxResponseSchema`           |
 | `GET`    | `/api/notifications/preferences`       | `notification:manage:own` | —                                | `preferencesResponseSchema`          |
 | `PUT`    | `/api/notifications/preferences`       | `notification:manage:own` | `updatePreferencesRequestSchema` | `preferencesResponseSchema`          |
 | `PUT`    | `/api/notifications/quiet-hours`       | `notification:manage:own` | `updateQuietHoursRequestSchema`  | `quietHoursSchema[]`                 |
@@ -366,6 +368,39 @@ Notes:
   it is the one endpoint a bored child will hammer.
 - The inbox list joins deliveries to intents and renders title/body server-side
   from the intent payload, so the client never re-templates copy.
+
+### 8.1 Clearing the inbox — a `cleared_at`, never a delete
+
+«Очистить» is scoped to the caller by construction: the body carries a scope
+(`read` — the default — or `all`) and a `confirm` flag, and **no ids**, so there
+is no field in which another member's delivery could be named. Without `confirm`
+the call only counts, exactly like shopping's `clear-bought`; the counts the
+confirmation states first come from the `GET`.
+
+The write is one column, `notification_deliveries.cleared_at`, and this is the
+part that matters:
+
+- **The D11 receipts survive.** `sentAt`, `deliveredAt`, `interactedAt`,
+  `acknowledgedAt`, `status` and `readAt` are untouched, so
+  `GET /intents/:id/receipts` still answers "did this actually reach them" about
+  a notification the recipient has tidied away. Deleting the row would destroy
+  that record retroactively, for exactly the messages most worth auditing.
+- **The escalation ladder cannot notice.** §7's sweep reads `status` and the
+  receipt columns and never `cleared_at`, so a clear neither stops a running
+  chain nor restarts a finished one.
+- **A `high`/`critical` delivery with no `acknowledged_at` is never cleared** —
+  not even by `scope: 'all'`. «Подтвердить получение» lives on the inbox row and
+  for a `critical` intent it is the only signal that ends the chain; hiding it
+  would leave an escalation running with nowhere left for a human to stop it.
+  Those rows come back as `keptNeedsAck` so the UI can say why they stayed.
+- Every inbox read (`listInbox`, `countUnread`) and `markRead` filter on
+  `cleared_at is null`. A badge counting rows the list refuses to show is the
+  "badge that never clears" bug reached from the inside.
+
+`/api/notifications/clear` sits under the `['notifications']` prefix in
+`ROUTE_DOMAINS`, so the bump happens in `onResponse` and the member's other
+devices update. The preview is a `GET` for the same reason: a dry run shaped as
+a POST would bump the domain every time somebody opened the dialog and cancelled.
 
 ---
 

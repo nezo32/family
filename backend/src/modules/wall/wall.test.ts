@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { effectivePermissions, type Role } from '@family/shared';
+import { COMMENTABLE_ENTITY_TYPES, effectivePermissions, type Role } from '@family/shared';
 
 import { buildAuthContext, type AuthContext } from '../../core/auth/context.js';
 import { createDbClient, type Db, type Executor } from '../../core/db.js';
@@ -34,7 +34,19 @@ import {
 import * as choresRepo from '../chores/chores.repository.js';
 import * as repo from './wall.repository.js';
 import type { PollOptionRow, PollRow } from './wall.schema.js';
-import { hydratePosts, isUniqueViolation, mergeStreams, setPin } from './wall.service.js';
+import {
+  clearWall,
+  formatDayMonthRu,
+  getWallFeed,
+  giveKudos,
+  listActivity,
+  hydratePosts,
+  isUniqueViolation,
+  mergeStreams,
+  restoreWall,
+  setPin,
+  wallClearedBody,
+} from './wall.service.js';
 
 /**
  * The wall's business rules.
@@ -109,8 +121,30 @@ function optionRow(pollId: string, label: string, sortOrder: number): PollOption
 
 describe('entityType validation', () => {
   it('accepts every type in the closed enum', () => {
-    for (const type of ['post', 'task', 'event', 'goal', 'poll'] as const) {
+    // Iterated from the contract rather than re-listed, so a new member —
+    // `kudos` was the last one (§D7.6) — cannot be added without this and the
+    // access resolver below noticing.
+    for (const type of COMMENTABLE_ENTITY_TYPES) {
       expect(assertEntityType(type)).toBe(type);
+    }
+  });
+
+  it('has an access resolver for every commentable type', async () => {
+    // `assertCanReadEntity` throws BAD_REQUEST when a type has no resolver, so
+    // a member added to the enum and nowhere else fails loudly here rather
+    // than at runtime on somebody's phone.
+    for (const type of COMMENTABLE_ENTITY_TYPES) {
+      // The stub cannot satisfy every resolver's query shape (some join), so
+      // the assertion is about the *lookup*, not the verdict: an unregistered
+      // type is the only thing that produces this particular message.
+      const outcome: unknown = await assertCanReadEntity(
+        execReturning([]),
+        { entityType: type, entityId: randomUUID() },
+        authFor('owner'),
+      ).catch((error: unknown) => error);
+      expect(String((outcome as Error | undefined)?.message ?? '')).not.toContain(
+        'No access resolver',
+      );
     }
   });
 
@@ -605,7 +639,13 @@ describe('reaction summaries', () => {
   const me = randomUUID();
   const other = randomUUID();
 
-  it('groups by emoji, counts, and flags the viewer', () => {
+  /**
+   * The ids are the point (§D7.7): a reaction renders as its emoji plus the
+   * **discs of the people who used it**, and no digit appears anywhere. They
+   * come back in the order the rows did — `loadReactions` orders by
+   * `created_at` — so the faces do not shuffle between refetches.
+   */
+  it('groups by emoji, keeps the reactors, and flags the viewer', () => {
     const summaries = repo.buildReactionSummaries(
       [
         { entityId, emoji: '👏', userId: me },
@@ -615,8 +655,24 @@ describe('reaction summaries', () => {
       me,
     );
     const list = summaries.get(entityId) ?? [];
-    expect(list[0]).toEqual({ emoji: '👏', count: 2, reacted: true });
-    expect(list[1]).toEqual({ emoji: '❤️', count: 1, reacted: false });
+    expect(list[0]).toEqual({ emoji: '👏', count: 2, reacted: true, userIds: [me, other] });
+    expect(list[1]).toEqual({ emoji: '❤️', count: 1, reacted: false, userIds: [other] });
+  });
+
+  it('never counts one person twice for the same emoji', () => {
+    const summaries = repo.buildReactionSummaries(
+      [
+        { entityId, emoji: '👏', userId: me },
+        { entityId, emoji: '👏', userId: me },
+      ],
+      me,
+    );
+    expect(summaries.get(entityId)?.[0]).toEqual({
+      emoji: '👏',
+      count: 1,
+      reacted: true,
+      userIds: [me],
+    });
   });
 
   it('yields nothing for an entity with no reactions', () => {
@@ -636,6 +692,21 @@ describe('comment counts stay consistent with soft deletes', () => {
 });
 
 describe('feed merge', () => {
+  /**
+   * Four sources now (§D7.13 gaps 1 and 3): posts, activity, **closed** polls
+   * and kudos. One sort over the union, not a fold of pairwise merges.
+   */
+  it('interleaves all four sources on one clock', () => {
+    const at = (iso: string) => new Date(iso);
+    const merged = mergeStreams(
+      [{ id: 'p', createdAt: at('2026-08-19T10:00:00.000Z'), kind: 'post' }],
+      [{ id: 'a', createdAt: at('2026-08-19T09:00:00.000Z'), kind: 'activity' }],
+      [{ id: 'q', createdAt: at('2026-08-19T11:00:00.000Z'), kind: 'poll' }],
+      [{ id: 'k', createdAt: at('2026-08-19T08:00:00.000Z'), kind: 'kudos' }],
+    );
+    expect(merged.map((m) => m.id)).toEqual(['q', 'p', 'a', 'k']);
+  });
+
   it('interleaves posts and activity strictly by (createdAt, id) descending', () => {
     const merged = mergeStreams(
       [
@@ -657,6 +728,18 @@ describe('feed merge', () => {
       [{ id: 'bbb', createdAt: at, kind: 'activity' }],
     );
     expect(merged.map((m) => m.id)).toEqual(['bbb', 'aaa']);
+  });
+});
+
+describe('«Очистить доску» copy', () => {
+  it('names the day the wall was cleared, in Russian, in the family timezone', () => {
+    // 00:30 Moscow on the 20th is 21:30 UTC on the 19th — the card must say
+    // what the family's own calendar says, not what UTC says.
+    const at = new Date('2026-08-19T21:30:00.000Z');
+    expect(wallClearedBody(formatDayMonthRu(at, 'Europe/Moscow'))).toBe(
+      'Доску очистили 20 августа',
+    );
+    expect(wallClearedBody(formatDayMonthRu(at, 'UTC'))).toBe('Доску очистили 19 августа');
   });
 });
 
@@ -822,6 +905,137 @@ describe.skipIf(!TEST_DATABASE_URL)('wall (database)', () => {
     expect(hydrated[0]?.commentCount).toBe(0);
 
     await repo.softDeletePost(db, post.id);
+  });
+
+  /**
+   * §D7.11 / D13, the rule this whole feature turns on: clearing the wall is a
+   * **horizon, not a delete**. The first time somebody clears a wall holding a
+   * thank-you their mother wrote, `DELETE FROM posts` has no answer.
+   */
+  it('clears the wall as a horizon: the feed empties, every row survives, open polls stay', async () => {
+    const { users } = await import('../identity/users.schema.js');
+    const [adminRow] = await db
+      .insert(users)
+      .values({ displayName: 'Аня', role: 'admin', status: 'active' })
+      .returning();
+    if (!adminRow) throw new Error('fixture admin was not created');
+    createdUserIds.push(adminRow.id);
+    const admin = buildAuthContext(adminRow);
+
+    const post = await repo.insertPost(db, {
+      authorId: adult.userId,
+      type: 'announcement',
+      body: 'Завтра к бабушке',
+      title: 'К бабушке',
+    });
+    const openPoll = await repo.insertPoll(db, {
+      question: 'Куда едем?',
+      allowMultiple: false,
+      createdById: adult.userId,
+    });
+    await repo.insertPollOptions(db, openPoll.id, ['Дача', 'Город']);
+    const thanks = await repo.insertKudos(db, {
+      fromUserId: adult.userId,
+      toUserId: child.userId,
+      occurrenceId: null,
+      emoji: '\u{1F64F}',
+      message: 'спасибо, что полила цветы',
+    });
+
+    const before = await getWallFeed(db, admin, { limit: 15 });
+    // Whatever the horizon is when this test starts — the settings row is
+    // family-wide and another suite may have cleared it — is what the undo has
+    // to put back. Asserting `null` here would be asserting global state this
+    // test does not own.
+    const horizonBefore = before.clearedAt;
+    expect(before.items.some((item) => item.id === post.id)).toBe(true);
+    expect(before.items.some((item) => item.id === thanks.id)).toBe(true);
+    expect(before.openPolls.map((p) => p.id)).toContain(openPoll.id);
+
+    // An adult may moderate one note; resetting what six people see is a
+    // different thing and needs `settings:manage` (§D7.11).
+    await expect(clearWall(db, adult)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    const cleared = await clearWall(db, admin);
+    const after = await getWallFeed(db, admin, { limit: 15 });
+
+    expect(after.clearedAt).toBe(cleared.clearedAt);
+    expect(after.items.some((item) => item.id === post.id)).toBe(false);
+    expect(after.items.some((item) => item.id === thanks.id)).toBe(false);
+    // …and the question nobody answered is still being asked.
+    expect(after.openPolls.map((p) => p.id)).toContain(openPoll.id);
+    // The marker post is stamped after the horizon, so it survives it and
+    // becomes the feed's visible floor.
+    expect(after.items.some((item) => item.id === cleared.systemPostId)).toBe(true);
+
+    // Nothing was destroyed.
+    expect(await repo.findPostById(db, post.id)).not.toBeNull();
+    const kudosStill = await repo.listKudos(db, { limit: 50 });
+    expect(kudosStill.some((row) => row.id === thanks.id)).toBe(true);
+
+    await restoreWall(db, admin, {
+      clearedAt: cleared.previousClearedAt,
+      systemPostId: cleared.systemPostId,
+    });
+    const restored = await getWallFeed(db, admin, { limit: 15 });
+    expect(restored.clearedAt).toBe(horizonBefore);
+    expect(restored.items.some((item) => item.id === post.id)).toBe(true);
+    expect(restored.items.some((item) => item.id === thanks.id)).toBe(true);
+    // The undone clear leaves no trace of itself.
+    expect(restored.items.some((item) => item.id === cleared.systemPostId)).toBe(false);
+
+    await repo.softDeletePost(db, post.id);
+    await repo.deletePoll(db, openPoll.id);
+  });
+
+  /**
+   * A closed poll leaves the head and takes its chronological place; an open
+   * one is in the head or nowhere. A card is never in two places (§D7.4).
+   */
+  it('serves open polls in the head and closed polls in the stream, never both', async () => {
+    const closed = await repo.insertPoll(db, {
+      question: 'Что смотрим?',
+      allowMultiple: false,
+      createdById: adult.userId,
+      closedAt: new Date(),
+    });
+    await repo.insertPollOptions(db, closed.id, ['Мультик', 'Кино']);
+
+    const feed = await getWallFeed(db, adult, { limit: 15 });
+    expect(feed.openPolls.map((p) => p.id)).not.toContain(closed.id);
+    const inStream = feed.items.filter((item) => item.id === closed.id);
+    expect(inStream).toHaveLength(1);
+    expect(inStream[0]?.kind).toBe('poll');
+
+    await repo.deletePoll(db, closed.id);
+  });
+
+  /**
+   * Found by driving the built app: the activity log writes a row for every
+   * post, poll and kudos, and now that each of those is a **card**, the row
+   * repeats the card 40px below it.
+   */
+  it('never draws an activity line for something that has its own card', async () => {
+    const thanks = await giveKudos(db, adult, {
+      toUserId: child.userId,
+      emoji: '\u{1F44F}',
+      message: 'спасибо',
+      occurrenceId: null,
+    });
+
+    const feed = await getWallFeed(db, adult, { limit: 15 });
+    const card = feed.items.find((item) => item.id === thanks.id);
+    expect(card?.kind).toBe('kudos');
+
+    // …and the log row that names the same thank-you is not in the stream.
+    const echoed = feed.items.filter(
+      (item) => item.kind === 'activity' && item.activity.verb === 'kudos.given',
+    );
+    expect(echoed).toHaveLength(0);
+
+    // It is still in the family's own log, which other modules read.
+    const log = await listActivity(db, adult, { limit: 50, verb: 'kudos.given' });
+    expect(log.items.some((row) => row.entityId === thanks.id)).toBe(true);
   });
 
   it('keeps kudos unique per (fromUser, occurrence, emoji)', async () => {

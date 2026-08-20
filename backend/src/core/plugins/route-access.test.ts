@@ -101,7 +101,6 @@ describe('D4: a denial must not confirm what it denies', () => {
       'GET /shopping/lists',
       'GET /chores/rotations',
       'GET /chores/swaps',
-      'GET /chores/fairness',
     ]) {
       expect(statusFor(routeAt(routes, key).access, guest), key).toBe(404);
     }
