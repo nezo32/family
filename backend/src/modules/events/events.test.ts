@@ -1086,6 +1086,60 @@ describe.skipIf(!TEST_DATABASE_URL)('events (database)', () => {
     }
   });
 
+
+  it('finds a due reminder against a real database', async () => {
+    // Regression: every `Date` in this query reached postgres.js raw, and
+    // `drizzle-orm/postgres-js` nulls that driver's timestamp serialisers — so
+    // the query threw at *bind* time, every fifteen minutes, in production:
+    //
+    //   TypeError: The "string" argument must be of type string … Received an
+    //   instance of Date
+    //
+    // No event reminder had ever fired. Nothing caught it because
+    // `listDueReminders` had no test at all, and the failure is invisible from
+    // the outside: the job simply logs and retries forever.
+    const created = await createSeries(db, owner, {
+      title: 'Приём у стоматолога',
+      description: null,
+      location: null,
+      visibility: 'household',
+      durationMinutes: 60,
+      isAllDay: false,
+      reminderOffsets: [30],
+      color: null,
+      category: 'appointment',
+      attendeeIds: [],
+      recurrence: {
+        mode: 'once',
+        dtstartLocal: '2026-09-10T19:00:00',
+        timezone: MOSCOW,
+        rdatesLocal: [],
+        exdatesLocal: [],
+      },
+    });
+    seriesIds.push(created.series.id);
+
+    // 19:00 MSK is 16:00Z; a 30-minute lead makes the reminder due at 15:30Z.
+    const due = await repo.listDueReminders(db, {
+      now: new Date('2026-09-10T15:30:00.000Z'),
+      lookbackMinutes: 15,
+      limit: 50,
+    });
+
+    const mine = due.filter((r) => r.seriesId === created.series.id);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]?.offsetMinutes).toBe(30);
+    expect(mine[0]?.title).toBe('Приём у стоматолога');
+
+    // Outside the lookback window it must not fire again — that lower bound is
+    // what stops a worker that was down all day waking everyone at once.
+    const stale = await repo.listDueReminders(db, {
+      now: new Date('2026-09-10T15:50:00.000Z'),
+      lookbackMinutes: 15,
+      limit: 50,
+    });
+    expect(stale.filter((r) => r.seriesId === created.series.id)).toHaveLength(0);
+  });
   it('syncs birthdays idempotently and updates rather than duplicating', async () => {
     const { and, eq } = await import('drizzle-orm');
     const { eventSeries } = await import('./events.schema.js');

@@ -19,6 +19,7 @@ import type { EventSourceKind, Rsvp } from '@family/shared';
 
 import type { Executor } from '../../core/db.js';
 import { internal } from '../../core/errors.js';
+import { ts } from '../../core/sql.js';
 import {
   decodeTimestampCursor,
   encodeTimestampCursor,
@@ -1013,10 +1014,10 @@ export async function listDueReminders(
     cross join lateral unnest(s.reminder_offsets) as ro(offset_minutes)
     where o.status = 'scheduled'
       and s.archived_at is null
-      and o.starts_at > ${options.now}
-      and o.starts_at - make_interval(mins => ro.offset_minutes) <= ${options.now}
+      and o.starts_at > ${ts(options.now)}
+      and o.starts_at - make_interval(mins => ro.offset_minutes) <= ${ts(options.now)}
       and o.starts_at - make_interval(mins => ro.offset_minutes) >
-          ${new Date(options.now.getTime() - options.lookbackMinutes * 60_000)}
+          ${ts(new Date(options.now.getTime() - options.lookbackMinutes * 60_000))}
     order by o.starts_at asc
     limit ${options.limit}
   `);

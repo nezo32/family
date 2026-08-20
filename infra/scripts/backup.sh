@@ -169,8 +169,30 @@ backup_object_storage() {
   # CREATE TABLE grep above. An archive of an empty volume is a valid gzip of a
   # valid tar and a catastrophe to discover during a restore. RustFS lays the
   # bucket out as `./<bucket>/<key>/`, so the bucket directory must be present.
-  if ! gzip -cd "${tmp}" | tar -tf - "./${S3_BUCKET}" >/dev/null 2>&1; then
-    die "objects: archive contains no './${S3_BUCKET}' directory — refusing to keep it"
+  #
+  # Except on the very first deploy after storage is introduced: the backend
+  # creates the bucket lazily, on the first upload, so a freshly created volume
+  # legitimately has no `./<bucket>` in it yet. Failing there aborted the entire
+  # deploy — the backup runs before anything could ever have written an object.
+  #
+  # The two cases are told apart by whether a previous objects backup exists. A
+  # bucket that has never existed is a skip; a bucket that has *stopped*
+  # existing is exactly the disaster this check was written for, and must never
+  # overwrite the last good archive.
+  # Counted through a variable for the same SIGPIPE reason as the dump check
+  # above: `tar -tf - <member>` can stop as soon as it finds the entry, and
+  # under `pipefail` the upstream `gzip -cd` dying of SIGPIPE would be read as
+  # "bucket absent" — discarding a perfectly good archive at random.
+  BUCKET_ENTRIES="$(gzip -cd "${tmp}" | tar -tf - 2>/dev/null \
+    | grep -cE "^\./${S3_BUCKET}(/|$)" || true)"
+  if [ "${BUCKET_ENTRIES:-0}" -eq 0 ]; then
+    rm -f -- "${tmp}"
+    trap - ERR INT TERM
+    if [ -e "${BACKUP_DIR}/latest-objects.tar.gz" ]; then
+      die "objects: '${S3_BUCKET}' is missing from the volume but a previous backup exists — refusing to overwrite it"
+    fi
+    log "objects: skipped (bucket '${S3_BUCKET}' does not exist yet — nothing uploaded)"
+    return 0
   fi
 
   # How many avatars we actually captured. Zero is legitimate (nobody has set a
@@ -243,7 +265,17 @@ gzip -t "${TMP}" || die "gzip integrity check failed"
 
 # Sanity check the payload, not just the container format. A dump that restores
 # to an empty database is a silent catastrophe.
-if ! gzip -cd "${TMP}" | grep -qE '^(CREATE TABLE|COPY )' ; then
+#
+# `grep -c`, not `grep -q`, and the count goes through a variable. Under
+# `set -o pipefail` a `grep -q` exits the instant it matches, `gzip -cd` then
+# dies of SIGPIPE, and the pipeline reports failure — so a *valid* dump is read
+# as "no CREATE TABLE found" and thrown away. Whether it happens is a race
+# between gzip finishing and grep short-circuiting, which at this dump's ~16KB
+# it lost about half the time: the same backup passed at 00:19 and failed at
+# 00:21 on identical data. `grep -c` consumes the whole stream, so gzip always
+# finishes.
+DUMP_STATEMENTS="$(gzip -cd "${TMP}" | grep -cE '^(CREATE TABLE|COPY )' || true)"
+if [ "${DUMP_STATEMENTS:-0}" -eq 0 ]; then
   die "dump contains no CREATE TABLE/COPY statements — refusing to keep it"
 fi
 

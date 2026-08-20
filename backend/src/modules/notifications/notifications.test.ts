@@ -977,18 +977,10 @@ describe('subscription health (D11)', () => {
   });
 });
 
-/* ========================================================================== */
-/* Integration — requires a real Postgres                                      */
-/* ========================================================================== */
+/* Integration lives in `notifications.inbox.integration.test.ts`, because this
+   file mocks the repository module-wide and a test that imports the mock while
+   claiming to exercise Postgres is worse than no test. */
 
-describe.skipIf(!process.env.TEST_DATABASE_URL)('notifications (integration)', () => {
-  it('the partial unique index really rejects a duplicate dedupe key', () => {
-    // Placeholder for the DB-backed suite: insert the same dedupe_key twice and
-    // assert exactly one row survives, then assert that an UPDATE attempting to
-    // move `acknowledged` back to `delivered` affects zero rows.
-    expect(process.env.TEST_DATABASE_URL).toBeTruthy();
-  });
-});
 
 /* -------------------------------------------------------------------------- */
 /* Fixtures                                                                    */

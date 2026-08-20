@@ -863,7 +863,7 @@ export async function listInbox(
   if (options.unreadOnly) predicates.push(isNull(notificationDeliveries.readAt));
   if (options.cursor) {
     predicates.push(
-      sql`(${notificationDeliveries.createdAt}, ${notificationDeliveries.id}) < (${options.cursor.createdAt}, ${options.cursor.id})`,
+      sql`(${notificationDeliveries.createdAt}, ${notificationDeliveries.id}) < (${ts(options.cursor.createdAt)}, ${options.cursor.id})`,
     );
   }
 
