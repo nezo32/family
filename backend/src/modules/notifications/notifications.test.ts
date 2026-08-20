@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * Notifications tests.
@@ -32,16 +32,51 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
  * touches `core/logger.ts`, so the environment has to be right before then.
  * `enqueueMock` lives here too — a `vi.mock` factory is hoisted above ordinary
  * `const` declarations and would otherwise hit the temporal dead zone.
+ *
+ * Every write is remembered and undone in the `afterAll` below. It has to be,
+ * because `vitest.config.ts` pins `singleFork`: the whole suite is one process
+ * and `process.env` is shared by every file in it. `TELEGRAM_BOT_TOKEN` set and
+ * left set here is what made `oauth.test.ts` fail in CI and pass locally —
+ * `oauth.telegram.enabled` is `Boolean(TELEGRAM_BOT_TOKEN)`, so a leaked token
+ * switched the provider on for whichever file the sequencer happened to run
+ * next, and the sequencer orders differently on a warm checkout than on CI's
+ * cold one. `src/test/env-guard.ts` now fails any file that does this; the
+ * bookkeeping below is what keeps this one from being that file.
  */
-const { enqueueMock } = vi.hoisted(() => {
-  // `src/test/setup.ts` sets LOG_LEVEL=silent, which is not a member of the
-  // config enum; pin something valid before `core/logger.ts` is evaluated.
+const { enqueueMock, restoreProviderEnv } = vi.hoisted(() => {
+  const previous = new Map<string, string | undefined>();
+  const remember = (key: string) => {
+    if (!previous.has(key)) previous.set(key, process.env[key]);
+  };
+
+  // Pinned rather than defaulted: an ambient LOG_LEVEL need not be a member of
+  // the config enum, and `core/logger.ts` is evaluated by the imports below.
+  remember('LOG_LEVEL');
   process.env.LOG_LEVEL = 'fatal';
-  process.env.VAPID_PUBLIC_KEY ??= 'test-vapid-public-key';
-  process.env.VAPID_PRIVATE_KEY ??= 'test-vapid-private-key';
-  process.env.VAPID_SUBJECT ??= 'mailto:admin@family.example.com';
-  process.env.TELEGRAM_BOT_TOKEN ??= '123456:test-bot-token';
-  return { enqueueMock: vi.fn(() => Promise.resolve()) };
+
+  // Defaulted, never overwritten: a runner that offers real credentials keeps
+  // them. `enabled` is `Boolean(<token>)` for every provider, so a value has to
+  // be *present* — pinning an empty string here would disable the very code
+  // these tests exercise.
+  for (const [key, value] of Object.entries({
+    VAPID_PUBLIC_KEY: 'test-vapid-public-key',
+    VAPID_PRIVATE_KEY: 'test-vapid-private-key',
+    VAPID_SUBJECT: 'mailto:admin@family.example.com',
+    TELEGRAM_BOT_TOKEN: '123456:test-bot-token',
+  })) {
+    remember(key);
+    process.env[key] ??= value;
+  }
+
+  return {
+    enqueueMock: vi.fn(() => Promise.resolve()),
+    restoreProviderEnv: () => {
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    },
+  };
 });
 
 /** BullMQ is never reachable here; capture what the pipeline tried to enqueue. */
@@ -84,6 +119,7 @@ import {
   requiredAckSignal,
 } from '@family/shared';
 
+import { resetConfigForTests } from '../../core/config.js';
 import { installTemporal } from '../../core/temporal.js';
 import type { Db, Executor } from '../../core/db.js';
 import * as repo from './notifications.repository.js';
@@ -132,6 +168,19 @@ beforeAll(async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+/**
+ * Hand the environment back exactly as it was found.
+ *
+ * `resetConfigForTests()` is half the fix, not a flourish: `getConfig()`
+ * memoizes, so restoring the variables while leaving the parsed config in place
+ * would leave the *effective* configuration poisoned for anything in this
+ * process that reads it afterwards.
+ */
+afterAll(() => {
+  restoreProviderEnv();
+  resetConfigForTests();
 });
 
 /* ========================================================================== */

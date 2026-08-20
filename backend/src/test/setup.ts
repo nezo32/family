@@ -1,6 +1,7 @@
 import { beforeAll } from 'vitest';
 
 import { installTemporal } from '../core/temporal.js';
+import { installEnvLeakGuard } from './env-guard.js';
 
 /**
  * Global test setup.
@@ -14,7 +15,20 @@ import { installTemporal } from '../core/temporal.js';
 process.env.NODE_ENV = 'test';
 process.env.TZ = 'Europe/Moscow';
 
-process.env.DATABASE_URL ??= 'postgres://family:family@localhost:5432/family_test';
+/**
+ * Pointed at the test database **here**, not only in `src/test/db.ts`.
+ *
+ * `db.ts` assigns `DATABASE_URL := TEST_DATABASE_URL` at its own module scope,
+ * which is after this file has run — so with an ambient `DATABASE_URL` in the
+ * shell the two disagreed, and the per-file environment guard below correctly
+ * reported the first DB-backed file as having changed the process. Deciding it
+ * once, in the one place that runs before every test file, makes `db.ts`'s
+ * assignment a value-identical no-op and keeps the baseline honest.
+ */
+process.env.DATABASE_URL =
+  process.env.TEST_DATABASE_URL ??
+  process.env.DATABASE_URL ??
+  'postgres://family:family@localhost:5432/family_test';
 
 /**
  * Redis for the DB-backed half of the suite.
@@ -89,6 +103,13 @@ process.env.ENABLE_SWAGGER ??= 'false';
 // `core/logger.js` fail at import time. Silencing in tests is handled by
 // `buildLoggerOptions()` itself (`config.isTest` forces level `silent`).
 process.env.LOG_LEVEL ??= 'fatal';
+
+/**
+ * `process.env` is shared by the whole run — see `env-guard.ts` for why, and for
+ * what to do when a variable is genuinely meant to be process-wide (answer: set
+ * it in this file, above).
+ */
+installEnvLeakGuard();
 
 beforeAll(async () => {
   await installTemporal();

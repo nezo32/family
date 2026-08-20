@@ -462,6 +462,92 @@ and does two things:
 
 Set `TEST_REDIS_URL` if your Redis is elsewhere.
 
+### `process.env` is shared by the whole run — and it is guarded
+
+`vitest.config.ts` pins `pool: 'forks'` with `singleFork: true`, so all 42 files
+run in **one operating-system process**. Module state does not cross that
+boundary — Vitest gives each file a fresh module registry, so `getConfig()`'s
+memo is per-file — but `process.env` does. A file that writes a variable and
+does not put it back reconfigures the application for every file after it.
+
+Which files those are is decided by Vitest's sequencer, and it does not decide
+the same way twice: it orders by **cached per-file durations**, falling back to
+file size when `node_modules/.vite/vitest` is absent. A CI checkout is always
+cold, so CI runs largest-first; a developer's tree is warm and runs a different
+order entirely. A leak is therefore a coin flip that lands one way here and the
+other way there.
+
+That is not hypothetical. `notifications.test.ts` and `emission.test.ts` each
+set `TELEGRAM_BOT_TOKEN` in a `vi.hoisted()` block and never restored it. Cold,
+they sort ahead of `oauth.test.ts`; `config.oauth.telegram.enabled` is just
+`Boolean(TELEGRAM_BOT_TOKEN)`, so the leaked token switched the provider on, the
+503 preflight was skipped, the callback took the replay branch and the run died
+on `expected null to be 'SERVICE_UNAVAILABLE'` — in a file nobody had touched,
+green on every developer machine.
+
+**`src/test/env-guard.ts` closes that class.** It snapshots `process.env` while
+the setup file is still evaluating — before the test file is imported, which is
+the only moment earlier than a `vi.hoisted()` block — and diffs it in an
+`afterAll`. If anything differs it restores the snapshot, calls
+`resetConfigForTests()`, and **fails the file**, naming it and every variable it
+left behind:
+
+```
+FAIL src/modules/notifications/zz-example.test.ts
+Error: This test file changed process.env and did not put it back:
+  - TELEGRAM_BOT_TOKEN: (unset) -> "123456:deliberate-leak"
+```
+
+Restoring as well as reporting is deliberate: without it one leak produces a
+failure in the guilty file _plus_ a cascade in innocent ones, and the loudest
+output is the least informative. With it there is exactly one failure and it
+points at the cause.
+
+Two things about that mechanism are load-bearing:
+
+- **`sequence: { hooks: 'stack' }` in `vitest.config.ts`.** That is Vitest's
+  default, pinned explicitly. Setup-file hooks are registered first, and only
+  `stack` unwinds `afterAll` in reverse registration order — so the guard runs
+  _after_ a file's own teardown. Under `parallel` or `list` it runs before, and
+  reports leaks that were about to be cleaned up.
+- **Restoring the variable is only half of it.** `getConfig()` memoizes, so
+  putting `TELEGRAM_BOT_TOKEN` back while leaving the parsed config in place is
+  the same bug wearing a different hat. Always pair the restore with
+  `resetConfigForTests()`.
+
+**If your file needs a variable**, save it, set it, and put it back — the
+pattern in `src/modules/identity/oauth/oauth-callback.integration.test.ts`, and
+in the `vi.hoisted()` blocks of the two notifications files for the case where
+the write has to happen above the imports.
+
+**If a variable is genuinely meant to be process-wide**, declare it in
+`src/test/setup.ts`. That runs before the snapshot is taken for every file, so
+it becomes part of the baseline instead of a diff against it. `DATABASE_URL`,
+`REDIS_URL` and the throwaway secrets live there for exactly this reason —
+`DATABASE_URL` was moved to prefer `TEST_DATABASE_URL` there rather than only in
+`src/test/db.ts`, whose module-scope assignment runs later and disagreed with the
+baseline whenever the shell exported one. Do not add an ignore list to the guard;
+a variable everyone needs to see belongs where everyone can see it declared.
+
+**Pinning the value globally is not a fix, and was tried.** `enabled` is
+`Boolean(<token>)` for every provider, so setting `TELEGRAM_BOT_TOKEN=''` in
+`setup.ts` up front stops the `??=` in `notifications.test.ts` from firing at all
+and breaks its D11 arrival-receipt test. Those files genuinely need the value;
+it just must not escape them.
+
+### Reproducing CI's file order
+
+```bash
+cd backend
+rm -rf node_modules/.vite/vitest    # what a fresh CI checkout has
+npx vitest run
+```
+
+Run it both ways — cold and warm — after touching anything that reads
+configuration. The sequencer's cold fallback is by _file size_, which is not a
+stable contract, so the guard rather than the ordering is what actually keeps
+the two environments agreeing.
+
 ---
 
 ## How isolation works
@@ -496,6 +582,7 @@ from rebuilding the app.
 | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `src/test/db.ts`                                          | test-database wiring, `truncateAll()`                                                                                               |
 | `src/test/harness.ts`                                     | app lifecycle, `request()`, role fixtures                                                                                           |
+| `src/test/env-guard.ts`                                   | the per-file `process.env` boundary — fails any file that leaves a variable changed                                                 |
 | `src/modules/identity/auth-lifecycle.integration.test.ts` | register → approve → login → refresh → logout, concurrent approval, suspension, refresh rotation under concurrency, reuse detection |
 | `src/modules/identity/permissions.integration.test.ts`    | the role matrix through the real router, 404-vs-403, escalation guards                                                              |
 | `src/modules/goals/money.integration.test.ts`             | balance ≡ ledger sum, idempotent `clientId`, row-lock serialisation, bigint precision                                               |

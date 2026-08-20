@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * **Who gets told, and how loudly.**
@@ -28,13 +28,51 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 /* Environment — hoisted above every import                                    */
 /* -------------------------------------------------------------------------- */
 
-const { enqueueMock } = vi.hoisted(() => {
+/**
+ * Hoisted above every import: the config is parsed the first time any module
+ * touches `core/logger.ts`, so the environment has to be right before then.
+ *
+ * Every write is remembered and undone in the `afterAll` below, because
+ * `vitest.config.ts` pins `singleFork` — the whole suite is one process and
+ * `process.env` is shared by every file in it. `TELEGRAM_BOT_TOKEN` set and left
+ * set here is what made `oauth.test.ts` fail in CI and pass locally, since
+ * `oauth.telegram.enabled` is `Boolean(TELEGRAM_BOT_TOKEN)` and the sequencer
+ * orders files differently on a warm checkout than on CI's cold one.
+ * `src/test/env-guard.ts` now fails any file that leaks; this is the bookkeeping
+ * that keeps this one honest. See `notifications.test.ts` for the same block.
+ */
+const { enqueueMock, restoreProviderEnv } = vi.hoisted(() => {
+  const previous = new Map<string, string | undefined>();
+  const remember = (key: string) => {
+    if (!previous.has(key)) previous.set(key, process.env[key]);
+  };
+
+  // Pinned rather than defaulted: an ambient LOG_LEVEL need not be a member of
+  // the config enum, and `core/logger.ts` is evaluated by the imports below.
+  remember('LOG_LEVEL');
   process.env.LOG_LEVEL = 'fatal';
-  process.env.VAPID_PUBLIC_KEY ??= 'test-vapid-public-key';
-  process.env.VAPID_PRIVATE_KEY ??= 'test-vapid-private-key';
-  process.env.VAPID_SUBJECT ??= 'mailto:admin@family.example.com';
-  process.env.TELEGRAM_BOT_TOKEN ??= '123456:test-bot-token';
-  return { enqueueMock: vi.fn(() => Promise.resolve()) };
+
+  // Defaulted, never overwritten. `enabled` is `Boolean(<token>)` for every
+  // provider, so a value has to be *present*.
+  for (const [key, value] of Object.entries({
+    VAPID_PUBLIC_KEY: 'test-vapid-public-key',
+    VAPID_PRIVATE_KEY: 'test-vapid-private-key',
+    VAPID_SUBJECT: 'mailto:admin@family.example.com',
+    TELEGRAM_BOT_TOKEN: '123456:test-bot-token',
+  })) {
+    remember(key);
+    process.env[key] ??= value;
+  }
+
+  return {
+    enqueueMock: vi.fn(() => Promise.resolve()),
+    restoreProviderEnv: () => {
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    },
+  };
 });
 
 vi.mock('../../core/queue/queues.js', () => ({
@@ -80,6 +118,7 @@ import {
   type Role,
 } from '@family/shared';
 
+import { resetConfigForTests } from '../../core/config.js';
 import { installTemporal } from '../../core/temporal.js';
 import { buildAuthContext, type AuthContext } from '../../core/auth/context.js';
 import type { Db, Executor } from '../../core/db.js';
@@ -183,6 +222,19 @@ beforeEach(() => {
   vi.mocked(repo.insertIntent).mockImplementation((_x, values) =>
     Promise.resolve({ id: randomUUID(), ...values } as unknown as NotificationIntentRow),
   );
+});
+
+/**
+ * Hand the environment back exactly as it was found.
+ *
+ * `resetConfigForTests()` is half the fix, not a flourish: `getConfig()`
+ * memoizes, so restoring the variables while leaving the parsed config in place
+ * would leave the *effective* configuration poisoned for anything in this
+ * process that reads it afterwards.
+ */
+afterAll(() => {
+  restoreProviderEnv();
+  resetConfigForTests();
 });
 
 /* ========================================================================== */
