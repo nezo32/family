@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { ListTodo, Plus } from 'lucide-react';
 import { Can } from '@/shared/auth/Can';
+import { SideColumn } from '@/app/layout/SideColumn';
 import { PageHeader } from '@/shared/components/PageHeader';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
@@ -77,67 +78,80 @@ export default function TasksPage() {
         }
       />
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
-        <div className="min-w-0 space-y-5">
-          <TaskFilters
-            value={filters}
-            onChange={setFilters}
-            members={roster}
-            categories={categories}
+      {/*
+        No grid here any more: `AppShell` owns the two-column composition (§C1)
+        and this page just says which half its content belongs in. The local
+        `lg:grid-cols-[1fr_20rem]` this replaces would now be nested inside a
+        720px main column and split the task list down to ~376px.
+      */}
+      <div className="min-w-0 space-y-5">
+        <TaskFilters
+          value={filters}
+          onChange={setFilters}
+          members={roster}
+          categories={categories}
+        />
+
+        {occurrences.isPending ? <TaskListSkeleton /> : null}
+
+        {occurrences.isError ? (
+          <ErrorState
+            error={occurrences.error}
+            title={TASKS_RU.loadError}
+            onRetry={() => {
+              void occurrences.refetch();
+            }}
           />
+        ) : null}
 
-          {occurrences.isPending ? <TaskListSkeleton /> : null}
-
-          {occurrences.isError ? (
-            <ErrorState
-              error={occurrences.error}
-              title={TASKS_RU.loadError}
-              onRetry={() => {
-                void occurrences.refetch();
-              }}
-            />
-          ) : null}
-
-          {occurrences.isSuccess && !hasVisible ? (
-            <EmptyState
-              icon={ListTodo}
-              title={filtersActive ? TASKS_RU.emptyFilteredTitle : TASKS_RU.emptyTitle}
-              description={
-                filtersActive ? TASKS_RU.emptyFilteredDescription : TASKS_RU.emptyDescription
-              }
-              action={
-                filtersActive ? (
+        {occurrences.isSuccess && !hasVisible ? (
+          <EmptyState
+            icon={ListTodo}
+            title={filtersActive ? TASKS_RU.emptyFilteredTitle : TASKS_RU.emptyTitle}
+            description={
+              filtersActive ? TASKS_RU.emptyFilteredDescription : TASKS_RU.emptyDescription
+            }
+            action={
+              filtersActive ? (
+                <Button
+                  variant="outline"
+                  className="min-h-11"
+                  onClick={() => {
+                    setFilters(DEFAULT_FILTERS);
+                  }}
+                >
+                  {TASKS_RU.filters.reset}
+                </Button>
+              ) : (
+                <Can perm="task:create">
                   <Button
-                    variant="outline"
                     className="min-h-11"
                     onClick={() => {
-                      setFilters(DEFAULT_FILTERS);
+                      setCreating(true);
                     }}
                   >
-                    {TASKS_RU.filters.reset}
+                    {TASKS_RU.actions.create}
                   </Button>
-                ) : (
-                  <Can perm="task:create">
-                    <Button
-                      className="min-h-11"
-                      onClick={() => {
-                        setCreating(true);
-                      }}
-                    >
-                      {TASKS_RU.actions.create}
-                    </Button>
-                  </Can>
-                )
-              }
-            />
-          ) : null}
+                </Can>
+              )
+            }
+          />
+        ) : null}
 
-          {occurrences.isSuccess && hasVisible ? (
-            <TaskList groups={visibleGroups} members={roster} />
-          ) : null}
-        </div>
+        {occurrences.isSuccess && hasVisible ? (
+          <TaskList groups={visibleGroups} members={roster} />
+        ) : null}
+      </div>
 
-        <aside className="space-y-4 lg:sticky lg:top-4">
+      {/*
+        §C4: «Нагрузка за неделю» beside the list on a wide screen, at the
+        bottom of it on a phone. Фильтры belong here too, but that move is
+        paired with turning them into a «Фильтры · N» sheet row on a phone
+        (§D2); moved on their own they would land at the *bottom* of the phone
+        screen, below the list they filter.
+      */}
+      <SideColumn>
+        <div className="space-y-4">
           <SwapInbox swaps={swaps.data?.items ?? []} members={roster} />
 
           {fairness.isPending && fairness.fetchStatus !== 'idle' ? (
@@ -153,8 +167,8 @@ export default function TasksPage() {
               imbalance={fairness.data.imbalance}
             />
           ) : null}
-        </aside>
-      </div>
+        </div>
+      </SideColumn>
 
       <TaskEditor open={creating} onOpenChange={setCreating} members={roster} />
     </>

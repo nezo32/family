@@ -19,6 +19,7 @@ const MODULE_LOADERS: ModuleLoader[] = [
   () => import('./identity/auth.routes.js'),
   () => import('./identity/oauth/oauth.routes.js'),
   () => import('./identity/users.routes.js'),
+  () => import('./storage/storage.routes.js'),
   () => import('./goals/goals.routes.js'),
   () => import('./shopping/shopping.routes.js'),
   () => import('./wall/wall.routes.js'),

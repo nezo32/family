@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { ErrorState } from '@/shared/components/ErrorState';
+import { SideColumn } from '@/app/layout/SideColumn';
 import { useCan } from '@/shared/auth/use-can';
-import { cn } from '@/shared/lib/utils';
 import { useMe } from '@/shared/auth/use-me';
 import { ApprovalsWidget } from '../components/ApprovalsWidget';
 import { EventsWidget } from '../components/EventsWidget';
@@ -25,11 +25,11 @@ import { TODAY_RU } from '../locale';
  *
  *   overdue → my tasks → events → urgent shopping → savings → my week → approvals
  *
- * On a phone that order **is** the visual order (a single flex column with
- * `order-*`); on a wide screen the same widgets fall into a two-column
- * composition so the page reads as a dashboard rather than a stretched phone
- * column. The column wrappers are `display: contents` on mobile precisely so
- * that both layouts share one DOM and one priority list.
+ * On a phone that order **is** the visual order; on a wide screen the last four
+ * move into the shell's side column (§C4) and the first four keep the main one.
+ * The split is the same DOM either way — `SideColumn` portals into `AppShell`'s
+ * `<aside>`, which below 1088px is simply the next row of a one-column grid, so
+ * the phone reads the priority list top to bottom without a single `order-*`.
  *
  * Permissions are resolved with `useCan()` and never with `role ===` (D4). The
  * server already sends `null` for a section the caller may not read; the client
@@ -88,25 +88,6 @@ export default function TodayPage() {
   const openEvents = showEvents ? events.today.length + events.tomorrow.length : 0;
   const dayIsFree = isDayEmpty(data);
 
-  /*
-   * How many widgets each desktop column will actually hold. The split used to
-   * be a hard `1.6fr / 1fr` whatever the day looked like, which on a quiet day
-   * gave 60% of the width to a column that ended at y=470 while the 1fr column
-   * ran to y=940 — the page pointed at its emptier half. The wider primary
-   * column is worth it only when there is something in it.
-   */
-  const primaryWidgets =
-    (dayIsFree ? 1 : 0) +
-    (showTasks && tasks.overdue.length > 0 ? 1 : 0) +
-    (showTasks && !dayIsFree ? 1 : 0) +
-    (showEvents && !dayIsFree ? 1 : 0);
-  const asideWidgets =
-    (approvals && approvals.length > 0 ? 1 : 0) +
-    (shopping && shopping.urgent.length > 0 ? 1 : 0) +
-    (goals ? 1 : 0) +
-    (fairness ? 1 : 0);
-  const leanPrimary = primaryWidgets < asideWidgets;
-
   return (
     <>
       <GreetingHeader
@@ -116,68 +97,34 @@ export default function TodayPage() {
         events={openEvents}
       />
 
-      <div
-        className={cn(
-          'flex flex-col gap-4 lg:grid lg:items-start lg:gap-6',
-          leanPrimary
-            ? 'lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]'
-            : 'lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]',
-        )}
-      >
-        {/* Primary column on desktop; on mobile these flow into the parent. */}
-        <div className="contents lg:flex lg:flex-col lg:gap-6">
-          {dayIsFree ? (
-            <div className="order-1 lg:order-0">
-              <FreeDayCard />
-            </div>
-          ) : null}
+      <div className="flex flex-col gap-4">
+        {dayIsFree ? <FreeDayCard /> : null}
 
-          {showTasks && tasks.overdue.length > 0 ? (
-            <div className="order-2 lg:order-0">
-              <OverdueWidget items={tasks.overdue} onComplete={onComplete} />
-            </div>
-          ) : null}
+        {showTasks && tasks.overdue.length > 0 ? (
+          <OverdueWidget items={tasks.overdue} onComplete={onComplete} />
+        ) : null}
 
-          {showTasks && !dayIsFree ? (
-            <div className="order-3 lg:order-0">
-              <MyTasksWidget tasks={tasks} onComplete={onComplete} />
-            </div>
-          ) : null}
+        {showTasks && !dayIsFree ? <MyTasksWidget tasks={tasks} onComplete={onComplete} /> : null}
 
-          {showEvents && !dayIsFree ? (
-            <div className="order-4 lg:order-0">
-              <EventsWidget events={events} />
-            </div>
-          ) : null}
-        </div>
-
-        {/* Aside on desktop. */}
-        <div className="contents lg:flex lg:flex-col lg:gap-6">
-          {approvals && approvals.length > 0 ? (
-            <div className="order-8 lg:order-0">
-              <ApprovalsWidget members={approvals} />
-            </div>
-          ) : null}
-
-          {shopping && shopping.urgent.length > 0 ? (
-            <div className="order-5 lg:order-0">
-              <ShoppingWidget shopping={shopping} />
-            </div>
-          ) : null}
-
-          {goals ? (
-            <div className="order-6 lg:order-0">
-              <GoalWidget milestone={goals.nearestMilestone} />
-            </div>
-          ) : null}
-
-          {fairness ? (
-            <div className="order-7 lg:order-0">
-              <LoadWidget fairness={fairness} week={week.data} />
-            </div>
-          ) : null}
-        </div>
+        {showEvents && !dayIsFree ? <EventsWidget events={events} /> : null}
       </div>
+
+      {/*
+        §C4 for Сегодня. The order here is the phone order — urgent shopping,
+        the savings milestone, the week's split, then approvals — because below
+        1088px this column is appended to the one above it verbatim.
+      */}
+      <SideColumn>
+        <div className="flex flex-col gap-4 min-[1088px]:gap-6">
+          {shopping && shopping.urgent.length > 0 ? <ShoppingWidget shopping={shopping} /> : null}
+
+          {goals ? <GoalWidget milestone={goals.nearestMilestone} /> : null}
+
+          {fairness ? <LoadWidget fairness={fairness} week={week.data} /> : null}
+
+          {approvals && approvals.length > 0 ? <ApprovalsWidget members={approvals} /> : null}
+        </div>
+      </SideColumn>
     </>
   );
 }

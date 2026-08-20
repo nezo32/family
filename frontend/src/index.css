@@ -67,7 +67,33 @@
   --input: oklch(0.8985 0.0165 78);
   --ring: oklch(0.5535 0.1545 42);
 
-  /* data-viz ramp: clay, sage, honey, plum, sky */
+  /* Semantic surfaces (design §B1).
+   *
+   * These are not lighter/darker steps of --card. A screen has exactly one
+   * "needs you now" block (§C2 band 2) and it has to read as a different KIND
+   * of surface, not a card that happens to be tinted — otherwise it is just a
+   * seventh equal tile. --surface-attention is a clay wash off the --primary
+   * hue; --surface-calm is the sage wash that marks "done / bought / reached".
+   *
+   * --hairline is the rule *inside* one surface (row to row). --border is the
+   * outline *of* a surface. Using --border for both is what makes a nine-row
+   * list read as nine boxes instead of one object. */
+  --surface-attention: oklch(0.9705 0.0225 42);
+  --surface-attention-fg: oklch(0.3585 0.0985 34);
+  --surface-calm: oklch(0.9645 0.0265 150);
+  --surface-calm-fg: oklch(0.3285 0.0525 150);
+  --hairline: oklch(0.9285 0.0125 80);
+
+  /* data-viz ramp: clay, sage, honey, plum, sky.
+   *
+   * Doubles as the **member identity ramp** (§B4): five people, five
+   * perceptually-spaced hues that were picked against this warm ground. A
+   * member's colour is chart-{(sortOrder % 5) + 1} and it is the same colour
+   * for their disc, their day-rail tick, their event bar and their load bar.
+   * `users.color` (seeded #2563eb / #db2777 / … — stock cold Tailwind hues that
+   * fight the sand background on every screen they land on) stays in the
+   * database for the ICS feed, but the UI renders from here. See the
+   * --color-member-* aliases in `@theme inline` below. */
   --chart-1: oklch(0.6435 0.1585 42);
   --chart-2: oklch(0.6185 0.1085 158);
   --chart-3: oklch(0.7785 0.1385 82);
@@ -118,6 +144,15 @@
   --input: oklch(1 0 0 / 16%);
   --ring: oklch(0.7085 0.1385 46);
 
+  /* Dark ramps for the §B1 additions. The washes stay warm/sage rather than
+   * becoming grey-blue, and --hairline becomes an alpha so it survives on top
+   * of both --card and --surface-*. */
+  --surface-attention: oklch(0.2685 0.0345 38);
+  --surface-attention-fg: oklch(0.8585 0.0705 40);
+  --surface-calm: oklch(0.2585 0.0285 152);
+  --surface-calm-fg: oklch(0.8785 0.0505 150);
+  --hairline: oklch(1 0 0 / 8%);
+
   --chart-1: oklch(0.7085 0.1485 44);
   --chart-2: oklch(0.6985 0.1085 158);
   --chart-3: oklch(0.8185 0.1385 84);
@@ -159,11 +194,27 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
+  --color-surface-attention: var(--surface-attention);
+  --color-surface-attention-foreground: var(--surface-attention-fg);
+  --color-surface-calm: var(--surface-calm);
+  --color-surface-calm-foreground: var(--surface-calm-fg);
+  --color-hairline: var(--hairline);
+
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
+
+  /* Member identity (§B4). Aliases of the chart ramp, not new colours: the
+     point of the alias is that `bg-member-3/15 text-member-3` on an avatar
+     says "this is a person" where `bg-chart-3` says "this is a data series".
+     One name per concept, one ramp underneath. */
+  --color-member-1: var(--chart-1);
+  --color-member-2: var(--chart-2);
+  --color-member-3: var(--chart-3);
+  --color-member-4: var(--chart-4);
+  --color-member-5: var(--chart-5);
 
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
@@ -185,6 +236,13 @@
     Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 
+  /* Display face (§B2). 'Onest' is deliberately **not shipped yet** (§G step 7)
+     — the stack falls straight through to Inter, so `font-display` is safe to
+     use today and gains the face later without touching a component. It is
+     never load-bearing for legibility. */
+  --font-display:
+    'Onest', 'Inter var', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
   /* iOS safe areas, exposed as Tailwind spacing tokens: `pb-safe-b`, `pt-safe-t`… */
   --spacing-safe-t: env(safe-area-inset-top, 0px);
   --spacing-safe-r: env(safe-area-inset-right, 0px);
@@ -194,6 +252,15 @@
   /* Height of the mobile bottom tab bar, excluding the home-indicator inset. */
   --spacing-tabbar: 3.5rem;
   --spacing-appbar: 3.5rem;
+
+  /* The day rail (§C3): 56px at every breakpoint. It does not grow — the
+     content column does. */
+  --spacing-rail: 3.5rem;
+
+  /* A row is never wider than 720px (§C2). The row's *surface* may be
+     full-bleed; its content stops here and stays left-aligned, so a trailing
+     chevron sits 24px from the value instead of 900px from it. */
+  --spacing-row-measure: 45rem;
 }
 
 /* ---------------------------------------------------------------------------
@@ -270,27 +337,66 @@
   }
 }
 
+/* ---------------------------------------------------------------------------
+ * Safe-area helpers.
+ *
+ * Declared with `@utility`, not as hand-written classes in `@layer utilities`:
+ * only `@utility` participates in Tailwind's variant machinery, so
+ * `data-[vaul-drawer-direction=bottom]:pb-safe` and `md:pt-safe` compile. As
+ * plain `.pb-safe` rules they silently produced nothing under a variant, which
+ * is how a fix "applied" to a primitive can end up in the stylesheet as dead
+ * text.
+ *
+ * These *set* the padding to the inset rather than adding to it. That is the
+ * point: `pb-safe` on a parent and `pb-safe` on its child cannot double-count
+ * the home indicator the way two `calc(... + env(...))` expressions would.
+ *
+ * Every one of these exists because `apple-mobile-web-app-status-bar-style` is
+ * `black-translucent` (see index.html): the installed PWA paints under the
+ * status bar and the home indicator, and respecting the insets is therefore
+ * the app's job, not the platform's.
+ * ------------------------------------------------------------------------- */
+
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@utility pl-safe {
+  padding-left: env(safe-area-inset-left, 0px);
+}
+@utility pr-safe {
+  padding-right: env(safe-area-inset-right, 0px);
+}
+@utility px-safe {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+@utility mb-safe {
+  margin-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/**
+ * Height a page gets inside `AppShell`'s `<main>`: the viewport minus the app
+ * bar, the tab bar, both vertical insets and `main`'s own 1rem of padding at
+ * each end. A screen that pins something to its bottom edge (the shopping
+ * composer) sets `min-h-app-content` so that "the bottom of the page" and "the
+ * bottom of the screen" are the same place when the content is short — without
+ * it the pinned element floats in the middle of an empty viewport.
+ */
+@utility min-h-app-content {
+  /* The trailing 1px is the app bar's bottom border, which is real height that
+     neither `--spacing-appbar` nor the tab-bar reserve accounts for. Without it
+     the page comes out exactly 1px taller than the viewport, which is enough to
+     make the whole document scrollable and set iOS rubber-banding off. */
+  min-height: calc(
+    100dvh - var(--spacing-appbar) - var(--spacing-tabbar) - env(safe-area-inset-top, 0px) -
+      env(safe-area-inset-bottom, 0px) - 2rem - 1px
+  );
+}
+
 @layer utilities {
-  /* Safe-area helpers. Prefer these over hand-written env() calls. */
-  .pt-safe {
-    padding-top: env(safe-area-inset-top, 0px);
-  }
-  .pb-safe {
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-  }
-  .pl-safe {
-    padding-left: env(safe-area-inset-left, 0px);
-  }
-  .pr-safe {
-    padding-right: env(safe-area-inset-right, 0px);
-  }
-  .px-safe {
-    padding-left: env(safe-area-inset-left, 0px);
-    padding-right: env(safe-area-inset-right, 0px);
-  }
-  .mb-safe {
-    margin-bottom: env(safe-area-inset-bottom, 0px);
-  }
   .h-dvh {
     height: 100dvh;
   }

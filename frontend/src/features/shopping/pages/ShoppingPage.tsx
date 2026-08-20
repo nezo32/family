@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, ShoppingBasket } from 'lucide-react';
+import { Archive, ArchiveX, Plus, ShoppingBasket } from 'lucide-react';
 import { PageHeader } from '@/shared/components/PageHeader';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
@@ -36,9 +36,15 @@ export default function ShoppingPage() {
 
 function ShoppingListsOverview() {
   const [creating, setCreating] = useState(false);
+  /**
+   * Archived lists are hidden by default — that is the point of archiving — but
+   * something has to be able to show them again, or «Убрать в архив» is a
+   * one-way door with a friendlier label than «Удалить».
+   */
+  const [showArchived, setShowArchived] = useState(false);
   const sync = useShoppingSync();
   const createList = useCreateList();
-  const { data, isPending, isError, error, refetch } = useShoppingLists();
+  const { data, isPending, isError, error, refetch } = useShoppingLists(showArchived);
 
   return (
     <>
@@ -67,6 +73,27 @@ function ShoppingListsOverview() {
         flushing={sync.flushing}
         onRetry={sync.flushNow}
       />
+
+      {/* Part of managing lists, so it follows the same permission as the menu. */}
+      <Can perm="shopping:list:manage">
+        <div className="mb-2 flex justify-end">
+          <Button
+            variant="ghost"
+            className="min-h-11 text-muted-foreground"
+            aria-pressed={showArchived}
+            onClick={() => {
+              setShowArchived((current) => !current);
+            }}
+          >
+            {showArchived ? (
+              <ArchiveX className="size-4" aria-hidden />
+            ) : (
+              <Archive className="size-4" aria-hidden />
+            )}
+            {showArchived ? SHOPPING_RU.hideArchived : SHOPPING_RU.showArchived}
+          </Button>
+        </div>
+      </Can>
 
       {isPending ? (
         <ul className="space-y-2" aria-busy>
@@ -108,6 +135,11 @@ function ShoppingListsOverview() {
           ))}
         </ul>
       )}
+
+      {/* Otherwise the toggle looks broken: you ask for the archive, nothing moves. */}
+      {showArchived && !isPending && !isError && data.every((list) => !list.isArchived) ? (
+        <p className="mt-3 text-center text-xs text-muted-foreground">{SHOPPING_RU.archiveEmpty}</p>
+      ) : null}
 
       <CreateListDialog
         open={creating}

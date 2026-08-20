@@ -9,8 +9,8 @@ import {
 } from '@family/shared';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card';
-import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
+import { TimeField } from '@/shared/ui/time-field';
 import { notify } from '@/shared/lib/toast';
 import { SETTINGS_RU } from '../locale';
 import { useSaveQuietHours } from '../hooks';
@@ -100,26 +100,26 @@ export function QuietHoursEditor(props: { windows: readonly QuietHours[] }) {
                 <div className="flex flex-wrap items-end gap-3">
                   <div className="space-y-1">
                     <Label htmlFor={`quiet-from-${String(index)}`}>{T.quietFrom}</Label>
-                    <Input
+                    <TimeField
                       id={`quiet-from-${String(index)}`}
-                      type="time"
-                      className="w-28"
+                      label={T.quietFrom}
+                      className="w-40"
                       value={window.startsAt}
-                      onChange={(event) => {
-                        update(index, { startsAt: event.target.value });
+                      onChange={(next) => {
+                        update(index, { startsAt: next });
                       }}
                     />
                   </div>
 
                   <div className="space-y-1">
                     <Label htmlFor={`quiet-to-${String(index)}`}>{T.quietTo}</Label>
-                    <Input
+                    <TimeField
                       id={`quiet-to-${String(index)}`}
-                      type="time"
-                      className="w-28"
+                      label={T.quietTo}
+                      className="w-40"
                       value={window.endsAt}
-                      onChange={(event) => {
-                        update(index, { endsAt: event.target.value });
+                      onChange={(next) => {
+                        update(index, { endsAt: next });
                       }}
                     />
                   </div>

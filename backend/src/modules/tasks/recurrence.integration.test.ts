@@ -1,7 +1,6 @@
 import { asc, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { pointsLedger } from '../chores/chores.schema.js';
 import { hasTestDb } from '../../test/db.js';
 import {
   closeHarness,
@@ -23,9 +22,9 @@ import { taskOccurrences, taskSeries } from './tasks.schema.js';
  * proves the plan/insert protocol against a fake port. Neither can prove the
  * thing that actually breaks in production: that the plan reaches Postgres
  * intact, that the `(series_id, occurrence_key)` unique index really makes a
- * second pass a no-op, that a completion books points exactly once through the
- * partial unique index, and that a `this_and_future` split leaves the completed
- * history alone.
+ * second pass a no-op, that a completion lands exactly once however often it is
+ * replayed, and that a `this_and_future` split leaves the completed history
+ * alone.
  *
  * Where an HTTP read is currently broken (see the `broken reads` block at the
  * bottom) the assertions are made against the table instead, so a single bug
@@ -64,7 +63,6 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
       token: actor.accessToken,
       payload: {
         title: 'Мыть посуду',
-        points: 10,
         graceMinutes: 30,
         dueOffsetMinutes: 60,
         recurrence: {
@@ -91,8 +89,18 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
       .orderBy(asc(taskOccurrences.occurrenceKey));
   }
 
-  async function ledgerFor(userId: string) {
-    return h.db.select().from(pointsLedger).where(eq(pointsLedger.userId, userId));
+  /**
+   * How many chores this person has actually done — the only fairness input
+   * there is (D5). It used to be a `SUM(points_ledger.delta)`; it is a row
+   * count now, and an occurrence can only be `done` once, which is why the
+   * replay tests below no longer need a unique index to lean on.
+   */
+  async function doneCountFor(userId: string): Promise<number> {
+    const rows = await h.db
+      .select({ id: taskOccurrences.id })
+      .from(taskOccurrences)
+      .where(eq(taskOccurrences.completedById, userId));
+    return rows.length;
   }
 
   /* ====================================================================== */
@@ -149,114 +157,12 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
   });
 
   /* ====================================================================== */
-  /* 2. completion books points exactly once                                */
+  /* 2. completion lands exactly once                                       */
   /* ====================================================================== */
 
-  /**
-   * The ledger half of completion, exercised directly against Postgres.
-   *
-   * `POST /tasks/occurrences/:id/complete` cannot currently be driven at all
-   * (see `occurrence reads` below), so these go through `PointsService` on the
-   * real database instead. What they prove is the part a fake repository never
-   * can: that the partial unique index
-   * `(occurrence_id, user_id) WHERE reason = 'chore_completed'` exists and holds.
-   */
-  describe('points ledger', () => {
-    async function bookTwice(points: number, dueAt: Date, completedAt: Date) {
-      const seriesId = await createSeries(adult, { points, defaultAssigneeId: teen.id });
-      const [occurrence] = await occurrencesOf(seriesId);
-      if (!occurrence) throw new Error('nothing materialized');
-
-      const { PointsService } = await import('../chores/points.service.js');
-      const service = new PointsService(h.db);
-      const booking = {
-        occurrenceId: occurrence.id,
-        completedById: teen.id,
-        assigneeId: teen.id,
-        points,
-        dueAt,
-        graceMinutes: 30,
-        completedAt,
-      };
-      const first = await service.bookCompletion(h.db, booking);
-      const second = await service.bookCompletion(h.db, booking);
-      return { first, second, occurrence };
-    }
-
-    it('writes the ledger rows exactly once, however many times it is replayed', async () => {
-      const dueAt = new Date('2026-09-01T07:00:00Z');
-      const { first, second } = await bookTwice(10, dueAt, new Date(dueAt.getTime() - 60_000));
-
-      const chore = (await ledgerFor(teen.id)).filter((e) => e.reason === 'chore_completed');
-      expect(chore).toHaveLength(1);
-      expect(chore[0]?.delta).toBe(10);
-
-      expect(first.entries.length).toBeGreaterThan(0);
-      expect(second.entries).toHaveLength(0);
-    });
-
-    /**
-     * KNOWN FAILURE — documents a real bug, do not relax.
-     *
-     * `points.service.ts:165-244` sums `total` from `basePoints + onTimeBonus +
-     * coverBonus + swapBonus` with no regard for whether the insert actually
-     * landed. `coverBonus` and `swapBonus` are reset to 0 when
-     * `insertLedgerEntry` returns nothing (lines 209 and 241); `basePoints` and
-     * `onTimeBonus` are not. A booking whose rows were all swallowed by the
-     * partial unique index therefore reports a full award it did not make.
-     *
-     * `chores.service.ts:729` returns that number as `pointsAwarded`, so a
-     * completion that loses the race tells the child «+13 очков» while the
-     * ledger moved by zero.
-     */
-    it('reports an award of zero when the ledger rows were already there', async () => {
-      const dueAt = new Date('2026-09-01T07:00:00Z');
-      const { second } = await bookTwice(10, dueAt, new Date(dueAt.getTime() - 60_000));
-
-      expect(second.entries).toHaveLength(0);
-      expect(second.total).toBe(0);
-    });
-
-    it('books at most one row per (occurrence, user, reason) under concurrency', async () => {
-      const seriesId = await createSeries(adult, { points: 8, defaultAssigneeId: teen.id });
-      const [occurrence] = await occurrencesOf(seriesId);
-      if (!occurrence) throw new Error('nothing materialized');
-
-      const { PointsService } = await import('../chores/points.service.js');
-      const service = new PointsService(h.db);
-      const booking = {
-        occurrenceId: occurrence.id,
-        completedById: teen.id,
-        assigneeId: teen.id,
-        points: 8,
-        dueAt: occurrence.dueAt,
-        graceMinutes: 30,
-        completedAt: new Date(occurrence.dueAt.getTime() - 60_000),
-      };
-
-      await Promise.all(Array.from({ length: 4 }, () => service.bookCompletion(h.db, booking)));
-
-      const ledger = await ledgerFor(teen.id);
-      const byReason = new Map<string, number>();
-      for (const row of ledger) byReason.set(row.reason, (byReason.get(row.reason) ?? 0) + 1);
-      for (const [, count] of byReason) expect(count).toBe(1);
-      expect(byReason.get('chore_completed')).toBe(1);
-    });
-
-    it('withholds the on-time bonus for a completion past the grace window', async () => {
-      const dueAt = new Date('2026-09-01T07:00:00Z');
-      // 30 minutes of grace, completed two hours late.
-      await bookTwice(10, dueAt, new Date(dueAt.getTime() + 2 * 60 * 60_000));
-
-      const ledger = await ledgerFor(teen.id);
-      expect(ledger.filter((e) => e.reason === 'chore_completed')).toHaveLength(1);
-      expect(ledger.filter((e) => e.reason === 'on_time_bonus')).toHaveLength(0);
-    });
-  });
-
   /** KNOWN FAILURE — blocked by the `nowExpr` bug documented below. */
-  it('books points once when the same occurrence is completed twice', async () => {
-    const seriesId = await createSeries(adult, { points: 10, defaultAssigneeId: teen.id });
+  it('counts the chore once when the same occurrence is completed twice', async () => {
+    const seriesId = await createSeries(adult, { defaultAssigneeId: teen.id });
     const [first] = await occurrencesOf(seriesId);
     if (!first) throw new Error('nothing materialized');
 
@@ -272,7 +178,7 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
     expectStatus(one, 200);
 
     // The client's intent is already satisfied; a replay is not an error and
-    // emphatically not a second award.
+    // emphatically not a second completion.
     const two = await complete();
     expect(two.statusCode).toBeLessThan(400);
 
@@ -283,20 +189,18 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
     expect(row?.status).toBe('done');
     expect(row?.completedById).toBe(teen.id);
 
-    const ledger = await ledgerFor(teen.id);
-    const chore = ledger.filter((e) => e.reason === 'chore_completed');
-    expect(chore).toHaveLength(1);
-    expect(chore[0]?.delta).toBe(10);
+    // One row done, so the rotation counts one chore. There is no second place
+    // for a replay to land any more.
+    expect(await doneCountFor(teen.id)).toBe(1);
   });
 
-  it('books points once when two clients complete the same occurrence at the same instant', async () => {
-    const seriesId = await createSeries(adult, { points: 7, defaultAssigneeId: teen.id });
+  it('counts the chore once when two clients complete the same occurrence at once', async () => {
+    const seriesId = await createSeries(adult, { defaultAssigneeId: teen.id });
     const [first] = await occurrencesOf(seriesId);
     if (!first) throw new Error('nothing materialized');
 
-    // The partial unique index on `(occurrence_id, user_id) WHERE reason =
-    // 'chore_completed'` is the last line of defence. Only a real database can
-    // be asked whether it holds.
+    // The conditional `WHERE status = 'scheduled'` UPDATE is the whole defence
+    // now. Only a real database can be asked whether it holds under a race.
     await Promise.all(
       Array.from({ length: 3 }, () =>
         request(h.app, {
@@ -308,8 +212,7 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
       ),
     );
 
-    const chore = (await ledgerFor(teen.id)).filter((e) => e.reason === 'chore_completed');
-    expect(chore).toHaveLength(1);
+    expect(await doneCountFor(teen.id)).toBe(1);
   });
 
   /* ====================================================================== */
@@ -317,7 +220,7 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
   /* ====================================================================== */
 
   it('splits the series on this_and_future and leaves completed history intact', async () => {
-    const seriesId = await createSeries(adult, { title: 'Мыть посуду', points: 10 });
+    const seriesId = await createSeries(adult, { title: 'Мыть посуду' });
     const rows = await occurrencesOf(seriesId);
     expect(rows).toHaveLength(5);
 
@@ -344,7 +247,6 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
         scope: 'this_and_future',
         occurrenceId: day3.id,
         title: 'Мыть посуду и убрать со стола',
-        points: 20,
       },
     });
     expectStatus(split, 200);
@@ -359,7 +261,6 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
       .where(eq(taskSeries.id, successorId));
     expect(successor?.supersedesSeriesId).toBe(seriesId);
     expect(successor?.title).toBe('Мыть посуду и убрать со стола');
-    expect(successor?.points).toBe(20);
 
     // The completed rows are untouched: same ids, same status, same series.
     const oldRows = await occurrencesOf(seriesId);
@@ -377,11 +278,9 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
     expect(newRows[0]?.occurrenceKey).toBe(day3.occurrenceKey);
     expect(newRows.every((r) => r.status === 'scheduled')).toBe(true);
 
-    // The points already booked for the completed history are not rewritten by
-    // the new series' point value.
-    const ledger = (await ledgerFor(adult.id)).filter((e) => e.reason === 'chore_completed');
-    expect(ledger).toHaveLength(2);
-    expect(ledger.every((e) => e.delta === 10)).toBe(true);
+    // The completed history still counts for the person who did it — the split
+    // rewrote the rule, not the record of what happened.
+    expect(await doneCountFor(adult.id)).toBe(2);
   });
 
   /* ====================================================================== */
@@ -416,7 +315,6 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
 
       const seriesId = await createSeries(adult, {
         title: 'Дежурство по кухне',
-        points: 5,
         rotationId,
       });
 
@@ -456,7 +354,6 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
       const rotationId = await createRotation('weighted_balance', [adult, teen]);
       const seriesId = await createSeries(adult, {
         title: 'Вынести мусор',
-        points: 10,
         rotationId,
         recurrence: {
           mode: 'preset',
@@ -487,7 +384,6 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
       const rotationId = await createRotation('round_robin', []);
       const seriesId = await createSeries(adult, {
         title: 'Ничей',
-        points: 1,
         rotationId,
       });
 

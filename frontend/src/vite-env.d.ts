@@ -17,3 +17,13 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+/**
+ * The `version` field of `frontend/package.json`, inlined at build time by the
+ * `define` in `vite.config.ts` (and mirrored in `vitest.config.ts`).
+ *
+ * Rendered at the bottom of `/settings` — «какая у вас версия?» is the first
+ * question any support conversation asks, and an installed PWA gives the user
+ * no other way to answer it.
+ */
+declare const __APP_VERSION__: string;

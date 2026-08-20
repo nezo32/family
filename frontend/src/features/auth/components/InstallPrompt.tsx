@@ -108,8 +108,10 @@ export function InstallPrompt({
         <Button
           type="button"
           variant="ghost"
-          size="icon-sm"
-          className="absolute top-2 right-2 text-muted-foreground"
+          size="icon"
+          // 44px. This card only became reachable once `recordEngagement()` was
+          // actually wired up, so its targets had never been measured.
+          className="absolute top-1 right-1 size-11 text-muted-foreground"
           onClick={handleLater}
           aria-label={AUTH_RU.install.dismissLabel}
         >
@@ -128,13 +130,13 @@ export function InstallPrompt({
 
         <div className="mt-3 flex gap-2">
           {canInstallDirectly ? (
-            <Button type="button" className="flex-1" onClick={() => void handleInstall()}>
+            <Button type="button" className="h-11 flex-1" onClick={() => void handleInstall()}>
               {AUTH_RU.install.cardInstall}
             </Button>
           ) : (
             <Button
               type="button"
-              className="flex-1"
+              className="h-11 flex-1"
               onClick={() => {
                 setSheetOpen(true);
               }}
@@ -142,7 +144,7 @@ export function InstallPrompt({
               {AUTH_RU.install.cardAction}
             </Button>
           )}
-          <Button type="button" variant="ghost" onClick={handleLater}>
+          <Button type="button" variant="ghost" className="h-11" onClick={handleLater}>
             {AUTH_RU.install.cardLater}
           </Button>
         </div>
@@ -165,7 +167,12 @@ export function InstallPrompt({
                 <p className="rounded-lg bg-muted px-3 py-2 font-mono text-sm break-all">
                   {typeof window === 'undefined' ? '' : window.location.href}
                 </p>
-                <Button type="button" variant="outline" className="w-full" onClick={handleCopyLink}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11 w-full"
+                  onClick={handleCopyLink}
+                >
                   {copied ? AUTH_RU.install.copiedLink : AUTH_RU.install.copyLink}
                 </Button>
               </div>
@@ -173,7 +180,11 @@ export function InstallPrompt({
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">{AUTH_RU.install.desktopText}</p>
                 {platform === 'chromium' ? (
-                  <Button type="button" className="w-full" onClick={() => void handleInstall()}>
+                  <Button
+                    type="button"
+                    className="h-11 w-full"
+                    onClick={() => void handleInstall()}
+                  >
                     {AUTH_RU.install.cardInstall}
                   </Button>
                 ) : null}
@@ -201,7 +212,7 @@ export function InstallPrompt({
             <Button
               type="button"
               variant="outline"
-              className="w-full"
+              className="h-11 w-full"
               onClick={() => {
                 setSheetOpen(false);
               }}

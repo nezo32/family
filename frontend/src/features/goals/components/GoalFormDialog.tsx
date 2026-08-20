@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import {
@@ -18,6 +18,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/shared/ui/dialog';
+import { ColorField, PALETTE_COLORS } from '@/shared/ui/color-field';
+import { DateField } from '@/shared/ui/date-field';
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/shared/ui/radio-group';
@@ -46,25 +48,12 @@ import { MoneyInput } from './MoneyInput';
  */
 
 /**
- * Contract wants `#RRGGBB`, so the theme's OKLCH tokens are inlined as literal
- * hex here — a goal's colour is stored data, not a CSS variable.
- *
- * The first five **are** `--chart-1…5` from `src/index.css` (clay, sage, honey,
- * plum, sky); the last three extend the same ramp — same lightness band, same
- * chroma band, three unused hues. The ramp existed and nothing used it, so goals
- * picked from an unrelated set and a seeded sky-blue sat next to a themed
- * terracotta looking like two different products.
+ * The palette moved to `shared/ui/color-field.tsx` when the profile screen
+ * stopped using an OS colour wheel: goals and members now pick from the same
+ * eight colours, which is the only way a member's chip and a goal's ring can be
+ * guaranteed to belong to one product. The name stays so no call site moved.
  */
-export const GOAL_COLORS = [
-  '#DA6635', // --chart-1  clay
-  '#43996C', // --chart-2  sage
-  '#E3AD3E', // --chart-3  honey
-  '#9F599D', // --chart-4  plum
-  '#3B9AC5', // --chart-5  sky
-  '#C1555D', // brick
-  '#6179BD', // indigo
-  '#259B9C', // teal
-] as const;
+export const GOAL_COLORS = PALETTE_COLORS;
 
 const GOAL_ICONS = [
   '🏖️',
@@ -251,38 +240,34 @@ export function GoalFormDialog(props: {
 
           <div className="space-y-2">
             <Label htmlFor="goal-deadline">{GOALS_RU.formDeadline}</Label>
-            <Input
-              id="goal-deadline"
-              type="date"
-              className="h-12 text-base md:text-sm"
-              aria-invalid={Boolean(form.formState.errors.deadline)}
-              {...form.register('deadline')}
+            <Controller
+              control={form.control}
+              name="deadline"
+              render={({ field }) => (
+                <DateField
+                  id="goal-deadline"
+                  label={GOALS_RU.formDeadline}
+                  value={field.value ?? ''}
+                  clearable
+                  invalid={Boolean(form.formState.errors.deadline)}
+                  onChange={(next) => {
+                    field.onChange(next);
+                  }}
+                />
+              )}
             />
             <p className="text-xs text-muted-foreground">{GOALS_RU.formDeadlineHint}</p>
           </div>
 
           <fieldset className="space-y-2">
             <legend className="mb-2 text-sm font-medium">{GOALS_RU.formColor}</legend>
-            <div className="flex flex-wrap gap-2">
-              {GOAL_COLORS.map((swatch) => (
-                <button
-                  key={swatch}
-                  type="button"
-                  aria-label={swatch}
-                  aria-pressed={color === swatch}
-                  onClick={() => {
-                    form.setValue('color', swatch, { shouldDirty: true });
-                  }}
-                  className={cn(
-                    'size-11 rounded-full border-2 transition-transform',
-                    color === swatch
-                      ? 'scale-110 border-foreground'
-                      : 'border-transparent hover:scale-105',
-                  )}
-                  style={{ backgroundColor: swatch }}
-                />
-              ))}
-            </div>
+            <ColorField
+              label={GOALS_RU.formColor}
+              value={color}
+              onChange={(next) => {
+                form.setValue('color', next, { shouldDirty: true });
+              }}
+            />
           </fieldset>
 
           <fieldset className="space-y-2">

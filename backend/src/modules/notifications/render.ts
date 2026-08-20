@@ -183,13 +183,12 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
 
     case 'task_completed': {
       const taskId = id(p, 'occurrenceId', 'taskId', 'entityId');
-      const points = count(p, 'points');
+      // No «+13 очков» here any more, and nothing takes its place: a push that
+      // tells one child what another child scored is the sibling scoreboard in
+      // its purest form (D5). «Миша: посуда» is the whole message.
       return {
         title: 'Задача выполнена',
-        body: joinBody(
-          `${actor(p)}: ${text(p, 'title', 'задача закрыта')}`,
-          points !== null && points > 0 ? `+${countRu(points, RU_PLURALS.point)}` : null,
-        ),
+        body: `${actor(p)}: ${text(p, 'title', 'задача закрыта')}`,
         navigate: route(APP_ROUTES.tasks, taskId),
       };
     }

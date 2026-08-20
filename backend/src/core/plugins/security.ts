@@ -1,3 +1,4 @@
+import { scaledLimit } from '../rate-limit.js';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -51,7 +52,7 @@ export const securityPlugin = fp(
 
     await app.register(rateLimit, {
       global: true,
-      max: 300,
+      max: scaledLimit(300),
       timeWindow: '1 minute',
       // Shared across replicas, and survives a restart.
       redis: getRedis(),

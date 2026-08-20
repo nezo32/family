@@ -1,6 +1,7 @@
 import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
 import { cn } from '../lib/utils';
 import { initials } from '../lib/format';
+import { useAuthedImage } from '../api/authed-image';
 
 export interface AvatarUser {
   id?: string;
@@ -24,6 +25,21 @@ export type AvatarSize = keyof typeof SIZES;
  * The fallback tint is derived from the user id so each member keeps the same
  * colour everywhere in the app — a family recognises each other by colour long
  * before they read the name.
+ *
+ * ## Every failure lands on the initials
+ *
+ * An uploaded avatar is served from `/api/users/:id/avatar`, a private bucket
+ * behind the session, so the bytes have to be fetched with the bearer token and
+ * handed over as an object URL (`useAuthedImage`). That adds two more ways for
+ * an image not to appear — the fetch is still in flight, or it failed — on top
+ * of the two Radix already handles (no URL at all, `<img>` load error).
+ *
+ * All four collapse to the same thing here: `src` is `undefined`, no
+ * `AvatarImage` is rendered, and the fallback shows. There is deliberately no
+ * spinner and no broken-image icon. At 24–80px a spinner is noise, and a broken
+ * image is the single most conspicuous way for a small feature to make the
+ * whole app look unfinished — initials are a *correct* answer, not a
+ * placeholder.
  */
 export function UserAvatar(props: {
   user: AvatarUser;
@@ -34,6 +50,7 @@ export function UserAvatar(props: {
 }) {
   const size = props.size ?? 'md';
   const tint = tintFor(props.user.id ?? props.user.displayName);
+  const src = useAuthedImage(props.user.avatarUrl);
 
   return (
     <Avatar
@@ -43,8 +60,17 @@ export function UserAvatar(props: {
         props.className,
       )}
     >
-      {props.user.avatarUrl ? (
-        <AvatarImage src={props.user.avatarUrl} alt={props.user.displayName} />
+      {src ? (
+        <AvatarImage
+          src={src}
+          alt={props.user.displayName}
+          // Belt and braces over Radix's own error handling: an object URL that
+          // was revoked under us (cache eviction mid-render) must still fall
+          // through to the initials rather than render a broken image.
+          onError={(event) => {
+            event.currentTarget.style.display = 'none';
+          }}
+        />
       ) : null}
       <AvatarFallback
         className="font-medium"

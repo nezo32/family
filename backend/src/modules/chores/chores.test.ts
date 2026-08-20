@@ -15,18 +15,19 @@ import {
 /**
  * The chores service suite.
  *
- * Postgres appears only in the last block, and only for the two things a fake
- * cannot honestly reproduce: the fairness roster SQL and the partial unique
- * indexes. Everything above it is driven through an in-memory stand-in for
- * `chores.repository.ts` that enforces the *same* three rules the schema does:
+ * Postgres appears only in the last block, and only for the thing a fake cannot
+ * honestly reproduce: the fairness roster SQL. Everything above it is driven
+ * through an in-memory stand-in for `chores.repository.ts` that enforces the
+ * *same* two rules the schema does:
  *
- * - `points_ledger_award_once_uq` — one `chore_completed` / `on_time_bonus` per
- *   `(occurrence, user)`;
  * - `kudos_from_occurrence_emoji_uq` — one emoji per person per occurrence;
  * - the conditional completion UPDATE — `WHERE status = 'scheduled'`.
  *
- * Those three are what make completion idempotent, so they are what the fake
- * has to get right for these tests to mean anything.
+ * The second one is what makes completion idempotent, and since the removal of
+ * the points ledger (D5) it is the *only* thing that has to be: fairness counts
+ * `task_occurrences` rows where `status = 'done'`, and one row can only be done
+ * once. There is no longer a second place for a duplicate award to land, which
+ * is a guarantee this suite gets for free rather than having to police.
  */
 
 /* -------------------------------------------------------------------------- */
@@ -46,7 +47,6 @@ interface FakeOccurrence {
   id: string;
   seriesId: string;
   title: string;
-  points: number;
   status: 'scheduled' | 'done' | 'skipped' | 'cancelled';
   startsAt: Date;
   dueAt: Date;
@@ -58,22 +58,9 @@ interface FakeOccurrence {
   rotationId: string | null;
 }
 
-interface FakeLedgerRow {
-  id: string;
-  userId: string;
-  delta: number;
-  reason: string;
-  occurrenceId: string | null;
-  awardedById: string | null;
-  note: string | null;
-  createdAt: Date;
-}
-
 const store = vi.hoisted(() => ({
   occurrences: new Map<string, Record<string, unknown>>(),
-  ledger: [] as Array<Record<string, unknown>>,
   kudos: [] as Array<Record<string, unknown>>,
-  streaks: new Map<string, Record<string, unknown>>(),
   swaps: [] as Array<Record<string, unknown>>,
   members: [] as Array<Record<string, unknown>>,
   fairness: [] as Array<Record<string, unknown>>,
@@ -85,9 +72,7 @@ const store = vi.hoisted(() => ({
   },
   reset(): void {
     this.occurrences.clear();
-    this.ledger.length = 0;
     this.kudos.length = 0;
-    this.streaks.clear();
     this.swaps.length = 0;
     this.members.length = 0;
     this.fairness.length = 0;
@@ -95,9 +80,6 @@ const store = vi.hoisted(() => ({
     this.seq = 0;
   },
 }));
-
-/** The two automatic reasons inside `points_ledger_award_once_uq`. */
-const GUARDED = new Set(['chore_completed', 'on_time_bonus']);
 
 vi.mock('./chores.repository.js', () => ({
   findOccurrence: (_ex: unknown, id: string) => Promise.resolve(store.occurrences.get(id)),
@@ -124,48 +106,6 @@ vi.mock('./chores.repository.js', () => ({
     return Promise.resolve(true);
   },
 
-  insertLedgerEntry: (_ex: unknown, values: Record<string, unknown>) => {
-    const reason = values.reason as string;
-    const occurrenceId = (values.occurrenceId ?? null) as string | null;
-    if (occurrenceId !== null && GUARDED.has(reason)) {
-      const duplicate = store.ledger.some(
-        (e) => e.occurrenceId === occurrenceId && e.userId === values.userId && e.reason === reason,
-      );
-      // ON CONFLICT DO NOTHING against the partial unique index.
-      if (duplicate) return Promise.resolve(undefined);
-    }
-    const row = {
-      id: store.nextId(),
-      awardedById: null,
-      note: null,
-      occurrenceId,
-      createdAt: T0,
-      ...values,
-    };
-    store.ledger.push(row);
-    return Promise.resolve(row);
-  },
-
-  insertLedgerEntryAlways: (_ex: unknown, values: Record<string, unknown>) => {
-    const row = {
-      id: store.nextId(),
-      awardedById: null,
-      note: null,
-      occurrenceId: null,
-      createdAt: T0,
-      ...values,
-    };
-    store.ledger.push(row);
-    return Promise.resolve(row);
-  },
-
-  findLedgerEntry: (_ex: unknown, occurrenceId: string, userId: string, reason: string) =>
-    Promise.resolve(
-      store.ledger.find(
-        (e) => e.occurrenceId === occurrenceId && e.userId === userId && e.reason === reason,
-      ),
-    ),
-
   insertKudos: (_ex: unknown, values: Record<string, unknown>) => {
     const duplicate = store.kudos.some(
       (k) =>
@@ -178,16 +118,6 @@ vi.mock('./chores.repository.js', () => ({
     store.kudos.push(row);
     return Promise.resolve(row);
   },
-
-  findStreak: (_ex: unknown, userId: string) => Promise.resolve(store.streaks.get(userId)),
-
-  upsertStreak: (_ex: unknown, values: Record<string, unknown>) => {
-    const row = { updatedAt: T0, ...values };
-    store.streaks.set(values.userId as string, row);
-    return Promise.resolve(row);
-  },
-
-  listStreakEvents: () => Promise.resolve([]),
 
   findAcceptedSwapForOccurrence: (_ex: unknown, occurrenceId: string) =>
     Promise.resolve(
@@ -209,7 +139,6 @@ vi.mock('./chores.repository.js', () => ({
       id: store.nextId(),
       status: 'pending',
       message: null,
-      bonusPoints: 0,
       respondedById: null,
       respondedAt: null,
       expiresAt: null,
@@ -253,14 +182,6 @@ vi.mock('./chores.repository.js', () => ({
 }));
 
 const { ChoresService, rotationDecorator } = await import('./chores.service.js');
-const {
-  applyStreakEvent,
-  coverBonusFor,
-  EMPTY_STREAK,
-  foldStreak,
-  isOnTime,
-  onTimeBonusFor,
-} = await import('./points.service.js');
 const { RotationRun } = await import('./rotation.js');
 
 /** `db.transaction(fn)` is the only `Db` member these tests reach. */
@@ -281,7 +202,6 @@ function putOccurrence(overrides: Partial<FakeOccurrence> = {}): FakeOccurrence 
     id: OCCURRENCE,
     seriesId: 'series-1',
     title: 'Мусор',
-    points: 10,
     status: 'scheduled',
     startsAt: T0,
     dueAt: new Date(T0.getTime() + 3_600_000),
@@ -297,189 +217,67 @@ function putOccurrence(overrides: Partial<FakeOccurrence> = {}): FakeOccurrence 
   return row;
 }
 
-function ledgerFor(userId: string): FakeLedgerRow[] {
-  return store.ledger.filter((e) => e.userId === userId) as unknown as FakeLedgerRow[];
-}
-
-function balanceOf(userId: string): number {
-  return ledgerFor(userId).reduce((sum, e) => sum + e.delta, 0);
-}
-
 beforeEach(() => {
   store.reset();
 });
 
 /* -------------------------------------------------------------------------- */
-/* Pure scoring rules                                                          */
-/* -------------------------------------------------------------------------- */
-
-describe('scoring rules', () => {
-  const due = new Date('2026-09-07T20:00:00.000Z');
-
-  it('treats the grace window as still on time, and one millisecond past it as not', () => {
-    expect(isOnTime(due, due, 0)).toBe(true);
-    expect(isOnTime(new Date(due.getTime() + 15 * 60_000), due, 15)).toBe(true);
-    expect(isOnTime(new Date(due.getTime() + 15 * 60_000 + 1), due, 15)).toBe(false);
-  });
-
-  it('pays no on-time bonus on a zero-point chore', () => {
-    expect(onTimeBonusFor(0)).toBe(0);
-    expect(onTimeBonusFor(-5)).toBe(0);
-  });
-
-  it('rounds the on-time bonus up to at least one point', () => {
-    expect(onTimeBonusFor(1)).toBe(1);
-    expect(onTimeBonusFor(20)).toBe(5);
-  });
-
-  it('always pays something for covering, even for a zero-point chore', () => {
-    expect(coverBonusFor(0)).toBe(1);
-    expect(coverBonusFor(10)).toBe(5);
-  });
-});
-
-describe('streaks count occurrences, not calendar days', () => {
-  it('extends on an on-time resolution and resets on a late one', () => {
-    let state = applyStreakEvent(EMPTY_STREAK, { resolvedAt: new Date(T0), onTime: true });
-    state = applyStreakEvent(state, { resolvedAt: new Date(T0.getTime() + 7 * DAY), onTime: true });
-    expect(state.current).toBe(2);
-
-    // Seven days apart and still a streak: a weekly chore must not be punished
-    // for not being a daily one.
-    state = applyStreakEvent(state, { resolvedAt: new Date(T0.getTime() + 14 * DAY), onTime: false });
-    expect(state.current).toBe(0);
-    expect(state.longest).toBe(2);
-  });
-
-  it('ignores an event at or before the stored resume point, so a replay is a no-op', () => {
-    const first = applyStreakEvent(EMPTY_STREAK, { resolvedAt: T0, onTime: true });
-    const replay = applyStreakEvent(first, { resolvedAt: T0, onTime: true });
-    expect(replay).toBe(first);
-    expect(replay.current).toBe(1);
-  });
-
-  it('folds a batch oldest-first', () => {
-    const state = foldStreak(EMPTY_STREAK, [
-      { resolvedAt: new Date(T0.getTime() + 0 * DAY), onTime: true },
-      { resolvedAt: new Date(T0.getTime() + 1 * DAY), onTime: true },
-      { resolvedAt: new Date(T0.getTime() + 2 * DAY), onTime: false },
-      { resolvedAt: new Date(T0.getTime() + 3 * DAY), onTime: true },
-    ]);
-    expect(state).toEqual({
-      current: 1,
-      longest: 2,
-      lastResolvedAt: new Date(T0.getTime() + 3 * DAY),
-    });
-  });
-});
-
-/* -------------------------------------------------------------------------- */
-/* Completion — points follow the doer                                         */
+/* Completion — the chore counts for the doer                                  */
 /* -------------------------------------------------------------------------- */
 
 describe('completeChore', () => {
   const service = () => new ChoresService(fakeDb, { now: () => T0 });
 
-  it('books the points to the doer, not to the assignee (D5)', async () => {
-    putOccurrence({ assigneeId: TEEN, points: 10 });
+  it('credits the doer, not the assignee (D5)', async () => {
+    putOccurrence({ assigneeId: TEEN });
 
     const result = await service().completeChore(actor(ADULT, ['task:complete:any']), OCCURRENCE);
 
     expect(result.completedById).toBe(ADULT);
     expect(result.coveredFor).toBe(TEEN);
-    // The assignee earns nothing at all — that is what makes the loop
-    // self-correcting rather than a chore-shaped IOU.
-    expect(balanceOf(TEEN)).toBe(0);
-    expect(ledgerFor(ADULT).map((e) => e.reason).sort()).toEqual([
-      'chore_completed',
-      'covered_for_other',
-      'on_time_bonus',
-    ]);
-    expect(balanceOf(ADULT)).toBe(10 + 3 + 5);
+    // `completed_by_id` is the whole fairness record: the rotation counts this
+    // row against the adult, so covering for the teen means the rotation asks
+    // less of the adult next week. Nobody's score moved, because there is no
+    // score to move.
+    expect(store.occurrences.get(OCCURRENCE)).toMatchObject({
+      status: 'done',
+      completedById: ADULT,
+      completedAt: T0,
+    });
   });
 
-  it('awards exactly once when the same completion arrives twice', async () => {
-    putOccurrence({ assigneeId: TEEN, points: 10 });
+  it('counts once when the same completion arrives twice', async () => {
+    putOccurrence({ assigneeId: TEEN });
     const svc = service();
 
     const first = await svc.completeChore(actor(TEEN, ['task:complete:own']), OCCURRENCE);
     const second = await svc.completeChore(actor(TEEN, ['task:complete:own']), OCCURRENCE);
 
     expect(first.alreadyCompleted).toBe(false);
+    // The second delivery of the same intent — a double tap, an offline queue
+    // replaying — is a success, not an error, and it wrote nothing.
     expect(second.alreadyCompleted).toBe(true);
-    expect(second.pointsAwarded).toBe(0);
-    expect(store.ledger).toHaveLength(2); // chore_completed + on_time_bonus
-    expect(balanceOf(TEEN)).toBe(13);
+    expect(second.completedById).toBe(TEEN);
+    // One row, one completion. That is the entire idempotency guarantee now.
+    expect(store.occurrences.get(OCCURRENCE)).toMatchObject({ completedById: TEEN });
   });
 
-  it('is idempotent even if the ledger write is retried directly', async () => {
-    // Belt and braces: the conditional UPDATE is the first guard, the partial
-    // unique index is the second, and either alone must be enough.
-    putOccurrence({ assigneeId: TEEN, points: 10 });
-    const svc = service();
-    await svc.completeChore(actor(TEEN), OCCURRENCE);
-
-    await svc.points.bookCompletion({} as never, {
-      occurrenceId: OCCURRENCE,
-      completedById: TEEN,
-      assigneeId: TEEN,
-      points: 10,
-      dueAt: new Date(T0.getTime() + 3_600_000),
-      graceMinutes: 15,
-      completedAt: T0,
-    });
-
-    expect(balanceOf(TEEN)).toBe(13);
-  });
-
-  it('pays no on-time bonus when the deadline plus grace has passed', async () => {
-    putOccurrence({ assigneeId: TEEN, points: 10, dueAt: new Date(T0.getTime() - DAY) });
-
-    const result = await service().completeChore(actor(TEEN), OCCURRENCE);
-
-    expect(result.onTime).toBe(false);
-    expect(ledgerFor(TEEN).map((e) => e.reason)).toEqual(['chore_completed']);
-  });
-
-  it('says thank you automatically when somebody covered, and carries no points doing it', async () => {
-    putOccurrence({ assigneeId: TEEN, points: 10 });
+  it('says thank you automatically when somebody covered, and nothing accrues', async () => {
+    putOccurrence({ assigneeId: TEEN });
 
     await service().completeChore(actor(CHILD, ['task:complete:any']), OCCURRENCE);
 
     expect(store.kudos).toHaveLength(1);
     expect(store.kudos[0]).toMatchObject({ fromUserId: TEEN, toUserId: CHILD });
-    // Kudos are not a second currency (D5).
-    expect(store.ledger.some((e) => e.reason === 'kudos_received')).toBe(false);
   });
 
-  it('books the swap sweetener as a transfer, so the family total does not drift', async () => {
-    putOccurrence({ assigneeId: CHILD, points: 10 });
-    store.swaps.push({
-      id: 'swap-1',
-      occurrenceId: OCCURRENCE,
-      fromUserId: TEEN,
-      toUserId: CHILD,
-      status: 'accepted',
-      bonusPoints: 4,
-    });
+  it('does not thank anybody when the assignee did their own chore', async () => {
+    putOccurrence({ assigneeId: TEEN });
 
-    await service().completeChore(actor(CHILD), OCCURRENCE);
+    const result = await service().completeChore(actor(TEEN), OCCURRENCE);
 
-    expect(balanceOf(TEEN)).toBe(-4);
-    expect(ledgerFor(CHILD).filter((e) => e.reason === 'swap_bonus')[0]?.delta).toBe(4);
-    expect(store.ledger.reduce((sum, e) => sum + (e.delta as number), 0)).toBe(13);
-  });
-
-  it('moves the assignee streak, and only forward', async () => {
-    putOccurrence({ assigneeId: TEEN, points: 10 });
-    const svc = service();
-
-    const result = await svc.completeChore(actor(TEEN), OCCURRENCE);
-    expect(result.currentStreak).toBe(1);
-    expect(store.streaks.get(TEEN)).toMatchObject({ current: 1, longest: 1 });
-
-    await svc.completeChore(actor(TEEN), OCCURRENCE);
-    expect(store.streaks.get(TEEN)).toMatchObject({ current: 1 });
+    expect(result.coveredFor).toBeNull();
+    expect(store.kudos).toHaveLength(0);
   });
 
   it('refuses a completion on behalf of somebody else without task:complete:any', async () => {
@@ -496,17 +294,27 @@ describe('completeChore', () => {
     });
   });
 
-  it('reverses with compensating entries rather than deletes', async () => {
-    putOccurrence({ assigneeId: TEEN, points: 10 });
+  it('reopening takes the chore straight back out of the fairness count', async () => {
+    putOccurrence({ assigneeId: TEEN });
     const svc = service();
     await svc.completeChore(actor(TEEN), OCCURRENCE);
 
     await svc.uncompleteChore(actor(ADULT, ['task:complete:any']), OCCURRENCE);
 
-    expect(balanceOf(TEEN)).toBe(0);
-    // Nothing was removed: the history still shows the award and the reversal.
-    expect(store.ledger).toHaveLength(4);
-    expect(store.ledger.filter((e) => e.reason === 'penalty')).toHaveLength(2);
+    // No compensating entries, no streak to rewind: the row leaves `done`, and
+    // every count that reads `status = 'done'` follows in the same statement.
+    expect(store.occurrences.get(OCCURRENCE)).toMatchObject({
+      status: 'scheduled',
+      completedById: null,
+      completedAt: null,
+    });
+  });
+
+  it('refuses to reopen something that was never completed', async () => {
+    putOccurrence({ assigneeId: TEEN });
+    await expect(
+      service().uncompleteChore(actor(ADULT, ['task:complete:any']), OCCURRENCE),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 });
 
@@ -554,7 +362,6 @@ describe('swaps', () => {
     const swap = await service().swaps.request(actor(TEEN, ['task:update:own']), {
       occurrenceId: OCCURRENCE,
       toUserId: CHILD,
-      bonusPoints: 2,
     });
 
     expect(swap.status).toBe('pending');
@@ -572,7 +379,7 @@ describe('swaps', () => {
   it('surfaces the one-pending-per-occurrence index as a clean 409', async () => {
     putOccurrence({ assigneeId: TEEN });
     const svc = service();
-    const input = { occurrenceId: OCCURRENCE, toUserId: CHILD, bonusPoints: 0 };
+    const input = { occurrenceId: OCCURRENCE, toUserId: CHILD };
 
     await svc.swaps.request(actor(TEEN, ['task:update:own']), input);
     await expect(svc.swaps.request(actor(TEEN, ['task:update:own']), input)).rejects.toMatchObject({
@@ -586,7 +393,6 @@ describe('swaps', () => {
     await expect(
       service().swaps.request(actor(CHILD, ['task:update:own']), {
         occurrenceId: OCCURRENCE,
-        bonusPoints: 0,
       }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
@@ -597,7 +403,6 @@ describe('swaps', () => {
     const swap = await svc.swaps.request(actor(TEEN, ['task:update:own']), {
       occurrenceId: OCCURRENCE,
       toUserId: CHILD,
-      bonusPoints: 0,
     });
 
     await expect(
@@ -610,22 +415,24 @@ describe('swaps', () => {
     expect(declined.status).toBe('declined');
   });
 
-  it('rewrites only the assignee on acceptance — no points move yet', async () => {
+  it('rewrites only the assignee on acceptance', async () => {
     putOccurrence({ assigneeId: TEEN });
     const svc = service();
     const swap = await svc.swaps.request(actor(TEEN, ['task:update:own']), {
       occurrenceId: OCCURRENCE,
       toUserId: CHILD,
-      bonusPoints: 3,
     });
 
-    await svc.swaps.respond(actor(ADULT, ['task:assign:any', 'chore:swap:accept']), swap.id, { accept: true });
+    await svc.swaps.respond(actor(ADULT, ['task:assign:any', 'chore:swap:accept']), swap.id, {
+      accept: true,
+    });
 
+    // One foreign key, and nothing else. A swap carries no sweetener to book:
+    // «дам тебе 5 баллов» is the trade D5 took off the table.
     expect(store.occurrences.get(OCCURRENCE)).toMatchObject({
       assigneeId: CHILD,
       assignedVia: 'swap',
     });
-    expect(store.ledger).toHaveLength(0);
     expect(emitted.map((e) => e.type)).toEqual(['chore_swap_requested', 'chore_swap_answered']);
   });
 
@@ -634,10 +441,11 @@ describe('swaps', () => {
     const svc = service();
     const swap = await svc.swaps.request(actor(TEEN, ['task:update:own']), {
       occurrenceId: OCCURRENCE,
-      bonusPoints: 0,
     });
 
-    await svc.swaps.respond(actor(ADULT, ['task:assign:any', 'chore:swap:accept']), swap.id, { accept: true });
+    await svc.swaps.respond(actor(ADULT, ['task:assign:any', 'chore:swap:accept']), swap.id, {
+      accept: true,
+    });
     await expect(
       svc.swaps.respond(actor(ADULT, ['task:assign:any', 'chore:swap:accept']), swap.id, { accept: true }),
     ).rejects.toMatchObject({ code: 'CONFLICT' });
@@ -661,15 +469,15 @@ describe('swaps', () => {
 /* Fairness summary                                                            */
 /* -------------------------------------------------------------------------- */
 
-describe('fairnessSummary — the neutral load bar', () => {
+describe('fairnessSummary — the neutral split of the week', () => {
   it('compares each member to their own fair share and exposes no ranking', async () => {
     store.memberWeights.push(
       { userId: ADULT, weight: '1.00', position: 0 },
       { userId: CHILD, weight: '0.40', position: 1 },
     );
     store.fairness.push(
-      { userId: ADULT, completed: 7, committed: 20, earned: 50, coveredForOthers: 1 },
-      { userId: CHILD, completed: 3, committed: 10, earned: 18, coveredForOthers: 0 },
+      { userId: ADULT, completed: 7, committed: 3, coveredForOthers: 1 },
+      { userId: CHILD, completed: 3, committed: 1, coveredForOthers: 0 },
     );
 
     const summary = await new ChoresService(fakeDb, { now: () => T0 }).fairnessSummary({
@@ -680,17 +488,19 @@ describe('fairnessSummary — the neutral load bar', () => {
     const child = summary.members.find((m) => m.userId === CHILD);
     expect(adult?.fairShare).toBeCloseTo(1 / 1.4, 4);
     expect(child?.fairShare).toBeCloseTo(0.4 / 1.4, 4);
-    expect(adult?.actualShare).toBeCloseTo(70 / 98, 4);
-    // 70 points on one unit of weight and 28 on 0.4 of a unit is the *same*
+    expect(adult?.actualShare).toBeCloseTo(10 / 14, 4);
+    // Ten chores on one unit of weight and four on 0.4 of a unit is the *same*
     // load per unit — equal debt is the definition of balanced here, and the
     // family-level number says so with a single 0.
-    expect(adult?.debt).toBe(70);
-    expect(child?.debt).toBe(70);
+    expect(adult?.debt).toBe(10);
+    expect(child?.debt).toBe(10);
     expect(summary.imbalance).toBeCloseTo(0, 4);
 
-    // No rank field, anywhere, ever (D5).
+    // No rank field, anywhere, ever (D5) — and no per-person score either.
     for (const member of summary.members) {
       expect(Object.keys(member)).not.toContain('rank');
+      expect(Object.keys(member)).not.toContain('earned');
+      expect(Object.keys(member)).not.toContain('points');
     }
   });
 
@@ -700,8 +510,8 @@ describe('fairnessSummary — the neutral load bar', () => {
       { userId: CHILD, weight: '1.00', position: 1 },
     );
     store.fairness.push(
-      { userId: ADULT, completed: 0, committed: 0, earned: 0, coveredForOthers: 0 },
-      { userId: CHILD, completed: 0, committed: 0, earned: 0, coveredForOthers: 0 },
+      { userId: ADULT, completed: 0, committed: 0, coveredForOthers: 0 },
+      { userId: CHILD, completed: 0, committed: 0, coveredForOthers: 0 },
     );
 
     const summary = await new ChoresService(fakeDb, { now: () => T0 }).fairnessSummary({
@@ -788,7 +598,7 @@ describe('assignment is written once at materialization and frozen (D5)', () => 
           weight: 1,
           position: 0,
           active: true,
-          earned: 0,
+          completed: 0,
           committed: 0,
           lastAssignedAt: null,
           blackouts: [],
@@ -798,7 +608,7 @@ describe('assignment is written once at materialization and frozen (D5)', () => 
           weight: 1,
           position: 1,
           active: true,
-          earned: 0,
+          completed: 0,
           committed: 0,
           lastAssignedAt: null,
           blackouts: [],
@@ -808,8 +618,8 @@ describe('assignment is written once at materialization and frozen (D5)', () => 
     return {
       rotationId: ROTATION,
       strategy: 'weighted_balance',
-      assign: (at, points) => {
-        const pick = planner.assign(at, points);
+      assign: (at) => {
+        const pick = planner.assign(at);
         return { assigneeId: pick.userId, assignedVia: pick.assignedVia, debt: pick.debt };
       },
       commit: () => Promise.resolve(),
@@ -823,7 +633,7 @@ describe('assignment is written once at materialization and frozen (D5)', () => 
     const first = await materializeThroughPort(port, series.id, {
       now,
       horizonDays: 14,
-      decorate: rotationDecorator(run(), 10),
+      decorate: rotationDecorator(run()),
     });
     const before = port.assignees();
     expect(first.inserted).toBeGreaterThan(10);
@@ -834,7 +644,7 @@ describe('assignment is written once at materialization and frozen (D5)', () => 
     const second = await materializeThroughPort(port, series.id, {
       now,
       horizonDays: 14,
-      decorate: rotationDecorator(run(1), 10),
+      decorate: rotationDecorator(run(1)),
     });
 
     expect(second.inserted).toBe(0);
@@ -848,14 +658,14 @@ describe('assignment is written once at materialization and frozen (D5)', () => 
     await materializeThroughPort(port, series.id, {
       now,
       horizonDays: 7,
-      decorate: rotationDecorator(run(), 10),
+      decorate: rotationDecorator(run()),
     });
     const before = port.assignees();
 
     await materializeThroughPort(port, series.id, {
       now,
       horizonDays: 21,
-      decorate: rotationDecorator(run(), 10),
+      decorate: rotationDecorator(run()),
     });
 
     expect(port.assignees().slice(0, before.length)).toEqual(before);
@@ -867,7 +677,7 @@ describe('assignment is written once at materialization and frozen (D5)', () => 
     await materializeThroughPort(port, series.id, {
       now: new Date('2026-09-06T00:00:00.000Z'),
       horizonDays: 20,
-      decorate: rotationDecorator(run(), 10),
+      decorate: rotationDecorator(run()),
     });
 
     const assignees = port.assignees();
@@ -887,7 +697,7 @@ describe('assignment is written once at materialization and frozen (D5)', () => 
           weight: 1,
           position: 0,
           active: true,
-          earned: 0,
+          completed: 0,
           committed: 0,
           lastAssignedAt: null,
           blackouts: [],
@@ -897,8 +707,8 @@ describe('assignment is written once at materialization and frozen (D5)', () => 
     const anyoneRun: AssignmentRun = {
       rotationId: ROTATION,
       strategy: 'anyone',
-      assign: (at, points) => {
-        const pick = planner.assign(at, points);
+      assign: (at) => {
+        const pick = planner.assign(at);
         return { assigneeId: pick.userId, assignedVia: pick.assignedVia, debt: pick.debt };
       },
       commit: () => Promise.resolve(),
@@ -907,7 +717,7 @@ describe('assignment is written once at materialization and frozen (D5)', () => 
     await materializeThroughPort(port, series.id, {
       now: new Date('2026-09-06T00:00:00.000Z'),
       horizonDays: 10,
-      decorate: rotationDecorator(anyoneRun, 10),
+      decorate: rotationDecorator(anyoneRun),
     });
 
     expect(port.rows.size).toBeGreaterThan(5);
@@ -948,44 +758,109 @@ describe('cursor encoding', () => {
  * against a database that has the migrations applied. Skipped otherwise so
  * `pnpm test` stays runnable without Docker.
  *
- * These cover the two things the fake above cannot honestly reproduce: the
- * fairness roster SQL and the partial unique indexes that make the whole
- * idempotency story true rather than merely intended.
+ * This covers the thing the fake above cannot honestly reproduce: the fairness
+ * roster SQL, which is where "how many chores did you do" is actually counted.
  */
 const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!TEST_DATABASE_URL)('chores against Postgres', () => {
-  it('computes earned and committed for a roster in one query', async () => {
-    const actual = await vi.importActual<typeof RealChoresRepo>('./chores.repository.js');
+  /** A series plus three occurrences: one done, one scheduled, one skipped. */
+  async function seedRoster() {
     const { createDbClient } = await import('../../core/db.js');
     const { users } = await import('../identity/users.schema.js');
-    const { rotationMembers, rotations, pointsLedger } = await import('./chores.schema.js');
-    const { eq } = await import('drizzle-orm');
+    const { rotationMembers, rotations } = await import('./chores.schema.js');
+    const { taskOccurrences, taskSeries } = await import('../tasks/tasks.schema.js');
 
     const created = createDbClient(TEST_DATABASE_URL);
     const db = created.db;
+
+    const [member] = await db
+      .insert(users)
+      .values({ displayName: 'Тест-дежурный', role: 'teen', status: 'active' })
+      .returning();
+    if (!member) throw new Error('could not seed a test user');
+
+    const [rotation] = await db
+      .insert(rotations)
+      .values({ name: `тест-дежурство-${Date.now()}`, strategy: 'weighted_balance' })
+      .returning();
+    if (!rotation) throw new Error('could not seed a test rotation');
+
+    await db
+      .insert(rotationMembers)
+      .values({ rotationId: rotation.id, userId: member.id, weight: '0.50', position: 0 });
+
+    const [series] = await db
+      .insert(taskSeries)
+      .values({
+        title: 'Мусор',
+        createdById: member.id,
+        rrule: 'FREQ=DAILY',
+        dtstartLocal: '2026-09-07T09:00:00',
+        timezone: 'Europe/Moscow',
+        rotationId: rotation.id,
+      })
+      .returning();
+    if (!series) throw new Error('could not seed a test series');
+
+    const now = new Date();
+    const rows = await db
+      .insert(taskOccurrences)
+      .values([
+        {
+          seriesId: series.id,
+          occurrenceKey: '2026-09-07T09:00:00',
+          startsAt: now,
+          dueAt: now,
+          localDate: '2026-09-07',
+          startsLocal: '2026-09-07T09:00:00',
+          status: 'done',
+          assigneeId: member.id,
+          completedById: member.id,
+          completedAt: now,
+        },
+        {
+          seriesId: series.id,
+          occurrenceKey: '2026-09-08T09:00:00',
+          startsAt: new Date(now.getTime() + DAY),
+          dueAt: new Date(now.getTime() + DAY),
+          localDate: '2026-09-08',
+          startsLocal: '2026-09-08T09:00:00',
+          status: 'scheduled',
+          assigneeId: member.id,
+        },
+        {
+          // Skipped: neither done nor still owed, so it counts for nothing.
+          seriesId: series.id,
+          occurrenceKey: '2026-09-09T09:00:00',
+          startsAt: new Date(now.getTime() + 2 * DAY),
+          dueAt: new Date(now.getTime() + 2 * DAY),
+          localDate: '2026-09-09',
+          startsLocal: '2026-09-09T09:00:00',
+          status: 'skipped',
+          assigneeId: member.id,
+        },
+      ])
+      .returning();
+
+    const seriesId = series.id;
+    const rotationId = rotation.id;
+    const memberId = member.id;
+    const cleanup = async (): Promise<void> => {
+      const { eq } = await import('drizzle-orm');
+      await db.delete(taskSeries).where(eq(taskSeries.id, seriesId));
+      await db.delete(rotations).where(eq(rotations.id, rotationId));
+      await db.delete(users).where(eq(users.id, memberId));
+      await created.sql.end({ timeout: 5 });
+    };
+
+    return { db, member, rotation, doneId: rows[0]?.id as string, cleanup };
+  }
+
+  it('counts completed and committed chores for a roster in one query', async () => {
+    const actual = await vi.importActual<typeof RealChoresRepo>('./chores.repository.js');
+    const { db, rotation, cleanup } = await seedRoster();
     try {
-      const [member] = await db
-        .insert(users)
-        .values({ displayName: 'Тест-дежурный', role: 'teen', status: 'active' })
-        .returning();
-      if (!member) throw new Error('could not seed a test user');
-
-      const [rotation] = await db
-        .insert(rotations)
-        .values({ name: `тест-дежурство-${Date.now()}`, strategy: 'weighted_balance' })
-        .returning();
-      if (!rotation) throw new Error('could not seed a test rotation');
-
-      await db
-        .insert(rotationMembers)
-        .values({ rotationId: rotation.id, userId: member.id, weight: '0.50', position: 0 });
-      await db
-        .insert(pointsLedger)
-        .values({ userId: member.id, delta: 12, reason: 'chore_completed' });
-      // Outside the debt reasons — must not count towards `earned`.
-      await db.insert(pointsLedger).values({ userId: member.id, delta: 99, reason: 'manual_award' });
-
       const roster = await actual.loadRotationRoster(db, rotation.id, {
         now: new Date(),
         through: new Date(Date.now() + 7 * DAY),
@@ -993,53 +868,42 @@ describe.skipIf(!TEST_DATABASE_URL)('chores against Postgres', () => {
       });
 
       expect(roster).toHaveLength(1);
-      expect(roster[0]?.earned).toBe(12);
-      expect(roster[0]?.committed).toBe(0);
+      // One chore done, one still owed, the skipped one counted nowhere.
+      expect(roster[0]?.completed).toBe(1);
+      expect(roster[0]?.committed).toBe(1);
       expect(roster[0]?.weight).toBe(0.5);
-
-      await db.delete(pointsLedger).where(eq(pointsLedger.userId, member.id));
-      await db.delete(rotations).where(eq(rotations.id, rotation.id));
-      await db.delete(users).where(eq(users.id, member.id));
     } finally {
-      await created.sql.end({ timeout: 5 });
+      await cleanup();
     }
   });
 
-  it('refuses a second chore_completed award for the same occurrence and user', async () => {
+  it('counts a chore once however often it is completed, and drops it on reopen', async () => {
     const actual = await vi.importActual<typeof RealChoresRepo>('./chores.repository.js');
-    const { createDbClient } = await import('../../core/db.js');
-    const { users } = await import('../identity/users.schema.js');
-    const { pointsLedger } = await import('./chores.schema.js');
-    const { eq } = await import('drizzle-orm');
-
-    const created = createDbClient(TEST_DATABASE_URL);
-    const db = created.db;
+    const { db, member, rotation, doneId, cleanup } = await seedRoster();
     try {
-      const [member] = await db
-        .insert(users)
-        .values({ displayName: 'Тест-очки', role: 'teen', status: 'active' })
-        .returning();
-      if (!member) throw new Error('could not seed a test user');
+      // The conditional UPDATE refuses a row that is already `done`, so the
+      // replay writes nothing — and even if it had, the count is over rows.
+      expect(await actual.markOccurrenceDone(db, doneId, member.id, new Date())).toBe(false);
 
-      // A NULL occurrence sits outside the partial index, so both rows land —
-      // which is the discretionary-award escape hatch working as designed.
-      const first = await actual.insertLedgerEntry(db, {
-        userId: member.id,
-        delta: 5,
-        reason: 'manual_award',
+      const after = await actual.loadRotationRoster(db, rotation.id, {
+        now: new Date(),
+        through: new Date(Date.now() + 7 * DAY),
+        windowDays: 28,
       });
-      const second = await actual.insertLedgerEntry(db, {
-        userId: member.id,
-        delta: 5,
-        reason: 'manual_award',
-      });
-      expect(first).toBeDefined();
-      expect(second).toBeDefined();
+      expect(after[0]?.completed).toBe(1);
 
-      await db.delete(pointsLedger).where(eq(pointsLedger.userId, member.id));
-      await db.delete(users).where(eq(users.id, member.id));
+      // Reopening removes it from the count in the same statement — no
+      // compensating entry anywhere, because there is nothing to compensate.
+      expect(await actual.markOccurrenceScheduled(db, doneId)).toBe(true);
+      const reopened = await actual.loadRotationRoster(db, rotation.id, {
+        now: new Date(),
+        through: new Date(Date.now() + 7 * DAY),
+        windowDays: 28,
+      });
+      expect(reopened[0]?.completed).toBe(0);
+      expect(reopened[0]?.committed).toBe(2);
     } finally {
-      await created.sql.end({ timeout: 5 });
+      await cleanup();
     }
   });
 });

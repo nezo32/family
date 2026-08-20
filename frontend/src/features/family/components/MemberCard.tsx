@@ -1,11 +1,9 @@
 import { ChevronRight } from 'lucide-react';
-import type { FairnessMember } from '@family/shared';
 import { UserAvatar } from '@/shared/components/UserAvatar';
 import { MONTHS_GENITIVE } from '@/shared/lib/i18n';
 import { FAMILY_RU, dayCount } from '../locale';
 import type { RosterMember } from '../api';
 import { RoleBadge, StatusBadge } from './RoleBadge';
-import { WeekLoadBar } from './WeekLoadBar';
 
 /**
  * One member of the family roster.
@@ -15,11 +13,10 @@ import { WeekLoadBar } from './WeekLoadBar';
  * target is what a thumb actually hits.
  *
  * Rendering order is the roster's order, which is `sortOrder` then name. It is
- * never sorted by load: see `WeekLoadBar` and D5.
+ * never sorted by load, and it carries no per-person numbers at all (D5).
  */
 export function MemberCard(props: {
   member: RosterMember;
-  load: FairnessMember | undefined;
   isSelf: boolean;
   onOpen: () => void;
 }) {
@@ -57,8 +54,6 @@ export function MemberCard(props: {
           {birthday ? (
             <span className="block text-xs text-muted-foreground">{birthday}</span>
           ) : null}
-
-          <WeekLoadBar load={props.load} quiet className="pt-0.5" />
         </span>
 
         <ChevronRight className="mt-1 size-4 shrink-0 text-muted-foreground" aria-hidden />

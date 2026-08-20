@@ -23,7 +23,7 @@ import type {
 } from '../../core/recurrence/materializer.js';
 import * as repo from './chores.repository.js';
 import type { KudosRow, RotationMemberRow, RotationRow, UserBlackoutRow } from './chores.schema.js';
-import { PointsService, type ChoreActor } from './points.service.js';
+import type { ChoreActor } from './actor.js';
 import {
   previewAssignments as previewRotationPicks,
   RotationRun,
@@ -32,7 +32,7 @@ import {
 } from './rotation.js';
 import { emitChoreIntent, SwapsService, type ChoreIntentEmitter } from './swaps.service.js';
 
-export type { ChoreActor } from './points.service.js';
+export type { ChoreActor } from './actor.js';
 
 /**
  * Chore fairness business rules (D5). No HTTP knowledge (D8).
@@ -43,11 +43,12 @@ export type { ChoreActor } from './points.service.js';
  *    assignee at materialization time. Tasks never imports this repository —
  *    it takes the port, calls it inside its own transaction, and writes the
  *    frozen `assignee_id` / `assigned_via` pair the port hands back.
- * 2. **Completion.** Idempotent, points to the doer, auto-kudos when somebody
- *    covered, streaks folded forward.
- * 3. **The neutral load bar.** {@link fairnessSummary} reports each member
- *    against *their own* fair share. There is no rank field anywhere in the
- *    chain, and there must never be one: a sibling leaderboard generates
+ * 2. **Completion.** Idempotent, credited to the doer, auto-kudos when somebody
+ *    covered. Nothing is scored: the completion is simply a fact the rotation
+ *    counts later.
+ * 3. **The neutral split of the week.** {@link fairnessSummary} reports each
+ *    member against *their own* fair share. There is no rank field anywhere in
+ *    the chain, and there must never be one: a sibling leaderboard generates
  *    arguments, not chores (D5).
  */
 
@@ -83,7 +84,7 @@ export interface AssignmentRun {
   readonly rotationId: string;
   readonly strategy: RotationStrategy;
   /** Pick the assignee for one occurrence and fold the result back into the run. */
-  assign(at: Date, points: number): RotationAssignment;
+  assign(at: Date): RotationAssignment;
   /** Persist the advanced `round_robin` cursor. No-op for other strategies. */
   commit(ex: Executor): Promise<void>;
 }
@@ -106,7 +107,7 @@ export interface OpenRunOptions {
  * const run = await rotations.openAssignmentRun(tx, series.rotationId, { now });
  * await materializeSeries(tx, TASK_TARGET, series.id, {
  *   now,
- *   decorate: rotationDecorator(run, series.points),
+ *   decorate: rotationDecorator(run),
  * });
  * await run.commit(tx);
  * ```
@@ -130,16 +131,12 @@ export interface RotationPort {
  *
  * The decorator is called once per planned occurrence **in ascending key
  * order**, which is exactly what the debt accumulation needs: each pick raises
- * that member's `committed` before the next occurrence is considered, so one
- * pass cannot hand a single person the whole horizon.
+ * that member's `committed` by one before the next occurrence is considered, so
+ * one pass cannot hand a single person the whole horizon.
  */
-export function rotationDecorator(
-  run: AssignmentRun,
-  points: number | ((occurrence: PlannedOccurrence) => number),
-): OccurrenceDecorator {
+export function rotationDecorator(run: AssignmentRun): OccurrenceDecorator {
   return (occurrence: PlannedOccurrence): Record<string, ExtraColumnValue> => {
-    const value = typeof points === 'function' ? points(occurrence) : points;
-    const decision = run.assign(occurrence.startsAt, value);
+    const decision = run.assign(occurrence.startsAt);
     return { assignee_id: decision.assigneeId, assigned_via: decision.assignedVia };
   };
 }
@@ -149,7 +146,10 @@ export function rotationDecorator(
 /* -------------------------------------------------------------------------- */
 
 export interface CompleteChoreInput {
-  /** Whoever actually did it. Defaults to the caller (D5: points follow them). */
+  /**
+   * Whoever actually did it. Defaults to the caller — D5: the rotation counts
+   * the chore towards the doer, not towards whoever it was handed to.
+   */
   readonly completedById?: string;
   readonly completedAt?: Date;
 }
@@ -158,13 +158,10 @@ export interface ChoreCompletionResult {
   readonly occurrenceId: string;
   readonly completedById: string;
   readonly completedAt: Date;
-  /** TRUE when this call was a replay — no second award was made. */
+  /** TRUE when this call was a replay — nothing was written a second time. */
   readonly alreadyCompleted: boolean;
-  readonly onTime: boolean;
-  readonly pointsAwarded: number;
   /** The assignee they covered for, when the doer is somebody else. */
   readonly coveredFor: string | null;
-  readonly currentStreak: number;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -177,7 +174,6 @@ export interface ChoresServiceOptions {
 }
 
 export class ChoresService implements RotationPort {
-  readonly points: PointsService;
   readonly swaps: SwapsService;
   private readonly now: () => Date;
   private readonly emitIntent: ChoreIntentEmitter;
@@ -188,7 +184,6 @@ export class ChoresService implements RotationPort {
   ) {
     this.now = options.now ?? (() => new Date());
     this.emitIntent = options.emitIntent ?? emitChoreIntent;
-    this.points = new PointsService(db);
     this.swaps = new SwapsService(db, {
       ...(options.now ? { now: options.now } : {}),
       ...(options.emitIntent ? { emitIntent: options.emitIntent } : {}),
@@ -235,8 +230,8 @@ export class ChoresService implements RotationPort {
     return {
       rotationId,
       strategy: rotation.strategy,
-      assign: (at, points) => {
-        const pick = run.assign(at, points);
+      assign: (at) => {
+        const pick = run.assign(at);
         return { assigneeId: pick.userId, assignedVia: pick.assignedVia, debt: pick.debt };
       },
       commit: async (writeEx: Executor) => {
@@ -394,7 +389,7 @@ export class ChoresService implements RotationPort {
       picks.push({
         userId: standing.userId,
         debt: round4(standing.debt),
-        earned: Math.round(standing.earned),
+        completed: Math.round(standing.completed),
         committed: Math.round(standing.committed),
         weight: standing.weight.toFixed(2),
         eligible: true,
@@ -411,7 +406,7 @@ export class ChoresService implements RotationPort {
         picks.push({
           userId: standing.userId,
           debt: Number.isFinite(standing.debt) ? round4(standing.debt) : 0,
-          earned: Math.round(standing.earned),
+          completed: Math.round(standing.completed),
           committed: Math.round(standing.committed),
           weight: standing.weight.toFixed(2),
           eligible: false,
@@ -435,7 +430,7 @@ export class ChoresService implements RotationPort {
     });
 
     for (const occurrence of occurrences) {
-      const decision = run.assign(occurrence.startsAt, occurrence.points);
+      const decision = run.assign(occurrence.startsAt);
       if (decision.assigneeId === null) continue;
       await repo.reassignOccurrence(ex, occurrence.id, decision.assigneeId, 'manual');
     }
@@ -493,13 +488,17 @@ export class ChoresService implements RotationPort {
   /* ------------------------------ fairness ----------------------------- */
 
   /**
-   * «Нагрузка за неделю» — the neutral load bar.
+   * «Как разделились дела» — the neutral split of the week.
    *
    * Every member is compared to *their own* fair share (`weight / Σweight`),
    * never to each other. `imbalance` is a single family-level number precisely
    * so the fix is a family conversation rather than a ranking, and there is no
    * sort by load anywhere in this method. If a future change adds one, it is
    * re-litigating D5.
+   *
+   * Everything here is counted in **chores**, never in points. The load figures
+   * exist so an adult can see whether the split is lopsided, not so anybody can
+   * be told they are behind.
    */
   async fairnessSummary(query: FairnessQuery): Promise<FairnessSummaryResponse> {
     const to = this.now();
@@ -524,7 +523,7 @@ export class ChoresService implements RotationPort {
     const totalWeight = roster.reduce((sum, m) => sum + Math.max(m.weight, 0), 0);
     const loads = roster.map((m) => {
       const row = byUser.get(m.userId);
-      return (row?.earned ?? 0) + (row?.committed ?? 0);
+      return (row?.completed ?? 0) + (row?.committed ?? 0);
     });
     const totalLoad = loads.reduce((sum, load) => sum + load, 0);
 
@@ -541,7 +540,6 @@ export class ChoresService implements RotationPort {
         weight: m.weight.toFixed(2),
         completed: row?.completed ?? 0,
         committed: Math.round(row?.committed ?? 0),
-        earned: Math.round(row?.earned ?? 0),
         debt: m.weight > 0 ? round4(load / m.weight) : 0,
         fairShare: round4(fairShare),
         actualShare: round4(actualShare),
@@ -632,11 +630,15 @@ export class ChoresService implements RotationPort {
    * 'scheduled'`), so a double tap, an offline queue replaying on reconnect or
    * a retry after a timeout produces exactly one winner. Losing that race is
    * not an error — it is the normal second delivery of the same intent — so the
-   * loser gets the same success payload with `alreadyCompleted: true` and no
-   * second award. The ledger is guarded independently by
-   * `points_ledger_award_once_uq`, so even a torn write cannot double-pay.
+   * loser gets the same success payload with `alreadyCompleted: true`.
    *
-   * Points go to `completedById`, never to `assigneeId` (D5).
+   * That single row **is** the idempotency guarantee for fairness now. The
+   * rotation counts `task_occurrences` where `status = 'done'`, and an
+   * occurrence can only be done once, so a replayed completion cannot inflate
+   * anybody's share of the week. The old points ledger needed a partial unique
+   * index to promise the same thing; counting rows promises it for free.
+   *
+   * The chore counts towards `completedById`, never towards `assigneeId` (D5).
    */
   async completeChore(
     actor: ChoreActor,
@@ -661,32 +663,14 @@ export class ChoresService implements RotationPort {
         // Somebody (possibly this very request, a moment ago) got there first.
         const current = await repo.findOccurrence(tx, occurrenceId);
         if (!current || current.status !== 'done') throw conflict('Задача изменилась, повторите');
-        const streak = await repo.findStreak(tx, current.completedById ?? completedById);
         return {
           occurrenceId,
           completedById: current.completedById ?? completedById,
           completedAt: current.completedAt ?? completedAt,
           alreadyCompleted: true,
-          onTime: false,
-          pointsAwarded: 0,
           coveredFor: null,
-          currentStreak: streak?.current ?? 0,
         };
       }
-
-      const swap = await repo.findAcceptedSwapForOccurrence(tx, occurrenceId);
-      const awards = await this.points.bookCompletion(tx, {
-        occurrenceId,
-        completedById,
-        assigneeId: occurrence.assigneeId,
-        points: occurrence.points,
-        dueAt: occurrence.dueAt,
-        graceMinutes: occurrence.graceMinutes,
-        completedAt,
-        ...(swap && swap.bonusPoints > 0
-          ? { swap: { fromUserId: swap.fromUserId, bonusPoints: swap.bonusPoints } }
-          : {}),
-      });
 
       const coveredFor =
         occurrence.assigneeId !== null && occurrence.assigneeId !== completedById
@@ -694,9 +678,8 @@ export class ChoresService implements RotationPort {
           : null;
 
       // Somebody covered for somebody else: say thank you automatically, from
-      // the person who was let off. Kudos carry no points on purpose (D5), so
-      // this cannot be farmed — it is a nudge towards the family wall, not a
-      // second currency.
+      // the person who was let off. Kudos are a thank-you and nothing else (D5)
+      // — nothing accumulates, so there is nothing here to farm.
       if (coveredFor !== null) {
         await repo.insertKudos(tx, {
           fromUserId: coveredFor,
@@ -707,66 +690,32 @@ export class ChoresService implements RotationPort {
         });
       }
 
-      // The streak belongs to whoever the chore was *assigned* to: it measures
-      // "my queue got resolved on time", which is the thing `listStreakEvents`
-      // can rebuild from `task_occurrences`. An unassigned (claimed) chore has
-      // no queue to be consistent with, so it does not move any streak.
-      let currentStreak = 0;
-      const streakOwner = occurrence.assigneeId;
-      if (streakOwner !== null) {
-        const state = await this.points.recordStreakEvent(tx, streakOwner, {
-          resolvedAt: occurrence.dueAt,
-          onTime: awards.onTime,
-        });
-        if (streakOwner === completedById) currentStreak = state.current;
-      }
-      if (currentStreak === 0 && streakOwner !== completedById) {
-        const streak = await repo.findStreak(tx, completedById);
-        currentStreak = streak?.current ?? 0;
-      }
-
       return {
         occurrenceId,
         completedById,
         completedAt,
         alreadyCompleted: false,
-        onTime: awards.onTime,
-        pointsAwarded: awards.total,
         coveredFor,
-        currentStreak,
       };
     });
   }
 
   /**
-   * Reopen a completed chore, correcting the ledger with **compensating
-   * entries** rather than deletes (D5).
+   * Reopen a completed chore.
+   *
+   * A single status flip is the entire undo now. When the ledger existed this
+   * had to write compensating entries and rewind a streak; with fairness read
+   * straight off `task_occurrences`, moving the row out of `done` removes it
+   * from the count in the same instant, with nothing left over to correct.
    */
-  async uncompleteChore(actor: ChoreActor, occurrenceId: string): Promise<void> {
+  async uncompleteChore(_actor: ChoreActor, occurrenceId: string): Promise<void> {
     await this.db.transaction(async (tx) => {
       const occurrence = await repo.findOccurrence(tx, occurrenceId);
       if (!occurrence) throw notFound('Occurrence');
       if (occurrence.status !== 'done') throw conflict('Задача не отмечена выполненной');
 
-      const doer = occurrence.completedById;
       const reopened = await repo.markOccurrenceScheduled(tx, occurrenceId);
       if (!reopened) throw conflict('Задача изменилась, повторите');
-      if (doer === null) return;
-
-      await this.points.reverseCompletion(tx, occurrenceId, doer, actor.id);
-
-      // The streak folded this occurrence in already, and the fold is only ever
-      // forward. Rewind the resume point and refold, keeping `longest` — a
-      // record somebody actually set is not undone by an administrative fix.
-      const owner = occurrence.assigneeId ?? doer;
-      const existing = await repo.findStreak(tx, owner);
-      await repo.upsertStreak(tx, {
-        userId: owner,
-        current: 0,
-        longest: existing?.longest ?? 0,
-        lastResolvedAt: null,
-      });
-      await this.points.refreshStreak(tx, owner, this.now());
     });
   }
 }
@@ -833,7 +782,7 @@ export type { RotationCandidate, RotationSnapshot };
  * Build the fairness snapshot for a rotation.
  *
  * This exists so the **tasks** module can drive `RotationRun` itself during
- * materialization — it has to, because `committed` debt accumulates across
+ * materialization — it has to, because `committed` load accumulates across
  * the occurrences of a single pass and only the materializer knows that
  * order. Tasks may not reach into `chores.repository` (D8), and duplicating
  * `loadRotationRoster` there would fork the fairness maths, which is the one

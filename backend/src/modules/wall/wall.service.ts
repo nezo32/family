@@ -330,8 +330,8 @@ export function isUniqueViolation(error: unknown): boolean {
  * Give kudos.
  *
  * Uses the `kudos` table owned by the chores module — kudos are peer
- * recognition, deliberately **not** points (D5 warns against a sibling
- * leaderboard), so nothing here touches `points_ledger`.
+ * recognition and nothing more (D5 warns against a sibling leaderboard):
+ * nothing accumulates, and there is no ledger left to touch.
  *
  * `UNIQUE (from_user_id, occurrence_id, emoji)` makes a double tap a `409`
  * rather than a second row: it is a like, not a tally.

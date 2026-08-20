@@ -119,7 +119,6 @@ export async function runOverdueSweep(db: Db, now = new Date()): Promise<number>
         title: occurrence.title,
         dueAt: occurrence.dueAt.toISOString(),
         localDate: occurrence.localDate,
-        points: occurrence.points,
         assigneeId: occurrence.assigneeId,
         seriesId: occurrence.seriesId,
         occurrenceId: occurrence.id,

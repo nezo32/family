@@ -86,7 +86,7 @@ export function useCompleteTask(): UseMutationResult<
     },
 
     onSettled: () => {
-      // Completion also moves the points ledger and the fairness window, both of
+      // Completion also moves the fairness window and the day's counts, both of
       // which live in the same payload.
       void queryClient.invalidateQueries({ queryKey: todayKeys.today() });
       void queryClient.invalidateQueries({ queryKey: todayKeys.weeks() });

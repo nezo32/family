@@ -7,7 +7,7 @@ import { Skeleton } from '@/shared/ui/skeleton';
 import { useCan } from '@/shared/auth/use-can';
 import { useMe } from '@/shared/auth/use-me';
 import { FAMILY_RU, memberCount } from '../locale';
-import { useRoster, useWeeklyLoad } from '../hooks';
+import { useRoster } from '../hooks';
 import type { RosterMember } from '../api';
 import { MemberCard } from '../components/MemberCard';
 import { MemberSheet } from '../components/MemberSheet';
@@ -17,10 +17,15 @@ import { MemberSheet } from '../components/MemberSheet';
  *
  * ### Not a leaderboard (D5)
  *
- * The list order is `sortOrder`, then name. It is **never** sorted by points,
- * by completed chores or by anything else a child could read as a placing, and
- * no card shows a position. Each member's week is drawn against their own fair
- * share; that is the entire comparison this screen makes.
+ * The list order is `sortOrder`, then name. It is **never** sorted by completed
+ * chores or by anything else a child could read as a placing, and no card shows
+ * a number.
+ *
+ * Every member's card used to carry a little load bar. It went with the score
+ * system: one bar per person, stacked down a roster of siblings, *is* the
+ * comparison, however carefully each individual bar is worded. The week's split
+ * of the housework lives on the chores screen instead, where it reads as one
+ * family-level picture rather than a mark against each name.
  *
  * ### Permissions
  *
@@ -34,7 +39,6 @@ export default function FamilyPage() {
   const { data: me } = useMe();
 
   const roster = useRoster();
-  const load = useWeeklyLoad();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -96,7 +100,7 @@ export default function FamilyPage() {
       <PageHeader
         title={FAMILY_RU.title}
         description={
-          members.length > 0 ? `${memberCount(members.length)} · ${FAMILY_RU.loadHint}` : undefined
+          members.length > 0 ? memberCount(members.length) : undefined
         }
       />
 
@@ -112,7 +116,6 @@ export default function FamilyPage() {
             <MemberCard
               key={member.id}
               member={member}
-              load={load.byMember.get(member.id)}
               isSelf={member.id === me?.user.id}
               onOpen={() => {
                 setSelectedId(member.id);
@@ -124,7 +127,6 @@ export default function FamilyPage() {
 
       <MemberSheet
         member={selected}
-        load={selected ? load.byMember.get(selected.id) : undefined}
         isSelf={selected?.id === me?.user.id}
         open={selected !== null}
         onOpenChange={(open) => {

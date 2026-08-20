@@ -59,20 +59,6 @@ function member(overrides: Record<string, unknown>) {
   };
 }
 
-function fairnessMember(userId: string, completed: number, actualShare: number) {
-  return {
-    userId,
-    weight: '1.00',
-    completed,
-    committed: 1,
-    earned: completed * 5,
-    debt: 1,
-    fairShare: 0.5,
-    actualShare,
-    coveredForOthers: 0,
-  };
-}
-
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -83,7 +69,6 @@ function json(status: number, body: unknown): Response {
 interface Scenario {
   me: ReturnType<typeof meBody>;
   members: unknown[];
-  fairness?: unknown[];
 }
 
 const calls: { url: string; method: string }[] = [];
@@ -97,19 +82,6 @@ function installFetch(scenario: Scenario) {
 
       // Exact match: `/api/members` also starts with `/api/me`.
       if (url.endsWith('/api/me')) return Promise.resolve(json(200, scenario.me));
-
-      if (url.includes('/api/chores/fairness')) {
-        return Promise.resolve(
-          json(200, {
-            windowDays: 7,
-            from: '2026-08-13',
-            to: '2026-08-19',
-            rotationId: null,
-            members: scenario.fairness ?? [],
-            imbalance: 0.1,
-          }),
-        );
-      }
 
       if (url.includes('/api/tasks/occurrences')) {
         return Promise.resolve(json(200, { items: [], nextCursor: null }));
@@ -149,39 +121,34 @@ afterEach(() => {
 });
 
 describe('family roster', () => {
-  it('renders the weekly load as a neutral bar and never ranks the members', async () => {
+  it('shows who is in the family and attaches no number to anybody (D5)', async () => {
     installFetch({
       me: meBody(ADMIN_PERMISSIONS),
       members: [
         member({ id: CHILD_ID, displayName: 'Петя', sortOrder: 0 }),
         member({ id: TEEN_ID, displayName: 'Лиза', role: 'teen', sortOrder: 1 }),
       ],
-      // Лиза carries far more of the week than Петя. If anything ever sorted by
-      // load, she would jump to the top — that is exactly what must not happen.
-      fairness: [fairnessMember(CHILD_ID, 1, 0.2), fairnessMember(TEEN_ID, 9, 0.8)],
     });
     const { container } = renderPage();
 
     expect(await screen.findByText('Петя')).toBeInTheDocument();
+    expect(await screen.findByText('Лиза')).toBeInTheDocument();
 
-    await waitFor(() => {
-      expect(screen.getAllByRole('img').length).toBeGreaterThan(0);
-    });
-
-    // The bar exists and describes the member against their own fair share.
-    const bars = screen.getAllByRole('img');
-    expect(bars[0]?.getAttribute('aria-label')).toContain('Доля недели');
-    expect(bars[0]?.getAttribute('aria-label')).toContain('Своя доля недели');
-
-    // Roster order is sortOrder, not load.
+    // Roster order is sortOrder — never load, never anything a child could read
+    // as a placing.
     const names = [...container.querySelectorAll('li')].map(
       (item) => item.textContent?.slice(0, 40) ?? '',
     );
     expect(names[0]).toContain('Петя');
     expect(names[1]).toContain('Лиза');
 
-    // No placing, no ranking vocabulary anywhere on the screen.
-    expect(screen.queryByText(/место|рейтинг|лучш|больше всех/i)).not.toBeInTheDocument();
+    // The roster does not ask for the family's load at all any more. One bar
+    // per person, stacked down a list of siblings, is the comparison the score
+    // removal was about — the week's split lives on the chores screen instead.
+    expect(calls.some((call) => call.url.includes('/chores/fairness'))).toBe(false);
+
+    // No placing, no ranking vocabulary, no score anywhere on the screen.
+    expect(screen.queryByText(/место|рейтинг|лучш|больше всех|балл/i)).not.toBeInTheDocument();
   });
 
   it('offers only the roles the current user may assign', async () => {

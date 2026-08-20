@@ -3,6 +3,14 @@ import { defineConfig, devices } from '@playwright/test';
 const PORT = 4173;
 const baseURL = process.env.E2E_BASE_URL ?? `http://localhost:${PORT}`;
 
+/**
+ * Authentication is a **worker-scoped fixture** (`e2e/fixtures.ts`), not a
+ * setup project writing one shared state file.
+ *
+ * Refresh tokens rotate and a replayed one revokes its whole family — correct
+ * behaviour that parallel workers sharing one saved cookie trip constantly.
+ * Each worker therefore signs in once and keeps its own session.
+ */
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,

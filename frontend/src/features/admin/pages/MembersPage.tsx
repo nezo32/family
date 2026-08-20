@@ -147,11 +147,14 @@ export default function MembersPage() {
       ) : null}
 
       {/*
-        Two independent lists, so on a genuinely wide screen they sit side by
-        side instead of one 1024px-wide column where «Приостановить» floats 480px
-        away from the name it belongs to. Below `xl` they stack, unchanged.
+        Two independent lists, stacked. They used to sit side by side above
+        `xl`, because the alternative was one 1024px-wide column where
+        «Приостановить» floated 480px away from the name it belonged to — but
+        that is now fixed at the source: §C2 caps the column at 720, so a row's
+        trailing control is always beside its label. Two 344px columns inside
+        that would only re-break what the cap fixed.
       */}
-      <div className="grid items-start gap-8 xl:grid-cols-2">
+      <div className="grid items-start gap-8">
         {/* ---- the queue --------------------------------------------------- */}
         <section aria-labelledby="pending-heading" className="min-w-0">
           <div className="mb-2 flex items-center gap-2">

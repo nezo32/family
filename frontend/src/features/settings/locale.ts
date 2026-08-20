@@ -36,6 +36,68 @@ export const SETTINGS_RU = {
   hub: {
     title: 'Настройки',
     description: 'Профиль, уведомления и способы входа.',
+
+    /* Section labels. Three destinations in one undifferentiated list read as a
+       placeholder; grouped under what they are *for*, they read as a screen. */
+    groupAccount: 'Аккаунт',
+    groupNotifications: 'Уведомления',
+    groupApp: 'Приложение',
+
+    /**
+     * One line per destination, saying what is behind it.
+     *
+     * Keyed by route rather than by index: `SETTINGS_NAV` is filtered through
+     * `useCan()`, so positions shift and a parallel array would silently pair
+     * «Способы входа» with the profile's subtitle.
+     */
+    subtitles: {
+      profile: 'Имя, аватар, день рождения и часовой пояс',
+      notifications: 'Что присылать, куда и когда молчать',
+      accounts: 'Google, Telegram и пароль',
+    },
+
+    /* The identity block at the top. */
+    roleInFamily: (role: string, family: string) => `${role} · ${family}`,
+
+    /*
+     * The push row is an affordance, not a caption: every state leads somewhere.
+     *
+     * Its own title is «На этом устройстве» rather than the section's
+     * «Уведомления на этом устройстве» — under a «УВЕДОМЛЕНИЯ» header, next to a
+     * row already called «Уведомления», the long form put the word on screen
+     * three times in four lines and truncated to «Уведомления на этом уст…» at
+     * 390px.
+     */
+    pushRowTitle: 'На этом устройстве',
+    pushEnableShort: 'Включить',
+    pushFix: 'Настроить',
+    pushOpen: 'Открыть',
+
+    /* --- «Приложение» ------------------------------------------------------- */
+
+    themeLabel: 'Оформление',
+    themeHint: 'Тёмная тема бережёт глаза вечером.',
+
+    /**
+     * Short forms, for the segmented control only.
+     *
+     * `THEME_LABELS_RU.system` is «Как в системе», which is the right words in
+     * the avatar menu and two characters too many in a third of a 390px row —
+     * it truncated to «Как в си…» next to its own icon. The menu keeps the long
+     * form; this control gets one that fits.
+     */
+    themeOptions: {
+      light: 'Светлая',
+      dark: 'Тёмная',
+      system: 'Системная',
+    },
+
+    calendarFeedLabel: 'Календарь на телефоне',
+    calendarFeedSubtitle: 'Семейные события в приложении «Календарь»',
+
+    /** Support always starts with «а какая у вас версия?». */
+    version: (version: string) => `Версия ${version}`,
+
     signOut: 'Выйти из аккаунта',
     signOutConfirmTitle: 'Выйти из приложения?',
     signOutConfirmText: 'Придётся войти заново — данные семьи останутся на месте.',
@@ -49,10 +111,40 @@ export const SETTINGS_RU = {
     displayNamePlaceholder: 'Аня',
     displayNameHint: 'Это имя видят все в семье.',
 
-    avatarLabel: 'Ссылка на аватар',
-    avatarPlaceholder: 'https://…',
-    avatarHint: 'Необязательно. Пока загрузки файлов нет — подойдёт прямая ссылка на картинку.',
-    avatarClear: 'Убрать аватар',
+    /**
+     * Аватар.
+     *
+     * Тон «вы», как во всём приложении. Формулировки нарочно объясняют, что
+     * происходит с фотографией: «уменьшим прямо здесь» снимает главный вопрос
+     * человека с мобильным интернетом — не улетит ли в сеть снимок на 6 МБ.
+     */
+    avatarLabel: 'Фотография',
+    avatarHint: 'JPEG, PNG или WebP. Мы обрежем и уменьшим фото прямо здесь, на вашем устройстве.',
+    avatarAdd: 'Загрузить фото',
+    avatarReplace: 'Заменить фото',
+    avatarRemove: 'Убрать фото',
+    avatarRemoving: 'Убираем…',
+    avatarEmpty: 'Пока без фотографии — семья видит ваши инициалы.',
+    avatarRemoved: 'Фотография убрана',
+    avatarSaved: 'Фотография обновлена',
+    /** Явное «слишком большой файл» вместо молчаливого отказа выбрать файл. */
+    avatarTooLarge: 'Файл слишком большой. Выберите фотографию поменьше.',
+    avatarNotAnImage: 'Не удалось открыть файл как изображение. Подойдут JPEG, PNG и WebP.',
+    avatarProcessFailed: 'Не удалось подготовить фотографию. Попробуйте другой файл.',
+
+    cropper: {
+      title: 'Как обрезать фото',
+      description: 'Двигайте фотографию и меняйте масштаб — в круг попадёт то, что видно.',
+      surfaceLabel: 'Область обрезки фотографии',
+      hint: 'Перетащите фотографию, чтобы выбрать кадр. Масштаб — колесом мыши, щипком или ползунком ниже.',
+      zoomLabel: 'Масштаб фотографии',
+      reset: 'Вернуть как было',
+      cancel: 'Отмена',
+      save: 'Сохранить',
+      preparing: 'Готовим фото…',
+      uploading: 'Загружаем…',
+      previewLabel: 'Так это будет выглядеть',
+    },
 
     birthDateLabel: 'День рождения',
     birthDateHint: 'Семья получит напоминание утром этого дня.',
@@ -218,6 +310,18 @@ export const SETTINGS_RU = {
      * and it exists so that «Разрешить» is the only realistic answer to the
      * system prompt that follows.
      */
+    /**
+     * The card the shell raises by itself once, shortly after a first sign-in.
+     * It spends nothing: its button opens the dialog below, and only *that*
+     * button reaches the one-shot OS prompt.
+     */
+    offerTitle: 'Напоминать о делах?',
+    offerText:
+      'Приложение подскажет, когда вам поручили дело, приближается событие или кто-то ждёт ответа. Ночью телефон молчит.',
+    offerAccept: 'Включить напоминания',
+    offerLater: 'Не сейчас',
+    offerDismissLabel: 'Скрыть предложение',
+
     promptTitle: 'Напоминать о делах?',
     promptText:
       'Уведомления приходят, когда вам поручили дело, приближается событие или кто-то ждёт ответа. Ночью телефон молчит — тихие часы настраиваются здесь же.',

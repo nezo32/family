@@ -9,7 +9,7 @@ import {
 } from '../notifications/notifications.service.js';
 import * as repo from './chores.repository.js';
 import type { ChoreSwapRow } from './chores.schema.js';
-import type { ChoreActor } from './points.service.js';
+import type { ChoreActor } from './actor.js';
 import { isBlackedOut } from './rotation.js';
 
 /**
@@ -23,10 +23,12 @@ import { isBlackedOut } from './rotation.js';
  * a check-then-insert loses that race every time. The insert uses
  * `ON CONFLICT DO NOTHING`; an empty result becomes a clean `409`.
  *
- * **Acceptance rewrites the assignee and nothing else.** No points move here,
- * because no points have been earned yet — they follow the doer at completion
- * (D5). That is also why an accepted swap is cheap to get wrong and easy to
- * undo: the only thing it changed is a foreign key on one row.
+ * **Acceptance rewrites the assignee and nothing else.** Nothing else can move:
+ * a swap carries no sweetener, because a bribe between siblings would be
+ * denominated in exactly the score D5 deleted. Fairness sorts itself out at
+ * completion, where the rotation counts the chore against whoever actually did
+ * it. That is also why an accepted swap is cheap to get wrong and easy to undo:
+ * the only thing it changed is a foreign key on one row.
  *
  * ## Who may accept
  *
@@ -34,7 +36,8 @@ import { isBlackedOut } from './rotation.js';
  * app wants. Accepting is gated on `chore:swap:accept`, which every active
  * member holds: taking on a chore somebody offered is volunteering for work,
  * not escaping it, so it needs no adult gatekeeper. Fairness still
- * self-corrects because points follow whoever actually does the job (D5).
+ * self-corrects because the rotation counts the chore against whoever actually
+ * does it (D5).
  *
  * Acting on a swap addressed to *somebody else* is a different act and still
  * requires `task:assign:any`.
@@ -128,7 +131,6 @@ export class SwapsService {
         fromUserId: occurrence.assigneeId,
         toUserId: input.toUserId ?? null,
         message: input.message ?? null,
-        bonusPoints: input.bonusPoints,
         // Default to the chore's own deadline: an offer that outlives the chore
         // is noise, and one that expires earlier surprises the asker.
         expiresAt: input.expiresAt ? new Date(input.expiresAt) : occurrence.dueAt,
@@ -153,7 +155,6 @@ export class SwapsService {
           actorName: actor.displayName,
           fromUserName: actor.displayName,
           toUserId: row.toUserId,
-          bonusPoints: row.bonusPoints,
           message: row.message,
           isOpenOffer: row.toUserId === null,
         },
@@ -193,8 +194,8 @@ export class SwapsService {
       if (input.accept) {
         // Taking on a chore somebody offered is volunteering for work, not
         // escaping it, so it needs no adult gatekeeper — children hold
-        // `chore:swap:accept` too. Fairness still self-corrects because points
-        // follow whoever actually does the job (D5).
+        // `chore:swap:accept` too. Fairness still self-corrects because the
+        // rotation counts the chore against whoever actually does it (D5).
         if (!actor.can('chore:swap:accept')) {
           throw forbidden('Missing permission: chore:swap:accept');
         }
@@ -435,7 +436,6 @@ export function toSwapResponse(
     toUserId: row.toUserId,
     status: row.status,
     message: row.message,
-    bonusPoints: row.bonusPoints,
     respondedById: row.respondedById,
     respondedAt: row.respondedAt?.toISOString() ?? null,
     expiresAt: row.expiresAt?.toISOString() ?? null,

@@ -7,6 +7,7 @@ import { queryClientConfig } from '@/shared/api/query-client';
 import { isApiError } from '@/shared/api/errors';
 import { onAccessTokenChange } from '@/shared/api/token-store';
 import { meKeys } from '@/shared/auth/use-me';
+import { recordEngagement } from '@/features/auth/components/install';
 import { AppErrorBoundary } from './ErrorBoundary';
 import { ThemeProvider } from './theme-provider';
 import { createAppRouter } from './router';
@@ -32,7 +33,15 @@ import { createAppRouter } from './router';
  *    or an override while this tab was open. Invalidating `['me']` refetches the
  *    effective permissions and the affordances correct themselves within a
  *    render, instead of the user staring at a button that keeps failing.
- * 2. A single place to log unexpected failures in development.
+ * 2. **Engagement counting.** Every successful mutation is the user doing
+ *    something real — creating a task, ticking an item off, adding an event —
+ *    and that is precisely the gate both self-raised prompts wait on
+ *    (`shouldOfferInstall`, `shouldOfferPushPrompt`). Counting it here rather
+ *    than in a dozen feature hooks means no new screen has to remember to
+ *    opt in, and no read can ever be mistaken for an action. Mutations that are
+ *    not the user *using* the app — signing in, signing out — opt out with
+ *    `meta: { engagement: false }`.
+ * 3. A single place to log unexpected failures in development.
  */
 function createClient(): QueryClient {
   const client: QueryClient = new QueryClient({
@@ -45,6 +54,10 @@ function createClient(): QueryClient {
     mutationCache: new MutationCache({
       onError: (error) => {
         handleForbidden(client, error);
+      },
+      onSuccess: (_data, _variables, _context, mutation) => {
+        if (mutation.meta?.engagement === false) return;
+        recordEngagement();
       },
     }),
   });

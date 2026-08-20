@@ -22,8 +22,8 @@ import { occurrenceStatus, recurrenceColumns, visibility } from '../scheduling/r
  * (`task_occurrences`), per D2.
  *
  * A one-off task is a series with `rrule = NULL` and exactly one occurrence.
- * There is no separate "simple task" table: one shape means one set of routes,
- * one completion path and one points path.
+ * There is no separate "simple task" table: one shape means one set of routes
+ * and one completion path.
  */
 
 /** How the assignee of an occurrence came to be the assignee. */
@@ -63,7 +63,7 @@ export const taskSeries = pgTable(
      * Rotation that picks the assignee at materialization time (D5).
      *
      * Deliberately a bare `uuid` and **not** a foreign key: the chores module
-     * imports this module (`chore_swaps` and `points_ledger` reference
+     * imports this module (`chore_swaps` and `kudos` reference
      * `task_occurrences`), so a real FK here would make that import cycle
      * bidirectional. Referential integrity for this column is enforced in the
      * service layer. NULL => not rotated; use `defaultAssigneeId`.
@@ -72,9 +72,6 @@ export const taskSeries = pgTable(
 
     /** Used when `rotationId` is NULL, or when the rotation yields nobody. */
     defaultAssigneeId: uuid().references(() => users.id, { onDelete: 'set null' }),
-
-    /** Points awarded to whoever actually completes an occurrence (D5). */
-    points: integer().notNull().default(0),
 
     /** Free-form grouping (кухня, уроки). Not an enum — families invent their own. */
     category: text(),
@@ -161,7 +158,6 @@ export const taskOccurrences = pgTable(
 
     titleOverride: text(),
     notesOverride: text(),
-    pointsOverride: integer(),
 
     /** Frozen at materialization (D5). Never recomputed on read. */
     assigneeId: uuid().references(() => users.id, { onDelete: 'set null' }),
@@ -169,7 +165,8 @@ export const taskOccurrences = pgTable(
 
     /**
      * Whoever actually did it — may differ from `assigneeId`, and that
-     * difference is the point: points follow the doer (D5).
+     * difference is the point: the rotation counts a chore towards the person
+     * who actually did it, not the one it was handed to (D5).
      */
     completedById: uuid().references(() => users.id, { onDelete: 'set null' }),
     completedAt: timestamp({ withTimezone: true }),

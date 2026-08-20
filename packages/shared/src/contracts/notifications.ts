@@ -772,7 +772,7 @@ export const DIGEST_SECTIONS = [
   'goals',
   'shopping',
   'wall',
-  'points',
+  'load',
   'birthdays',
 ] as const;
 export const digestSectionSchema = z.enum(DIGEST_SECTIONS);
@@ -784,7 +784,7 @@ export const DIGEST_SECTION_LABELS_RU: Record<DigestSection, string> = {
   goals: 'Прогресс копилок',
   shopping: 'Списки покупок',
   wall: 'Объявления и благодарности',
-  points: 'Баллы и нагрузка',
+  load: 'Как разделились дела',
   birthdays: 'Дни рождения',
 };
 

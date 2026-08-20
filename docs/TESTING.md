@@ -70,6 +70,45 @@ TEST_DATABASE_URL=postgres://family:family@127.0.0.1:5432/family_test \
   npx vitest run src/modules/identity/auth-lifecycle.integration.test.ts
 ```
 
+### Object storage
+
+The avatar suite needs a real S3-compatible endpoint and **skips itself
+silently** without one, so the whole upload path ships unexercised unless you
+offer it:
+
+```bash
+TEST_DATABASE_URL=postgres://family:family@127.0.0.1:5432/family_test \
+  TEST_S3_ENDPOINT=http://127.0.0.1:9000 \
+  TEST_S3_ACCESS_KEY_ID=family TEST_S3_SECRET_ACCESS_KEY=familysecret \
+  npx vitest run
+```
+
+With it set the run is 959 tests and nothing is skipped; without it, 945 and 14
+skips. `infra/scripts/verify-all.sh` always passes it.
+
+### Only one integration run at a time
+
+The DB-backed suites share `family_test` and truncate it between tests, so two
+runs at once destroy each other's fixtures. `src/test/global-setup.ts` takes a
+Postgres advisory lock for the duration of a run and a second run refuses to
+start:
+
+```
+Another integration run already holds the test database.
+```
+
+That message replaced a much worse failure mode: ~50 foreign-key violations and
+"User no longer exists" scattered across unrelated modules, which reads exactly
+like a regression in whatever you just changed. It sent three separate
+investigations chasing defects that did not exist. Nothing leaks — Postgres
+drops the lock when the connection closes, so a crashed run blocks nothing.
+
+To genuinely run two at once, give the second its own database:
+
+```bash
+TEST_DATABASE_URL=postgres://family:family@127.0.0.1:5432/family_test_2 npx vitest run
+```
+
 There is no `test:integration` script in `backend/package.json` yet. If you want
 one:
 

@@ -24,7 +24,6 @@ import {
   planSeriesSplit,
   resolveCompletion,
   viewerOf,
-  type PointsPort,
   type TaskActor,
 } from './tasks.service.js';
 
@@ -82,7 +81,6 @@ interface FakeOccurrence {
   isException: boolean;
   titleOverride: string | null;
   notesOverride: string | null;
-  pointsOverride: number | null;
   assigneeId: string | null;
   assignedVia: 'rotation' | 'manual' | 'swap' | 'claimed' | null;
   completedById: string | null;
@@ -121,7 +119,6 @@ vi.mock('./tasks.repository.js', () => {
       isOverdue: overdueOf(row, series, now),
       title: row.titleOverride ?? series.title,
       notes: row.notesOverride ?? series.notes,
-      points: row.pointsOverride ?? series.points,
       category: series.category,
       visibility: series.visibility,
       timezone: series.timezone,
@@ -158,7 +155,6 @@ vi.mock('./tasks.repository.js', () => {
         graceMinutes: 0,
         rotationId: null,
         defaultAssigneeId: null,
-        points: 0,
         category: null,
         autoCancelAfterDays: null,
         supersedesSeriesId: null,
@@ -380,35 +376,29 @@ function actorFor(role: Role, userId: string): TaskActor {
   return { userId, timezone: TZ, can: (permission) => held.has(permission) };
 }
 
-interface RecordingPoints extends PointsPort {
-  readonly booked: Array<{ occurrenceId: string; completedById: string; points: number }>;
-  readonly reversed: string[];
-}
-
-function recordingPoints(): RecordingPoints {
-  const booked: Array<{ occurrenceId: string; completedById: string; points: number }> = [];
-  const reversed: string[] = [];
+/**
+ * There is no points port to record against any more (D5).
+ *
+ * A completion writes exactly one thing — `status` / `completed_by_id` /
+ * `completed_at` on the occurrence row — and that row *is* the fairness record,
+ * so "did this book twice?" is now answerable by looking at the row itself.
+ * The helpers below read it.
+ */
+function completionOf(occurrenceId: string): {
+  status: unknown;
+  completedById: unknown;
+  completedAt: unknown;
+} {
+  const row = store.occurrences.get(occurrenceId) ?? {};
   return {
-    booked,
-    reversed,
-    async bookCompletion(_ex, input) {
-      booked.push({
-        occurrenceId: input.occurrenceId,
-        completedById: input.completedById,
-        points: input.points,
-      });
-      return {};
-    },
-    async reverseCompletion(_ex, occurrenceId) {
-      reversed.push(occurrenceId);
-      return 0;
-    },
+    status: row.status,
+    completedById: row.completedById,
+    completedAt: row.completedAt,
   };
 }
 
-function serviceWith(points: PointsPort): TasksService {
+function taskService(): TasksService {
   return new TasksService(fakeDb, {
-    points,
     now: () => T0,
     rotation: {
       exists: async () => true,
@@ -438,7 +428,6 @@ function seedSeries(overrides: Record<string, unknown> = {}): string {
     graceMinutes: 15,
     rotationId: null,
     defaultAssigneeId: null,
-    points: 5,
     category: null,
     autoCancelAfterDays: null,
     supersedesSeriesId: null,
@@ -465,7 +454,6 @@ function seedOccurrence(seriesId: string, overrides: Partial<FakeOccurrence> = {
     isException: false,
     titleOverride: null,
     notesOverride: null,
-    pointsOverride: null,
     assigneeId: null,
     assignedVia: null,
     completedById: null,
@@ -549,58 +537,58 @@ describe('completion is idempotent', () => {
     expect(resolveCompletion('cancelled')).toBe('conflict');
   });
 
-  it('books the ledger exactly once across a replayed completion', async () => {
-    const points = recordingPoints();
-    const service = serviceWith(points);
+  it('writes the completion exactly once across a replayed request', async () => {
     const seriesId = seedSeries();
     const occurrenceId = seedOccurrence(seriesId, { assigneeId: CHILD });
     const adult = actorFor('adult', ADULT);
 
-    const first = await service.complete(adult, occurrenceId, { completedById: CHILD });
+    const first = await taskService().complete(adult, occurrenceId, { completedById: CHILD });
+    const written = completionOf(occurrenceId);
     // The offline outbox delivers the same tap again ten minutes later.
-    const second = await service.complete(adult, occurrenceId, { completedById: CHILD });
+    const second = await taskService().complete(adult, occurrenceId, {
+      completedById: CHILD,
+      completedAt: new Date(T0.getTime() - 600_000).toISOString(),
+    });
 
     expect(first.status).toBe('done');
     expect(second.status).toBe('done');
     expect(second.completedById).toBe(CHILD);
-    expect(points.booked).toHaveLength(1);
-    expect(points.booked[0]).toMatchObject({ occurrenceId, completedById: CHILD, points: 5 });
+    // The replay changed nothing — not even the timestamp it arrived with.
+    expect(completionOf(occurrenceId)).toEqual(written);
   });
 
   it('survives a five-way replay without drifting', async () => {
-    const points = recordingPoints();
-    const service = serviceWith(points);
     const occurrenceId = seedOccurrence(seedSeries());
     const adult = actorFor('adult', ADULT);
 
-    for (let i = 0; i < 5; i += 1) await service.complete(adult, occurrenceId, {});
-    expect(points.booked).toHaveLength(1);
+    for (let i = 0; i < 5; i += 1) await taskService().complete(adult, occurrenceId, {});
+
+    // One row, one completion, and therefore exactly one chore counted towards
+    // the doer's share of the week (D5). There is no ledger left to double-book.
+    expect(completionOf(occurrenceId)).toMatchObject({ status: 'done', completedById: ADULT });
   });
 
-  it('pays the doer, not the assignee', async () => {
-    const points = recordingPoints();
-    const service = serviceWith(points);
+  it('credits the doer, not the assignee', async () => {
     const occurrenceId = seedOccurrence(seedSeries(), { assigneeId: OTHER_ADULT });
 
-    await service.complete(actorFor('adult', ADULT), occurrenceId, { completedById: ADULT });
+    await taskService().complete(actorFor('adult', ADULT), occurrenceId, { completedById: ADULT });
     // Covering for somebody raises *your* debt, which is what makes the
-    // fairness loop self-correcting (D5).
-    expect(points.booked[0]?.completedById).toBe(ADULT);
+    // fairness loop self-correcting (D5) — and it is paid back in time off next
+    // week rather than in a score.
+    expect(completionOf(occurrenceId).completedById).toBe(ADULT);
   });
 
-  it('refuses to book a skipped occurrence', async () => {
-    const points = recordingPoints();
-    const service = serviceWith(points);
+  it('refuses to complete a skipped occurrence', async () => {
     const occurrenceId = seedOccurrence(seedSeries(), { status: 'skipped' });
 
-    await expect(service.complete(actorFor('adult', ADULT), occurrenceId, {})).rejects.toThrow(
+    await expect(taskService().complete(actorFor('adult', ADULT), occurrenceId, {})).rejects.toThrow(
       AppError,
     );
-    expect(points.booked).toHaveLength(0);
+    expect(completionOf(occurrenceId).status).toBe('skipped');
   });
 
   it('will not accept a completion dated in the future', async () => {
-    const service = serviceWith(recordingPoints());
+    const service = taskService();
     const occurrenceId = seedOccurrence(seedSeries());
     await expect(
       service.complete(actorFor('adult', ADULT), occurrenceId, {
@@ -616,7 +604,7 @@ describe('completion is idempotent', () => {
 
 describe('skip preserves the row', () => {
   it('changes the status and nothing else', async () => {
-    const service = serviceWith(recordingPoints());
+    const service = taskService();
     const seriesId = seedSeries();
     const occurrenceId = seedOccurrence(seriesId, { assigneeId: CHILD });
 
@@ -638,7 +626,7 @@ describe('skip preserves the row', () => {
   });
 
   it('writes an EXDATE only when suppressFuture is asked for explicitly', async () => {
-    const service = serviceWith(recordingPoints());
+    const service = taskService();
     const seriesId = seedSeries();
     const occurrenceId = seedOccurrence(seriesId);
 
@@ -650,7 +638,7 @@ describe('skip preserves the row', () => {
   });
 
   it('is idempotent — a replayed skip is not a conflict', async () => {
-    const service = serviceWith(recordingPoints());
+    const service = taskService();
     const occurrenceId = seedOccurrence(seedSeries());
     const adult = actorFor('adult', ADULT);
 
@@ -685,7 +673,7 @@ describe('edit-this-and-future splits the series without rewriting history', () 
   }
 
   it('keeps completed occurrences and exceptions, drops only untouched future ones', async () => {
-    const service = serviceWith(recordingPoints());
+    const service = taskService();
     const { seriesId, done, exception, future } = seedHistory();
 
     await service.updateSeries(actorFor('adult', ADULT), seriesId, {
@@ -703,7 +691,7 @@ describe('edit-this-and-future splits the series without rewriting history', () 
   });
 
   it('closes the old rule with an UNTIL and links the successor back', async () => {
-    const service = serviceWith(recordingPoints());
+    const service = taskService();
     const { seriesId } = seedHistory();
 
     const successor = await service.updateSeries(actorFor('adult', ADULT), seriesId, {
@@ -743,7 +731,7 @@ describe('edit-this-and-future splits the series without rewriting history', () 
   });
 
   it('edit-all keeps every exception and re-materializes', async () => {
-    const service = serviceWith(recordingPoints());
+    const service = taskService();
     const { seriesId, done, exception } = seedHistory();
 
     await service.updateSeries(actorFor('adult', ADULT), seriesId, {
@@ -767,7 +755,7 @@ describe('edit-this-and-future splits the series without rewriting history', () 
   });
 
   it('a metadata-only edit-all deletes nothing — COALESCE does the work', async () => {
-    const service = serviceWith(recordingPoints());
+    const service = taskService();
     const { seriesId, future } = seedHistory();
 
     await service.updateSeries(actorFor('adult', ADULT), seriesId, {
@@ -780,7 +768,7 @@ describe('edit-this-and-future splits the series without rewriting history', () 
   });
 
   it('refuses to smuggle a series-wide setting into a single-instance edit', async () => {
-    const service = serviceWith(recordingPoints());
+    const service = taskService();
     const seriesId = seedSeries();
     await expect(
       service.updateSeries(actorFor('adult', ADULT), seriesId, {
@@ -792,7 +780,7 @@ describe('edit-this-and-future splits the series without rewriting history', () 
   });
 
   it('edit-this writes overrides and flags the row as an exception', async () => {
-    const service = serviceWith(recordingPoints());
+    const service = taskService();
     const seriesId = seedSeries();
     const occurrenceId = seedOccurrence(seriesId);
 
@@ -800,16 +788,15 @@ describe('edit-this-and-future splits the series without rewriting history', () 
       scope: 'this',
       occurrenceId,
       title: 'Мусор + ёлка',
-      points: 9,
+      notes: 'И коробки заодно',
     });
 
     const row = store.occurrences.get(occurrenceId);
     expect(row?.titleOverride).toBe('Мусор + ёлка');
-    expect(row?.pointsOverride).toBe(9);
+    expect(row?.notesOverride).toBe('И коробки заодно');
     expect(row?.isException).toBe(true);
     // The rule itself is untouched.
     expect(store.series.get(seriesId)?.title).toBe('Мусор');
-    expect(store.series.get(seriesId)?.points).toBe(5);
   });
 });
 
@@ -858,7 +845,7 @@ describe('read scope and visibility', () => {
   });
 
   it('filters the same way through the service', async () => {
-    const service = serviceWith(recordingPoints());
+    const service = taskService();
     const own = seedOccurrence(seedSeries({ visibility: 'household' }), { assigneeId: CHILD });
     const hidden = seedOccurrence(
       seedSeries({ visibility: 'restricted', createdById: OTHER_ADULT }),
@@ -894,7 +881,7 @@ describe('occurrenceKey is the immutable identity of an instance', () => {
   });
 
   it('rewrites the timestamps and leaves the key alone', async () => {
-    const service = serviceWith(recordingPoints());
+    const service = taskService();
     const seriesId = seedSeries();
     const occurrenceId = seedOccurrence(seriesId, { occurrenceKey: '2026-09-08T14:00:00' });
 
@@ -913,7 +900,7 @@ describe('occurrenceKey is the immutable identity of an instance', () => {
   });
 
   it('keeps the key stable across a completion and an override too', async () => {
-    const service = serviceWith(recordingPoints());
+    const service = taskService();
     const occurrenceId = seedOccurrence(seedSeries(), { occurrenceKey: '2026-09-08T14:00:00' });
     const adult = actorFor('adult', ADULT);
 
@@ -1190,7 +1177,6 @@ describe.skipIf(!TEST_DATABASE_URL)('tasks against Postgres', () => {
         timezone: TZ,
         dueOffsetMinutes: 60,
         graceMinutes: 15,
-        points: 5,
         ...overrides,
       })
       .returning();
@@ -1224,7 +1210,7 @@ describe.skipIf(!TEST_DATABASE_URL)('tasks against Postgres', () => {
     const overridden = await freshOccurrence(series.id, {
       occurrenceKey: '2026-08-31T09:00:00',
       titleOverride: 'Мусор + коробки',
-      pointsOverride: 9,
+      notesOverride: 'И коробки заодно',
       isException: true,
     });
 
@@ -1232,9 +1218,9 @@ describe.skipIf(!TEST_DATABASE_URL)('tasks against Postgres', () => {
     const b = await repo.findOccurrenceById(db, overridden, { viewer });
 
     expect(a?.title).toBe(series.title);
-    expect(a?.points).toBe(5);
+    expect(a?.notes).toBeNull();
     expect(b?.title).toBe('Мусор + коробки');
-    expect(b?.points).toBe(9);
+    expect(b?.notes).toBe('И коробки заодно');
     // Nothing above the repository ever sees the raw override columns.
     expect(b).not.toHaveProperty('titleOverride');
   });

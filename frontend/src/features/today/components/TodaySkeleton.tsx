@@ -1,3 +1,4 @@
+import { SideColumn } from '@/app/layout/SideColumn';
 import { Card } from '@/shared/ui/card';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { TODAY_RU } from '../locale';
@@ -20,16 +21,19 @@ export function TodaySkeleton() {
         <Skeleton className="h-4 w-40 max-w-full" />
       </div>
 
-      <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] lg:items-start lg:gap-6">
-        <div className="contents lg:flex lg:flex-col lg:gap-6">
-          <CardSkeleton rows={3} />
-          <CardSkeleton rows={2} />
-        </div>
-        <div className="contents lg:flex lg:flex-col lg:gap-6">
+      {/* Same two-column split as the loaded page, so nothing jumps sideways
+          when the data lands (§C1: the shell owns the grid, not this file). */}
+      <div className="flex flex-col gap-4">
+        <CardSkeleton rows={3} />
+        <CardSkeleton rows={2} />
+      </div>
+
+      <SideColumn>
+        <div className="flex flex-col gap-4 min-[1088px]:gap-6">
           <CardSkeleton rows={2} />
           <CardSkeleton rows={1} />
         </div>
-      </div>
+      </SideColumn>
     </div>
   );
 }

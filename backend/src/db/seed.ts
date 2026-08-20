@@ -10,6 +10,8 @@ import { eventSeries } from '../modules/events/events.schema.js';
 import { goalMilestones, goalTransactions, savingsGoals } from '../modules/goals/goals.schema.js';
 import { shoppingItems, shoppingLists } from '../modules/shopping/shopping.schema.js';
 import { taskSeries } from '../modules/tasks/tasks.schema.js';
+import { runMaterializeAll } from '../modules/tasks/tasks.jobs.js';
+import { materializeEventSeries } from '../modules/events/events.repository.js';
 import { posts } from '../modules/wall/wall.schema.js';
 import { pathToFileURL } from 'node:url';
 
@@ -25,6 +27,31 @@ import { pathToFileURL } from 'node:url';
  * production uses. Seeding occurrences directly would hide materializer bugs.
  */
 
+
+/**
+ * Turn the seeded rules into actual occurrences.
+ *
+ * The seed writes **series** only and then runs the real materializer — the
+ * same path production uses — rather than inserting occurrence rows by hand,
+ * so a materializer bug surfaces here instead of hiding behind hand-written
+ * data. Without this pass the seed leaves five chores and three events that
+ * render as an empty Задачи and an empty Календарь, which looks like a broken
+ * app to anyone opening it for the first time.
+ */
+async function materializeSeedWindow(db: Db): Promise<void> {
+  const tasks = await runMaterializeAll(db);
+
+  // Events have no "materialize everything" job — their service does it inside
+  // the create transaction — so the seed walks the series it just wrote.
+  const series = await db.select({ id: eventSeries.id }).from(eventSeries);
+  let events = 0;
+  for (const row of series) {
+    const result = await materializeEventSeries(db, row.id);
+    events += result.inserted;
+  }
+
+  logger.info({ tasks: tasks.inserted, events }, 'seed materialization complete');
+}
 const RUB = (roubles: number): number => Math.round(roubles * 100);
 
 async function seed(db: Db): Promise<void> {
@@ -141,7 +168,6 @@ async function seed(db: Db): Promise<void> {
         dueOffsetMinutes: 90,
         graceMinutes: 30,
         rotationId: rotation.id,
-        points: 3,
         category: 'кухня',
       },
       {
@@ -152,7 +178,6 @@ async function seed(db: Db): Promise<void> {
         timezone: 'Europe/Moscow',
         dueOffsetMinutes: 480,
         rotationId: rotation.id,
-        points: 5,
         category: 'дом',
       },
       {
@@ -163,7 +188,6 @@ async function seed(db: Db): Promise<void> {
         timezone: 'Europe/Moscow',
         dueOffsetMinutes: 120,
         rotationId: rotation.id,
-        points: 2,
         category: 'дом',
       },
       {
@@ -173,7 +197,6 @@ async function seed(db: Db): Promise<void> {
         dtstartLocal: '2026-08-19T18:00:00',
         timezone: 'Europe/Moscow',
         defaultAssigneeId: liza,
-        points: 2,
         category: 'дом',
       },
       {
@@ -184,7 +207,6 @@ async function seed(db: Db): Promise<void> {
         timezone: 'Europe/Moscow',
         dueOffsetMinutes: 60,
         rotationId: rotation.id,
-        points: 8,
         category: 'кухня',
       },
     ]);
@@ -317,6 +339,8 @@ async function seed(db: Db): Promise<void> {
       pinnedUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     });
   });
+
+  await materializeSeedWindow(db);
 
   logger.info('seed complete');
 }

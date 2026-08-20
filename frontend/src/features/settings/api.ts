@@ -54,6 +54,32 @@ export function updateProfile(body: UpdateProfileRequest): Promise<SelfUser> {
 }
 
 /* -------------------------------------------------------------------------- */
+/* avatar                                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `POST /api/me/avatar` — multipart, one part named `file`.
+ *
+ * The blob handed in here has already been cropped, resized to 512×512 and
+ * re-encoded as WebP by `avatar-image.ts`, so what crosses the network is tens
+ * of kilobytes rather than the six megabytes that came off the phone.
+ *
+ * `formData` rather than `body`: the client wrapper deliberately does **not**
+ * set `content-type` for a FormData payload, because the boundary is generated
+ * by the browser and a hand-written header would not match it.
+ */
+export function uploadAvatar(blob: Blob, filename: string): Promise<SelfUser> {
+  const form = new FormData();
+  form.append('file', blob, filename);
+  return api.post<SelfUser>('/me/avatar', undefined, { formData: form });
+}
+
+/** `DELETE /api/me/avatar`. Idempotent — also deletes the stored object. */
+export function removeAvatar(): Promise<SelfUser> {
+  return api.del<SelfUser>('/me/avatar');
+}
+
+/* -------------------------------------------------------------------------- */
 /* linked identities                                                           */
 /* -------------------------------------------------------------------------- */
 

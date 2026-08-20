@@ -105,7 +105,14 @@ export function NotificationsPanel(props: {
 
   return (
     <Sheet open={props.open} onOpenChange={props.onOpenChange}>
-      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-md">
+      {/*
+        No `p-0` here any more. `SheetContent` carries the safe-area padding for
+        a full-height side sheet (status bar above, home indicator below), and a
+        blanket `p-0` from a screen would flatten it — putting «Уведомления»
+        back under the system clock. The base sheet has no padding of its own,
+        so dropping it changes nothing else.
+      */}
+      <SheetContent side="right" className="flex w-full flex-col gap-0 sm:max-w-md">
         <SheetHeader className="gap-1 border-b border-border">
           <SheetTitle>{NOTIFICATIONS_RU.title}</SheetTitle>
           <SheetDescription>{NOTIFICATIONS_RU.description}</SheetDescription>

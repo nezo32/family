@@ -5,6 +5,7 @@ import type {
   RecurrenceView,
   Weekday,
 } from '@family/shared';
+import { joinFloating, splitFloating } from '@/shared/lib/datetime';
 import { TASKS_RU, WEEKDAY_OPTIONS_RU } from './locale';
 
 /**
@@ -35,17 +36,14 @@ export const WEEKDAY_ORDER: readonly Weekday[] = ['MO', 'TU', 'WE', 'TH', 'FR', 
 /* Floating local datetime helpers (D2: no offset, no Z, seconds mandatory)     */
 /* -------------------------------------------------------------------------- */
 
-/** `2026-09-07T09:00:00` → `{ date: '2026-09-07', time: '09:00' }`. */
-export function splitFloating(value: string): { date: string; time: string } {
-  const [date = '', rest = ''] = value.split('T');
-  return { date, time: rest.slice(0, 5) };
-}
-
-/** `('2026-09-07', '09:00')` → `2026-09-07T09:00:00`. */
-export function joinFloating(date: string, time: string): string {
-  const normalized = time.length === 5 ? `${time}:00` : time;
-  return `${date}T${normalized}`;
-}
+/**
+ * `splitFloating` / `joinFloating` moved to `shared/lib/datetime.ts` when the
+ * date & time field components were built on them: the same two functions had
+ * to exist on both sides of the `shared` boundary, and two copies of "how a
+ * floating local datetime is taken apart" is exactly the kind of duplication
+ * D2 cannot afford. Re-exported here so no call site in this feature moved.
+ */
+export { joinFloating, splitFloating };
 
 /** Today's local calendar date in the family timezone, as `YYYY-MM-DD`. */
 export function todayKey(timeZone: string, now: Date = new Date()): string {

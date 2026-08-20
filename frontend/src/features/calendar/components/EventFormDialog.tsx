@@ -21,6 +21,8 @@ import {
   DialogTitle,
 } from '@/shared/ui/dialog';
 import { Button } from '@/shared/ui/button';
+import { DateField } from '@/shared/ui/date-field';
+import { TimeField } from '@/shared/ui/time-field';
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { Textarea } from '@/shared/ui/textarea';
@@ -247,13 +249,12 @@ export function EventFormDialog(props: EventFormDialogProps) {
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="event-date">{CALENDAR_RU.fieldDate}</Label>
-                  <Input
+                  <DateField
                     id="event-date"
-                    type="date"
-                    className="h-11"
+                    label={CALENDAR_RU.fieldDate}
                     value={dateKey}
-                    onChange={(event) => {
-                      setDateKey(event.target.value || dateKey);
+                    onChange={(next) => {
+                      setDateKey(next || dateKey);
                     }}
                   />
                 </div>
@@ -262,13 +263,12 @@ export function EventFormDialog(props: EventFormDialogProps) {
                   <>
                     <div className="space-y-1.5">
                       <Label htmlFor="event-time">{CALENDAR_RU.fieldTime}</Label>
-                      <Input
+                      <TimeField
                         id="event-time"
-                        type="time"
-                        className="h-11"
+                        label={CALENDAR_RU.fieldTime}
                         value={time}
-                        onChange={(event) => {
-                          setTime(event.target.value || time);
+                        onChange={(next) => {
+                          setTime(next || time);
                         }}
                       />
                     </div>

@@ -21,7 +21,10 @@ export const APP_ROUTES = {
   shopping: '/shopping',
   wall: '/wall',
   family: '/family',
-  notifications: '/notifications',
+  // No `/notifications`: the notification centre is a panel opened from the app
+  // bar, not a route. Listing it here would make `isKnownAppPath` vouch for a
+  // path that renders the 404 screen — defeating the one guard that exists to
+  // stop a push landing there.
   settings: '/settings',
   settingsProfile: '/settings/profile',
   settingsNotifications: '/settings/notifications',

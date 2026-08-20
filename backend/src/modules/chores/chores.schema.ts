@@ -17,18 +17,23 @@ import { users } from '../identity/users.schema.js';
 import { taskOccurrences } from '../tasks/tasks.schema.js';
 
 /**
- * Chore fairness (D5): who gets the next chore, who can trade it away, and what
- * that is worth.
+ * Chore fairness (D5): who gets the next chore and who can trade it away.
  *
- * This module imports the tasks module (swaps and points hang off a
+ * There is no ledger here and no score of any kind. Fairness is measured in
+ * **chores completed** — counted straight off `task_occurrences` — because a
+ * number that accumulates against a person's name turns a family into a
+ * leaderboard. See `docs/DECISIONS.md` D5.
+ *
+ * This module imports the tasks module (swaps and kudos hang off a
  * `task_occurrence`); tasks must never import this one back. `task_series.
  * rotation_id` is intentionally a bare uuid for exactly that reason.
  */
 
 /**
- * - `weighted_balance` (default, D5) — lowest `(earned + committed) / weight`
- *   debt over `balanceWindowDays` wins. Self-correcting: a member who actually
- *   does the work accrues debt and drops down the queue.
+ * - `weighted_balance` (default, D5) — lowest `(completed + committed) / weight`
+ *   debt over `balanceWindowDays` wins, where both terms are **counts of
+ *   chores**. Self-correcting: a member who actually does the work accrues debt
+ *   and drops down the queue.
  * - `round_robin`      — strict order by `position`, ignoring who did what.
  * - `fixed`            — always the same person (a single active member).
  * - `anyone`           — materialize unassigned; first claimer takes it.
@@ -49,21 +54,6 @@ export const swapStatus = pgEnum('swap_status', [
   'declined',
   'cancelled',
   'expired',
-]);
-
-/**
- * Why points moved. The ledger is append-only, so a mistake is corrected with a
- * compensating `manual_award`/`penalty` row, never an UPDATE or a DELETE.
- */
-export const pointsReason = pgEnum('points_reason', [
-  'chore_completed',
-  'covered_for_other',
-  'on_time_bonus',
-  'streak_bonus',
-  'manual_award',
-  'redeemed',
-  'penalty',
-  'swap_bonus',
 ]);
 
 export const rotations = pgTable(
@@ -111,7 +101,7 @@ export const rotationMembers = pgTable(
     /** `round_robin` order and the final deterministic tie-break for `weighted_balance`. */
     position: integer().notNull().default(0),
 
-    /** Soft removal — keeps past assignments and ledger attribution intact. */
+    /** Soft removal — keeps past assignments and their attribution intact. */
     active: boolean().notNull().default(true),
 
     ...timestamps(),
@@ -166,11 +156,11 @@ export const choreSwaps = pgTable(
     message: text(),
 
     /**
-     * Sweetener the asker offers out of their own balance. Booked as a
-     * `swap_bonus` pair only when the swap is accepted *and* the covering member
-     * actually completes the chore.
+     * There is deliberately no sweetener column. A swap bribe would be
+     * denominated in exactly the currency D5 removed, and «дам тебе 5 баллов»
+     * between siblings is the trade this app should not be brokering. Asking
+     * nicely is the whole mechanism.
      */
-    bonusPoints: integer().notNull().default(0),
 
     respondedById: uuid().references(() => users.id, { onDelete: 'set null' }),
     respondedAt: timestamp({ withTimezone: true }),
@@ -197,78 +187,12 @@ export const choreSwaps = pgTable(
 );
 
 /**
- * **Append-only** (D5). A balance is `SUM(delta)` over a window — there is no
- * cached balance column anywhere, and adding one would be a regression.
- * Nothing in the application may UPDATE or DELETE a row here.
- */
-export const pointsLedger = pgTable(
-  'points_ledger',
-  {
-    id: primaryId(),
-
-    /** Whoever earned it — the doer, not necessarily the assignee (D5). */
-    userId: uuid()
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-
-    /** Signed. Negative for `redeemed` / `penalty`. */
-    delta: integer().notNull(),
-
-    reason: pointsReason().notNull(),
-
-    /** What it was for. `set null` so a purged occurrence never erases a balance. */
-    occurrenceId: uuid().references(() => taskOccurrences.id, { onDelete: 'set null' }),
-
-    /** Who granted a manual award / penalty. NULL for system-generated rows. */
-    awardedById: uuid().references(() => users.id, { onDelete: 'set null' }),
-
-    note: text(),
-
-    ...createdAt(),
-  },
-  (t) => [
-    /** Balance and history queries: `WHERE user_id = $1 AND created_at >= $2`. */
-    index('points_ledger_user_created_idx').on(t.userId, t.createdAt),
-
-    /**
-     * The double-award guard. Completion is the one path a user can trigger
-     * repeatedly (double tap, retry after a timeout, an offline queue replaying
-     * on reconnect), so the two automatic completion reasons are made
-     * idempotent at the database level. Discretionary rows (`manual_award`,
-     * `penalty`, `swap_bonus`, ...) are deliberately outside the predicate —
-     * an adult may award twice on purpose.
-     */
-    uniqueIndex('points_ledger_award_once_uq')
-      .on(t.occurrenceId, t.userId, t.reason)
-      .where(
-        sql`${t.occurrenceId} is not null and ${t.reason} in ('chore_completed', 'on_time_bonus')`,
-      ),
-  ],
-);
-
-/**
- * Derived cache, and the one place a derived value is allowed to be stored: a
- * streak is a fold over the whole history, too expensive to recompute per
- * dashboard render. Rebuildable from `points_ledger` + `task_occurrences` at
- * any time, so a bug here loses nothing permanent.
- */
-export const userStreaks = pgTable('user_streaks', {
-  userId: uuid()
-    .primaryKey()
-    .references(() => users.id, { onDelete: 'cascade' }),
-
-  current: integer().notNull().default(0),
-  longest: integer().notNull().default(0),
-
-  /** Last occurrence deadline folded into the streak — the resume point. */
-  lastResolvedAt: timestamp({ withTimezone: true }),
-
-  updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-});
-
-/**
- * Peer recognition. Cheap, non-competitive, and deliberately **not** points:
- * D5 warns against a sibling leaderboard, so kudos carry no ledger effect.
+ * Peer recognition — a thank-you addressed to one person for one thing.
+ *
+ * Kudos survived the removal of the score system precisely because they are not
+ * a score: nothing accumulates, nothing is totalled per person, and the unique
+ * index below makes a second identical emoji a no-op rather than a tally. It is
+ * a like, not a currency.
  */
 export const kudos = pgTable(
   'kudos',
@@ -309,9 +233,5 @@ export type UserBlackoutRow = typeof userBlackouts.$inferSelect;
 export type NewUserBlackoutRow = typeof userBlackouts.$inferInsert;
 export type ChoreSwapRow = typeof choreSwaps.$inferSelect;
 export type NewChoreSwapRow = typeof choreSwaps.$inferInsert;
-export type PointsLedgerRow = typeof pointsLedger.$inferSelect;
-export type NewPointsLedgerRow = typeof pointsLedger.$inferInsert;
-export type UserStreakRow = typeof userStreaks.$inferSelect;
-export type NewUserStreakRow = typeof userStreaks.$inferInsert;
 export type KudosRow = typeof kudos.$inferSelect;
 export type NewKudosRow = typeof kudos.$inferInsert;

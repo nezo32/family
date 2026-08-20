@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
@@ -12,7 +13,23 @@ import { VitePWA } from 'vite-plugin-pwa';
  */
 const API_PROXY_TARGET = process.env.VITE_API_PROXY_TARGET ?? 'http://localhost:3000';
 
+/**
+ * The version shown at the bottom of `/settings`.
+ *
+ * Read from `package.json` at config time rather than imported: the app
+ * `tsconfig` has neither `resolveJsonModule` nor `package.json` in its
+ * `include`, and a hard-coded copy of the number in `src/` is a string that
+ * silently goes stale the first time somebody bumps the real one.
+ */
+const APP_VERSION: string =
+  (
+    JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as {
+      version?: string;
+    }
+  ).version ?? '0.0.0';
+
 export default defineConfig({
+  define: { __APP_VERSION__: JSON.stringify(APP_VERSION) },
   plugins: [
     react(),
     tailwindcss(),

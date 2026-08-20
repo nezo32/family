@@ -36,6 +36,11 @@ volumes:
     name: family_pg_data
   redis_data:
     name: family_redis_data
+  # Avatars. Together with pg_data this is the entire durable state of the app —
+  # infra/scripts/backup.sh covers both, and a Postgres dump restored without
+  # this volume leaves every member's face broken.
+  rustfs_data:
+    name: family_rustfs_data
   caddy_data:
     name: family_caddy_data
   caddy_config:
@@ -106,6 +111,62 @@ services:
     stop_grace_period: 30s
 
   # ───────────────────────────────────────────────────────────
+  # Object storage for user avatars (RustFS, Apache-2.0, S3-compatible).
+  #
+  # `data` ONLY — same rule as postgres and redis. No published port, nothing
+  # proxied to it from the Caddyfile, and the network has no gateway, so the
+  # bucket is reachable by the backend and by nothing else. Avatars are served
+  # to the family through `GET /api/users/:id/avatar`, which puts them behind
+  # the same session as every other row.
+  #
+  # The image reads `RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY` — *not*
+  # `RUSTFS_ROOT_USER` / `RUSTFS_ROOT_PASSWORD`, which the binary still accepts
+  # as MinIO-compatibility aliases but which the entrypoint's credential
+  # validation does not inspect. Using the aliases means the "you are running
+  # on the default rustfsadmin credential" warning never fires, so a deployment
+  # that forgot to set them looks healthy while accepting `rustfsadmin`.
+  rustfs:
+    image: rustfs/rustfs:1.0.0-rc.2
+    <<: *default-restart
+    logging: *default-logging
+    networks: [data]
+    environment:
+      # `:?` rather than a default: the whole point of this service being on an
+      # internal network is that it is not the last line of defence. Compose
+      # refuses to start rather than silently running on `rustfsadmin`.
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?RUSTFS_ACCESS_KEY is required}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?RUSTFS_SECRET_KEY is required}
+      RUSTFS_ADDRESS: ':9000'
+      # Nothing can reach the console on an internal network, so it is dead
+      # weight and an extra HTTP surface. Administration happens with the AWS
+      # CLI from inside the network when it happens at all.
+      RUSTFS_CONSOLE_ENABLE: 'false'
+      # Must match S3_REGION in `.env` — the SDK signs with it.
+      RUSTFS_REGION: ${S3_REGION:-us-east-1}
+      # Empty = log to stdout, where the json-file driver above rotates it.
+      # The image default (`/logs`) writes into the container's writable layer,
+      # which nothing rotates and nothing ever reads.
+      RUSTFS_OBS_LOG_DIRECTORY: ''
+      RUSTFS_OBS_LOGGER_LEVEL: warn
+      # This network has no route to the internet. Left on, the server spends
+      # every startup waiting for a release check that cannot possibly succeed.
+      RUSTFS_CHECK_UPDATES: 'false'
+      TZ: ${TZ:-Europe/Moscow}
+    volumes:
+      # The image declares /data owned by uid/gid 10001, and Docker seeds a new
+      # named volume from the image, so ownership is correct without a chown.
+      - rustfs_data:/data
+    healthcheck:
+      # curl is in the image (it is Alpine-based). `/health` answers 200 with a
+      # JSON readiness body once the disk is online.
+      test: ['CMD', 'curl', '-fsS', '-o', '/dev/null', 'http://127.0.0.1:9000/health']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    stop_grace_period: 30s
+
+  # ───────────────────────────────────────────────────────────
   backend:
     image: ${BACKEND_IMAGE:-ghcr.io/${GHCR_OWNER:-local}/family-backend:${IMAGE_TAG:-latest}}
     build:
@@ -127,6 +188,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      # Not `service_healthy`: the backend creates the bucket on boot but
+      # tolerates storage being absent (avatar uploads answer 503 and
+      # everything else works), so a slow RustFS must not hold the API down.
+      rustfs:
+        condition: service_started
     expose:
       - '3000'
     # close-with-grace needs room to drain in-flight requests and BullMQ jobs.

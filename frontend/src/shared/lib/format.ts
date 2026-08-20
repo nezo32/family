@@ -1,6 +1,8 @@
 import { format as formatDate } from 'date-fns';
 import { ru } from 'date-fns/locale';
 
+import { dateKeyToDate } from './datetime';
+
 /**
  * Formatting helpers.
  *
@@ -303,6 +305,30 @@ export function formatFloatingLocal(value: string, pattern = 'd MMMM, HH:mm'): s
   const [hh = '00', mm = '00'] = timePart.split(':');
   const date = new Date(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm));
   return formatDate(date, pattern, { locale: ru });
+}
+
+/* -------------------------------------------------------------------------
+ * Date keys — `2026-09-07`, a calendar day with no instant behind it
+ *
+ * A birthday, a goal deadline and the day half of a floating local datetime are
+ * all days, not moments. Sending one through `new Date('2026-09-07')` parses it
+ * as **UTC midnight**, and rendering that in a timezone west of Greenwich shows
+ * «6 сентября». These render the key from its own digits instead, so nothing
+ * can move it. `shared/lib/datetime.ts` holds the matching value helpers.
+ * ---------------------------------------------------------------------- */
+
+/** `2026-09-07` → `7 сентября 2026 г.` — the app's long date, everywhere. */
+export function formatDateKeyLong(key: string): string {
+  const date = dateKeyToDate(key);
+  if (!date) return '';
+  return `${formatDate(date, 'd MMMM yyyy', { locale: ru })} г.`;
+}
+
+/** `2026-09-07` → `07.09.2026`. */
+export function formatDateKeyShort(key: string): string {
+  const date = dateKeyToDate(key);
+  if (!date) return '';
+  return formatDate(date, 'dd.MM.yyyy', { locale: ru });
 }
 
 /** `2026-09-07` in the family timezone — the key calendar grids are built on. */

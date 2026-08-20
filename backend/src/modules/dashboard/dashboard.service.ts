@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNotNull, isNull, lt, ne, or, sql } from 'drizzle-orm';
 
 import type {
   DashboardEvent,
@@ -19,7 +19,6 @@ import type { Permission, Role } from '@family/shared';
 import type { Executor } from '../../core/db.js';
 import { notFound } from '../../core/errors.js';
 import { eventOccurrences, eventSeries } from '../events/events.schema.js';
-import { pointsLedger } from '../chores/chores.schema.js';
 import { goalMilestones, goalTransactions, savingsGoals } from '../goals/goals.schema.js';
 import { canReadAnyGoal } from '../goals/goals.service.js';
 import { familySettings } from '../identity/identity.schema.js';
@@ -255,7 +254,6 @@ export interface TaskRow {
   seriesId: string;
   title: string;
   dueAt: Date;
-  points: number;
   category: string | null;
   assigneeId: string | null;
   graceMinutes: number;
@@ -309,7 +307,6 @@ export interface GoalRow {
 export interface LoadRow {
   userId: string;
   doneCount: number;
-  points: number;
 }
 
 /**
@@ -430,7 +427,6 @@ export function createDashboardPort(exec: Executor): DashboardPort {
           seriesId: taskOccurrences.seriesId,
           title: sql<string>`coalesce(${taskOccurrences.titleOverride}, ${taskSeries.title})`,
           dueAt: taskOccurrences.dueAt,
-          points: sql<number>`coalesce(${taskOccurrences.pointsOverride}, ${taskSeries.points})`,
           category: taskSeries.category,
           assigneeId: taskOccurrences.assigneeId,
           graceMinutes: taskSeries.graceMinutes,
@@ -464,7 +460,6 @@ export function createDashboardPort(exec: Executor): DashboardPort {
           seriesId: taskOccurrences.seriesId,
           title: sql<string>`coalesce(${taskOccurrences.titleOverride}, ${taskSeries.title})`,
           dueAt: taskOccurrences.dueAt,
-          points: sql<number>`coalesce(${taskOccurrences.pointsOverride}, ${taskSeries.points})`,
           category: taskSeries.category,
           assigneeId: taskOccurrences.assigneeId,
           graceMinutes: taskSeries.graceMinutes,
@@ -628,26 +623,29 @@ export function createDashboardPort(exec: Executor): DashboardPort {
     },
 
     async loadLoad(range) {
-      // `points_ledger` rather than `task_occurrences`: points accrue to
-      // whoever actually did the chore, not whoever was assigned (D5), and the
-      // ledger is the only place that distinction survives.
+      // Grouped by `completed_by_id`, not by `assignee_id`: a chore counts for
+      // whoever actually did it, not whoever it was handed to (D5). That used
+      // to be a fact only the points ledger remembered; the occurrence row
+      // carries it directly, which is why the ledger could go.
       const rows = await exec
         .select({
-          userId: pointsLedger.userId,
-          doneCount: sql<string>`count(*) filter (where ${pointsLedger.reason} = 'chore_completed')`,
-          points: sql<string>`coalesce(sum(${pointsLedger.delta}), 0)`,
+          userId: taskOccurrences.completedById,
+          doneCount: sql<string>`count(*)`,
         })
-        .from(pointsLedger)
+        .from(taskOccurrences)
         .where(
-          and(gte(pointsLedger.createdAt, range.fromUtc), lt(pointsLedger.createdAt, range.toUtc)),
+          and(
+            eq(taskOccurrences.status, 'done'),
+            isNotNull(taskOccurrences.completedById),
+            gte(taskOccurrences.completedAt, range.fromUtc),
+            lt(taskOccurrences.completedAt, range.toUtc),
+          ),
         )
-        .groupBy(pointsLedger.userId);
+        .groupBy(taskOccurrences.completedById);
 
-      return rows.map((r) => ({
-        userId: r.userId,
-        doneCount: toInt(r.doneCount),
-        points: toInt(r.points),
-      }));
+      return rows.flatMap((r) =>
+        r.userId === null ? [] : [{ userId: r.userId, doneCount: toInt(r.doneCount) }],
+      );
     },
   };
 }
@@ -680,7 +678,6 @@ export function toDashboardTask(row: TaskRow, timezone: string, now: Date): Dash
     // Midnight is how "к концу дня" materializes; showing "00:00" reads as a
     // real appointment time and is worse than showing nothing.
     dueTime: time === '00:00' ? null : time,
-    points: row.points,
     category: row.category,
     assigneeId: row.assigneeId,
     isOverdue: late > 0,
@@ -797,7 +794,6 @@ export function buildFairness(
       userId: m.id,
       displayName: m.displayName,
       doneCount: row?.doneCount ?? 0,
-      points: row?.points ?? 0,
       weight: m.choreWeight,
       sharePercent: percent(row?.doneCount ?? 0, total),
     };
@@ -811,7 +807,6 @@ export function buildFairness(
     userId: actor.userId,
     displayName: actor.displayName,
     doneCount: 0,
-    points: 0,
     weight: '1.00',
     sharePercent: 0,
   };

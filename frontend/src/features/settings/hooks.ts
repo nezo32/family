@@ -24,6 +24,7 @@ import {
   fetchIdentities,
   fetchPreferences,
   fetchSubscriptions,
+  removeAvatar,
   removeSubscription,
   savePreferences,
   saveQuietHours,
@@ -31,6 +32,7 @@ import {
   settingsKeys,
   unlinkIdentity,
   updateProfile,
+  uploadAvatar,
 } from './api';
 import { currentEndpoint } from './push/push';
 
@@ -58,6 +60,53 @@ export function useUpdateProfile(): UseMutationResult<SelfUser, Error, UpdatePro
       void queryClient.invalidateQueries({ queryKey: meKeys.all });
     },
   });
+}
+
+/**
+ * Upload a cropped avatar.
+ *
+ * `setQueryData` on `['me']` **and** an invalidate: the optimistic write puts
+ * the new URL on screen the instant the request returns, and the invalidate
+ * makes the server the authority a moment later. The URL carries the object
+ * name (`?v=…`), so it differs from the previous one and no cached image can
+ * survive the change — which is what lets the serving route send a year-long
+ * `Cache-Control` without ever showing a stale face.
+ */
+export function useUploadAvatar(): UseMutationResult<SelfUser, Error, { blob: Blob; filename: string }> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ blob, filename }: { blob: Blob; filename: string }) =>
+      uploadAvatar(blob, filename),
+    onSuccess: (user) => {
+      writeSelfUser(queryClient, user);
+      void queryClient.invalidateQueries({ queryKey: meKeys.all });
+    },
+  });
+}
+
+export function useRemoveAvatar(): UseMutationResult<SelfUser, Error, void> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => removeAvatar(),
+    onSuccess: (user) => {
+      writeSelfUser(queryClient, user);
+      void queryClient.invalidateQueries({ queryKey: meKeys.all });
+    },
+  });
+}
+
+/**
+ * Patch the `user` half of the cached `/api/me` response.
+ *
+ * The avatar endpoints answer with a `SelfUser`, not the whole `MeResponse`, so
+ * the permissions and family context in the cache have to be left alone —
+ * replacing the entry wholesale would blank the client's authorization state
+ * until the refetch landed, and every `useCan()` on screen would flicker.
+ */
+function writeSelfUser(queryClient: ReturnType<typeof useQueryClient>, user: SelfUser): void {
+  queryClient.setQueriesData<{ user: SelfUser }>({ queryKey: meKeys.all }, (previous) =>
+    previous ? { ...previous, user } : previous,
+  );
 }
 
 /* -------------------------------------------------------------------------- */

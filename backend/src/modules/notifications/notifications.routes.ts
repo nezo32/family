@@ -1,3 +1,4 @@
+import { scaledLimit } from '../../core/rate-limit.js';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -440,7 +441,7 @@ const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
     {
       config: {
         permission: 'notification:manage:own',
-        rateLimit: { max: 5, timeWindow: '1 hour' },
+        rateLimit: { max: scaledLimit(5), timeWindow: '1 hour' },
       },
       schema: {
         tags: ['notifications'],

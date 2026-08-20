@@ -1,4 +1,6 @@
-import { expect, test, type ConsoleMessage, type Page, type Request } from '@playwright/test';
+import { expect, test } from './fixtures';
+
+import { assertClean, watch } from './helpers';
 
 /**
  * Whole-app smoke suite.
@@ -12,15 +14,19 @@ import { expect, test, type ConsoleMessage, type Page, type Request } from '@pla
  * app were returning 500 in production. A test that renders a component with a
  * mocked fetch cannot tell you the page works.
  *
- * Requires a running stack:
- *   backend   BACKEND_PORT=3100 npx tsx --env-file-if-exists=.env src/main.ts
- *   frontend  npx vite build && npx vite preview --port 5173
+ * Requires a running stack. The preview origin must match the backend's
+ * APP_PUBLIC_URL, because CORS is built from it — and `localhost` and
+ * `127.0.0.1` are different origins, so mixing them 403s every POST:
  *
- * Port 5173 is not a suggestion: the backend's CORS allow-list contains only
- * that origin, so anything else 403s every POST.
+ *   backend   BACKEND_PORT=3102 APP_PUBLIC_URL=http://localhost:5175 \
+ *               RATE_LIMIT_FACTOR=100 npx tsx --env-file-if-exists=.env src/main.ts
+ *   frontend  npx vite build && VITE_API_PROXY_TARGET=http://localhost:3102 \
+ *               npx vite preview --port 5175
+ *
+ * `RATE_LIMIT_FACTOR` is what keeps the suite from tripping the refresh limit;
+ * see `core/config.ts` for why that is a harness problem and not a product one.
  */
 
-const API = process.env.E2E_API_URL ?? 'http://127.0.0.1:3100';
 
 /** Every navigable route, with what proves it rendered. */
 const ROUTES: Array<{ path: string; expect: RegExp; name: string }> = [
@@ -37,89 +43,10 @@ const ROUTES: Array<{ path: string; expect: RegExp; name: string }> = [
   { path: '/settings/accounts', expect: /вход|Google|Telegram/i, name: 'settings/accounts' },
   { path: '/admin/members', expect: /Участник|Заявк/i, name: 'admin/members' },
 ];
-
-/** Console noise that is expected and not a defect. */
-const IGNORED_CONSOLE = [
-  /Download the React DevTools/i,
-  /\[vite\]/i,
-  /Service ?Worker/i,
-  /Notification|PushManager/i, // absent in headless Chromium; the app degrades on purpose
-  /favicon/i,
-];
-
-/** Requests whose failure is expected in a headless browser. */
-const IGNORED_REQUESTS = [/vapid-public-key/i, /\/sw\.js/i, /manifest\.webmanifest/i];
-
-interface PageProblems {
-  console: string[];
-  failed: string[];
-}
-
-function watch(page: Page): PageProblems {
-  const problems: PageProblems = { console: [], failed: [] };
-
-  page.on('console', (msg: ConsoleMessage) => {
-    if (msg.type() !== 'error') return;
-    const text = msg.text();
-    if (IGNORED_CONSOLE.some((r) => r.test(text))) return;
-    problems.console.push(text);
-  });
-
-  page.on('requestfailed', (req: Request) => {
-    const url = req.url();
-    if (IGNORED_REQUESTS.some((r) => r.test(url))) return;
-    problems.failed.push(`${req.method()} ${url} — ${req.failure()?.errorText ?? 'failed'}`);
-  });
-
-  page.on('response', (res) => {
-    const url = res.url();
-    if (!url.includes('/api/')) return;
-    if (IGNORED_REQUESTS.some((r) => r.test(url))) return;
-    // 401 on /me before login is normal; anything else 4xx/5xx is not.
-    if (res.status() >= 400 && !(res.status() === 401 && url.includes('/auth/'))) {
-      problems.failed.push(`${res.status()} ${res.request().method()} ${url}`);
-    }
-  });
-
-  return problems;
-}
-
-function assertClean(problems: PageProblems, where: string): void {
-  expect(problems.failed, `${where}: failing requests`).toEqual([]);
-  expect(problems.console, `${where}: console errors`).toEqual([]);
-}
-
-/** Creates an approved owner through the real API and signs in through the UI. */
-async function signIn(page: Page): Promise<void> {
-  const email = `e2e-${Date.now()}@example.test`;
-  const password = 'E2ePassw0rd!2345';
-
-  const res = await page.request.post(`${API}/api/auth/register`, {
-    data: { email, password, displayName: 'Тест' },
-  });
-  expect(res.ok(), `register failed: ${res.status()} ${await res.text()}`).toBeTruthy();
-
-  // Registration is admin-gated by design (D3), so approve directly in the
-  // database the same way a first-run operator would.
-  const { execSync } = await import('node:child_process');
-  execSync(
-    `docker exec family-dev-postgres-1 psql -U family -d family -c ` +
-      `"update users set status='active', role='owner' where email='${email}'"`,
-    { stdio: 'ignore' },
-  );
-
-  await page.goto('/login');
-  await page.getByLabel(/почт|email/i).fill(email);
-  await page.getByLabel(/пароль/i).fill(password);
-  await page.getByRole('button', { name: /войти/i }).click();
-  await expect(page).toHaveURL(/\/($|\?)/, { timeout: 15_000 });
-}
-
 test.describe('every page renders', () => {
   for (const route of ROUTES) {
     test(`${route.name} renders without errors`, async ({ page }) => {
       const problems = watch(page);
-      await signIn(page);
 
       await page.goto(route.path);
       await expect(page.locator('body')).toContainText(route.expect, { timeout: 15_000 });
@@ -139,7 +66,6 @@ test.describe('layout holds at phone width', () => {
 
   for (const route of ROUTES) {
     test(`${route.name} does not scroll sideways at 320px`, async ({ page }) => {
-      await signIn(page);
       await page.goto(route.path);
       await page.waitForTimeout(600);
 
@@ -154,7 +80,8 @@ test.describe('layout holds at phone width', () => {
 test.describe('forms and modals open', () => {
   const FLOWS: Array<{ name: string; path: string; open: RegExp; expect: RegExp }> = [
     { name: 'new task', path: '/tasks', open: /Новое дело|Новая задача|Добавить/i, expect: /Название|Что нужно сделать/i },
-    { name: 'new event', path: '/calendar', open: /Новое событие|Добавить/i, expect: /Название/i },
+    // The calendar's action uses the short label «Событие», not «Новое событие».
+    { name: 'new event', path: '/calendar', open: /^Событие$|Новое событие/i, expect: /Название/i },
     { name: 'new goal', path: '/goals', open: /Новая цель|Новая копилка|Добавить/i, expect: /Название|Цель/i },
     { name: 'new list', path: '/shopping', open: /Новый список|Добавить список/i, expect: /Название/i },
     { name: 'new post', path: '/wall', open: /Написать|Объявление|Добавить/i, expect: /Текст|Сообщение|Заголовок/i },
@@ -163,13 +90,16 @@ test.describe('forms and modals open', () => {
   for (const flow of FLOWS) {
     test(`${flow.name} opens and closes cleanly`, async ({ page }) => {
       const problems = watch(page);
-      await signIn(page);
       await page.goto(flow.path);
 
+      // `count()` does not auto-wait, and the route chunk loads lazily, so the
+      // old `if (count === 0) test.skip()` read 0 every time and quietly
+      // skipped all five create flows. A missing trigger is a failure, not a
+      // reason to stop looking.
       const trigger = page.getByRole('button', { name: flow.open }).first();
-      if ((await trigger.count()) === 0) {
-        test.skip(true, `no trigger matching ${flow.open} on ${flow.path}`);
-      }
+      await expect(trigger, `no create trigger on ${flow.path}`).toBeVisible({
+        timeout: 15_000,
+      });
       await trigger.click();
 
       const dialog = page.getByRole('dialog');
@@ -193,11 +123,10 @@ test.describe('modals respect the safe area', () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
   test('a dialog never starts above the status bar inset', async ({ page }) => {
-    await signIn(page);
     await page.goto('/tasks');
 
     const trigger = page.getByRole('button', { name: /Новое дело|Новая задача|Добавить/i }).first();
-    if ((await trigger.count()) === 0) test.skip(true, 'no create trigger');
+    await expect(trigger, 'no create trigger on /tasks').toBeVisible({ timeout: 15_000 });
     await trigger.click();
 
     const dialog = page.getByRole('dialog');

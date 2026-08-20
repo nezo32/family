@@ -3,7 +3,6 @@ import { HandHeart } from 'lucide-react';
 import type { PublicUser, SwapResponse, TaskOccurrenceResponse } from '@family/shared';
 import { UserAvatar } from '@/shared/components/UserAvatar';
 import { Button } from '@/shared/ui/button';
-import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { Textarea } from '@/shared/ui/textarea';
 import {
@@ -66,11 +65,6 @@ export function SwapInbox(props: {
               {swap.message ? (
                 <p className="text-sm text-pretty text-muted-foreground">«{swap.message}»</p>
               ) : null}
-              {swap.bonusPoints > 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  {TASKS_RU.swap.bonus}: +{swap.bonusPoints}
-                </p>
-              ) : null}
               <div className="flex flex-wrap gap-2">
                 <Button
                   type="button"
@@ -112,7 +106,6 @@ export function SwapRequestButton(props: {
   const [open, setOpen] = useState(false);
   const [toUserId, setToUserId] = useState<string>('anyone');
   const [message, setMessage] = useState('');
-  const [bonus, setBonus] = useState(0);
   const create = useCreateSwap();
   const cancel = useCancelSwap();
 
@@ -184,23 +177,6 @@ export function SwapRequestButton(props: {
                 className="min-h-20 text-base"
               />
             </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="swap-bonus">{TASKS_RU.swap.bonus}</Label>
-              <Input
-                id="swap-bonus"
-                type="number"
-                inputMode="numeric"
-                min={0}
-                max={100}
-                value={String(bonus)}
-                onChange={(event) => {
-                  setBonus(Math.max(0, Math.min(100, Number(event.target.value) || 0)));
-                }}
-                className="h-11 w-24 text-base"
-              />
-              <p className="text-xs text-muted-foreground">{TASKS_RU.swap.bonusHint}</p>
-            </div>
           </div>
 
           <DialogFooter>
@@ -224,7 +200,6 @@ export function SwapRequestButton(props: {
                     occurrenceId: props.occurrence.id,
                     ...(toUserId === 'anyone' ? {} : { toUserId }),
                     message: message.trim() === '' ? null : message.trim(),
-                    bonusPoints: bonus,
                   },
                   {
                     onSuccess: () => {

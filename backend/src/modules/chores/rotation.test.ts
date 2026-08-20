@@ -41,7 +41,7 @@ function member(overrides: Partial<RotationCandidate> & { userId: string }): Rot
     weight: 1,
     position: 0,
     active: true,
-    earned: 0,
+    completed: 0,
     committed: 0,
     lastAssignedAt: null,
     blackouts: [],
@@ -59,13 +59,13 @@ function snapshot(
 /** Run a whole horizon of daily occurrences and collect who got each one. */
 function runSchedule(
   input: RotationSnapshot,
-  options: { count: number; points: number; from?: Date },
+  options: { count: number; from?: Date },
 ): Array<string | null> {
   const run = new RotationRun(input);
   const from = options.from ?? T0;
   const picks: Array<string | null> = [];
   for (let i = 0; i < options.count; i += 1) {
-    picks.push(run.assign(new Date(from.getTime() + i * DAY), options.points).userId);
+    picks.push(run.assign(new Date(from.getTime() + i * DAY)).userId);
   }
   return picks;
 }
@@ -75,6 +75,8 @@ function runSchedule(
 /* -------------------------------------------------------------------------- */
 
 describe('computeDebt', () => {
+  // Both arguments are counts of chores now, never points (D5). The maths is
+  // untouched — only what it is denominated in changed.
   it('divides the combined load by the weight', () => {
     expect(computeDebt(6, 4, 2)).toBe(5);
   });
@@ -87,7 +89,7 @@ describe('computeDebt', () => {
     expect(computeDebt(0, 0, 0)).toBe(EXCUSED_DEBT);
   });
 
-  it('counts committed work exactly like earned work', () => {
+  it('counts committed work exactly like completed work', () => {
     expect(computeDebt(10, 0, 1)).toBe(computeDebt(0, 10, 1));
   });
 });
@@ -177,20 +179,20 @@ describe('compareByDebt — the deterministic tie-break chain (D5)', () => {
 
 describe('determinism', () => {
   const roster = [
-    member({ userId: ADULT, position: 0, earned: 12, lastAssignedAt: new Date(T0.getTime() - 3 * DAY) }),
-    member({ userId: TEEN, position: 1, earned: 7, lastAssignedAt: new Date(T0.getTime() - DAY) }),
-    member({ userId: CHILD, position: 2, weight: 0.5, earned: 3, lastAssignedAt: null }),
+    member({ userId: ADULT, position: 0, completed: 12, lastAssignedAt: new Date(T0.getTime() - 3 * DAY) }),
+    member({ userId: TEEN, position: 1, completed: 7, lastAssignedAt: new Date(T0.getTime() - DAY) }),
+    member({ userId: CHILD, position: 2, weight: 0.5, completed: 3, lastAssignedAt: null }),
   ];
 
   it('produces an identical schedule when the same snapshot is run twice', () => {
-    const first = runSchedule(snapshot(roster), { count: 30, points: 5 });
-    const second = runSchedule(snapshot(roster), { count: 30, points: 5 });
+    const first = runSchedule(snapshot(roster), { count: 30 });
+    const second = runSchedule(snapshot(roster), { count: 30 });
     expect(second).toEqual(first);
   });
 
   it('does not mutate the snapshot it was handed', () => {
     const before = JSON.stringify(roster);
-    runSchedule(snapshot(roster), { count: 30, points: 5 });
+    runSchedule(snapshot(roster), { count: 30 });
     expect(JSON.stringify(roster)).toBe(before);
   });
 
@@ -200,13 +202,13 @@ describe('determinism', () => {
     const shuffled = [roster[2], roster[0], roster[1]].filter(
       (m): m is RotationCandidate => m !== undefined,
     );
-    expect(runSchedule(snapshot(shuffled), { count: 20, points: 5 })).toEqual(
-      runSchedule(snapshot(roster), { count: 20, points: 5 }),
+    expect(runSchedule(snapshot(shuffled), { count: 20 })).toEqual(
+      runSchedule(snapshot(roster), { count: 20 }),
     );
   });
 
   it('never leaves a chore to chance — every pick is one of the eligible members', () => {
-    const picks = runSchedule(snapshot(roster), { count: 50, points: 4 });
+    const picks = runSchedule(snapshot(roster), { count: 50 });
     expect(new Set(picks)).toEqual(new Set([ADULT, TEEN, CHILD]));
   });
 });
@@ -219,9 +221,9 @@ describe('weighted_balance', () => {
   it('picks the lowest debt', () => {
     const pick = pickAssignee(
       snapshot([
-        member({ userId: ADULT, earned: 20 }),
-        member({ userId: TEEN, earned: 4 }),
-        member({ userId: CHILD, earned: 9 }),
+        member({ userId: ADULT, completed: 20 }),
+        member({ userId: TEEN, completed: 4 }),
+        member({ userId: CHILD, completed: 9 }),
       ]),
       T0,
     );
@@ -231,9 +233,11 @@ describe('weighted_balance', () => {
   });
 
   it('folds each pick back into committed, so one pass cannot dump a month on one person', () => {
+    // Every occurrence adds exactly 1 to the winner's committed count, which is
+    // the whole of the new fairness input.
     const picks = runSchedule(
       snapshot([member({ userId: ADULT, position: 0 }), member({ userId: TEEN, position: 1 })]),
-      { count: 10, points: 5 },
+      { count: 10 },
     );
     const adultShare = picks.filter((p) => p === ADULT).length;
     expect(adultShare).toBe(5);
@@ -241,25 +245,24 @@ describe('weighted_balance', () => {
     expect(picks.slice(0, 4)).toEqual([ADULT, TEEN, ADULT, TEEN]);
   });
 
-  it('alternates on zero-point chores, where only the tie-break can separate people', () => {
-    // With `points: 0` nobody's debt ever changes, so "longest since their last
-    // assignment" is the *only* thing keeping this from being one name repeated
-    // ten times.
+  it('alternates between two members who start level', () => {
+    // Two people, identical debt, one chore each per step: "longest since their
+    // last assignment" is what keeps this from being one name repeated six
+    // times.
     const picks = runSchedule(
       snapshot([member({ userId: ADULT, position: 0 }), member({ userId: TEEN, position: 1 })]),
-      { count: 6, points: 0 },
+      { count: 6 },
     );
     expect(picks).toEqual([ADULT, TEEN, ADULT, TEEN, ADULT, TEEN]);
   });
 
   it('converges a 0.4-weight child and a 1.0-weight adult to proportional load', () => {
-    const POINTS = 10;
     const picks = runSchedule(
       snapshot([
         member({ userId: ADULT, weight: 1, position: 0 }),
         member({ userId: CHILD, weight: 0.4, position: 1 }),
       ]),
-      { count: 70, points: POINTS },
+      { count: 70 },
     );
 
     const adult = picks.filter((p) => p === ADULT).length;
@@ -270,20 +273,22 @@ describe('weighted_balance', () => {
     expect(child / 70).toBeCloseTo(0.4 / 1.4, 1);
     expect(adult / 70).toBeCloseTo(1 / 1.4, 1);
 
-    // The load each of them ends up carrying, divided by their weight, is the
-    // same number — which is the actual definition of "fair" here.
-    expect((adult * POINTS) / 1).toBeCloseTo((child * POINTS) / 0.4, -1);
+    // The number of chores each of them ends up carrying, divided by their
+    // weight, is the same — which is the actual definition of "fair" here, and
+    // it is now expressed in chores rather than in a score.
+    expect(adult / 1).toBeCloseTo(child / 0.4, -1);
   });
 
   it('starts a member with existing debt behind one who has none', () => {
     const picks = runSchedule(
       snapshot([
-        member({ userId: ADULT, position: 0, earned: 30 }),
-        member({ userId: TEEN, position: 1, earned: 0 }),
+        member({ userId: ADULT, position: 0, completed: 3 }),
+        member({ userId: TEEN, position: 1, completed: 0 }),
       ]),
-      { count: 4, points: 10 },
+      { count: 4 },
     );
-    // The teen owes nothing, so they take the first three before it evens out.
+    // The adult has already done three chores this window, so the teen takes
+    // the next three before the two are level again.
     expect(picks).toEqual([TEEN, TEEN, TEEN, ADULT]);
   });
 
@@ -292,11 +297,11 @@ describe('weighted_balance', () => {
       { startsAt: new Date(T0.getTime() - DAY), endsAt: new Date(T0.getTime() + 3 * DAY) },
     ];
     const roster = snapshot([
-      member({ userId: ADULT, position: 0, earned: 0, blackouts: holiday }),
-      member({ userId: TEEN, position: 1, earned: 20 }),
+      member({ userId: ADULT, position: 0, completed: 0, blackouts: holiday }),
+      member({ userId: TEEN, position: 1, completed: 20 }),
     ]);
 
-    const picks = runSchedule(roster, { count: 5, points: 5 });
+    const picks = runSchedule(roster, { count: 5 });
     // Days 0-2 fall inside the blackout, so the teen takes them despite owing
     // far more...
     expect(picks.slice(0, 3)).toEqual([TEEN, TEEN, TEEN]);
@@ -309,9 +314,9 @@ describe('weighted_balance', () => {
     const picks = runSchedule(
       snapshot([
         member({ userId: ADULT, position: 0, weight: 0 }),
-        member({ userId: TEEN, position: 1, earned: 500 }),
+        member({ userId: TEEN, position: 1, completed: 500 }),
       ]),
-      { count: 3, points: 5 },
+      { count: 3 },
     );
     expect(picks).toEqual([TEEN, TEEN, TEEN]);
   });
@@ -320,7 +325,7 @@ describe('weighted_balance', () => {
     const pick = pickAssignee(
       snapshot([
         member({ userId: ADULT, active: false }),
-        member({ userId: TEEN, earned: 99 }),
+        member({ userId: TEEN, completed: 99 }),
       ]),
       T0,
     );
@@ -359,7 +364,7 @@ describe('round_robin', () => {
   ];
 
   it('walks position order and wraps', () => {
-    expect(runSchedule(snapshot(roster, { strategy: 'round_robin' }), { count: 4, points: 5 })).toEqual([
+    expect(runSchedule(snapshot(roster, { strategy: 'round_robin' }), { count: 4 })).toEqual([
       CHILD,
       ADULT,
       TEEN,
@@ -369,14 +374,14 @@ describe('round_robin', () => {
 
   it('starts from the stored cursor and reports where to resume', () => {
     const run = new RotationRun(snapshot(roster, { strategy: 'round_robin', cursor: 2 }));
-    expect(run.assign(T0, 0).userId).toBe(TEEN);
+    expect(run.assign(T0).userId).toBe(TEEN);
     expect(run.cursor).toBe(0);
     expect(run.cursorMoved).toBe(true);
   });
 
   it('normalizes an out-of-range cursor rather than falling off the end', () => {
     const run = new RotationRun(snapshot(roster, { strategy: 'round_robin', cursor: 7 }));
-    expect(run.assign(T0, 0).userId).toBe(ADULT); // 7 % 3 === 1
+    expect(run.assign(T0).userId).toBe(ADULT); // 7 % 3 === 1
   });
 
   it('skips a blacked-out member without costing them their turn', () => {
@@ -389,7 +394,7 @@ describe('round_robin', () => {
       }),
       member({ userId: TEEN, position: 2 }),
     ];
-    const picks = runSchedule(snapshot(away, { strategy: 'round_robin' }), { count: 4, points: 0 });
+    const picks = runSchedule(snapshot(away, { strategy: 'round_robin' }), { count: 4 });
     // Day 0: child. Day 1: adult is away, so the teen takes it. Day 2: the
     // cursor is past the teen, so it wraps to the child, then the adult — who
     // is back — is next.
@@ -402,7 +407,7 @@ describe('round_robin', () => {
       member({ userId: ADULT, position: 1, weight: 0 }),
       member({ userId: TEEN, position: 2 }),
     ];
-    expect(runSchedule(snapshot(mixed, { strategy: 'round_robin' }), { count: 2, points: 0 })).toEqual([
+    expect(runSchedule(snapshot(mixed, { strategy: 'round_robin' }), { count: 2 })).toEqual([
       TEEN,
       TEEN,
     ]);
@@ -413,12 +418,12 @@ describe('fixed', () => {
   it('always picks the same member regardless of debt', () => {
     const roster = snapshot(
       [
-        member({ userId: ADULT, position: 0, earned: 1_000 }),
-        member({ userId: TEEN, position: 1, earned: 0 }),
+        member({ userId: ADULT, position: 0, completed: 1_000 }),
+        member({ userId: TEEN, position: 1, completed: 0 }),
       ],
       { strategy: 'fixed' },
     );
-    expect(runSchedule(roster, { count: 3, points: 5 })).toEqual([ADULT, ADULT, ADULT]);
+    expect(runSchedule(roster, { count: 3 })).toEqual([ADULT, ADULT, ADULT]);
   });
 
   it('leaves the slot empty while that member is away, rather than picking a stand-in', () => {
@@ -433,7 +438,7 @@ describe('fixed', () => {
       ],
       { strategy: 'fixed' },
     );
-    const picks = runSchedule(roster, { count: 2, points: 0 });
+    const picks = runSchedule(roster, { count: 2 });
     expect(picks).toEqual([null, ADULT]);
   });
 });
@@ -452,7 +457,7 @@ describe('anyone', () => {
   it('stays unassigned for a whole horizon', () => {
     const picks = runSchedule(
       snapshot([member({ userId: ADULT }), member({ userId: TEEN })], { strategy: 'anyone' }),
-      { count: 10, points: 5 },
+      { count: 10 },
     );
     expect(picks.every((p) => p === null)).toBe(true);
   });
@@ -464,20 +469,18 @@ describe('anyone', () => {
 
 describe('previewAssignments', () => {
   const roster = snapshot([
-    member({ userId: ADULT, position: 0, earned: 10 }),
-    member({ userId: TEEN, position: 1, earned: 0 }),
-    member({ userId: CHILD, position: 2, weight: 0, earned: 0 }),
+    member({ userId: ADULT, position: 0, completed: 10 }),
+    member({ userId: TEEN, position: 1, completed: 0 }),
+    member({ userId: CHILD, position: 2, weight: 0, completed: 0 }),
   ]);
 
   it('reproduces exactly what materialization would do', () => {
-    const steps = previewAssignments(roster, { at: T0, count: 5, points: 5 });
-    expect(steps.map((s) => s.pick.userId)).toEqual(
-      runSchedule(roster, { count: 5, points: 5 }),
-    );
+    const steps = previewAssignments(roster, { at: T0, count: 5 });
+    expect(steps.map((s) => s.pick.userId)).toEqual(runSchedule(roster, { count: 5 }));
   });
 
   it('explains why a member was passed over', () => {
-    const [first] = previewAssignments(roster, { at: T0, count: 1, points: 5 });
+    const [first] = previewAssignments(roster, { at: T0, count: 1 });
     const excused = first?.standings.find((s) => s.userId === CHILD);
     expect(excused?.eligible).toBe(false);
     expect(excused?.reason).toBe('zero_weight');
@@ -485,7 +488,7 @@ describe('previewAssignments', () => {
   });
 
   it('orders standings by the same comparator the picker uses', () => {
-    const [first] = previewAssignments(roster, { at: T0, count: 1, points: 5 });
+    const [first] = previewAssignments(roster, { at: T0, count: 1 });
     expect(first?.standings.map((s) => s.userId)).toEqual([TEEN, ADULT, CHILD]);
   });
 });

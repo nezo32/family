@@ -1,3 +1,4 @@
+import { scaledLimit } from '../../core/rate-limit.js';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 
@@ -87,7 +88,7 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
         public: true,
         // Registration is admin-gated and this family has single digits of
         // members: five attempts an hour from one address is generous.
-        rateLimit: { max: 5, timeWindow: '1 hour' },
+        rateLimit: { max: scaledLimit(5), timeWindow: '1 hour' },
       },
       schema: {
         tags: ['auth'],
@@ -122,7 +123,7 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
         public: true,
         // Per-IP dimension. Runs on `onRequest`, before the body is parsed.
         rateLimit: {
-          max: 10,
+          max: scaledLimit(10),
           timeWindow: '15 minutes',
           keyGenerator: (request) => `login:ip:${request.ip}`,
         },
@@ -167,7 +168,7 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
         // Deliberately loose. A dashboard resuming on iOS legitimately fires
         // several refreshes at once; that is what the grace window is for, and
         // rate-limiting it would turn a benign burst into a logout.
-        rateLimit: { max: 60, timeWindow: '1 minute' },
+        rateLimit: { max: scaledLimit(60), timeWindow: '1 minute' },
       },
       schema: {
         tags: ['auth'],
@@ -219,7 +220,7 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
     {
       config: {
         public: true,
-        rateLimit: { max: 30, timeWindow: '1 minute' },
+        rateLimit: { max: scaledLimit(30), timeWindow: '1 minute' },
       },
       schema: {
         tags: ['auth'],
@@ -258,7 +259,7 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
         // of any kind, so the waiting screen identifies itself with the opaque
         // ticket handed out by register / the OAuth callback.
         public: true,
-        rateLimit: { max: 60, timeWindow: '1 minute' },
+        rateLimit: { max: scaledLimit(60), timeWindow: '1 minute' },
       },
       schema: {
         tags: ['auth'],

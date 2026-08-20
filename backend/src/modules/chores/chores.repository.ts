@@ -1,6 +1,6 @@
-import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 
-import type { PointsReason, SwapStatus } from '@family/shared';
+import type { SwapStatus } from '@family/shared';
 
 import type { Executor } from '../../core/db.js';
 import { ts } from '../../core/sql.js';
@@ -17,21 +17,16 @@ import { taskOccurrences, taskSeries } from '../tasks/tasks.schema.js';
 import {
   choreSwaps,
   kudos,
-  pointsLedger,
   rotationMembers,
   rotations,
   userBlackouts,
-  userStreaks,
   type ChoreSwapRow,
   type KudosRow,
   type NewChoreSwapRow,
   type NewKudosRow,
-  type NewPointsLedgerRow,
-  type PointsLedgerRow,
   type RotationMemberRow,
   type RotationRow,
   type UserBlackoutRow,
-  type UserStreakRow,
 } from './chores.schema.js';
 import type { BlackoutWindow, RotationCandidate } from './rotation.js';
 
@@ -40,19 +35,19 @@ import type { BlackoutWindow, RotationCandidate } from './rotation.js';
  *
  * Every function takes an {@link Executor} first so the service can run it
  * inside a transaction — which matters more here than anywhere else in the
- * codebase, because assignment happens *inside* the materializer's transaction
- * and completion has to book several ledger rows atomically.
+ * codebase, because assignment happens *inside* the materializer's transaction.
  *
  * This module reads `task_occurrences` / `task_series` directly. That is
  * allowed and deliberate: D8 forbids importing another module's **repository**,
  * not its schema, and `chores.schema.ts` already references `task_occurrences`
- * for swaps, points and kudos. The dependency runs one way only — the tasks
- * module reaches chores through the `RotationPort` service seam.
+ * for swaps and kudos. The dependency runs one way only — the tasks module
+ * reaches chores through the `RotationPort` service seam.
  *
- * The interesting query is {@link loadRotationRoster}: `earned` and `committed`
- * are computed in SQL, in one round trip, because the materializer calls it
- * once per series and an N+1 there would be a per-series stall inside a
- * `FOR UPDATE` lock.
+ * The interesting query is {@link loadRotationRoster}: `completed` and
+ * `committed` are counted in SQL, in one round trip, because the materializer
+ * calls it once per series and an N+1 there would be a per-series stall inside
+ * a `FOR UPDATE` lock. Both are counts of `task_occurrences` rows — there is no
+ * ledger any more, and that is the point (D5).
  */
 
 /* -------------------------------------------------------------------------- */
@@ -236,7 +231,7 @@ export interface RotationMemberInputRow {
  *
  * Deletes then inserts inside the caller's transaction rather than diffing:
  * the set is at most 50 rows, and a diff would have to reason about a member
- * who was removed and re-added in one request. Past assignments and ledger
+ * who was removed and re-added in one request. Past assignments and their
  * attribution are untouched either way — they hang off `users`, not off this
  * table.
  */
@@ -356,16 +351,13 @@ export async function findBlackoutsForUsers(
 /* The fairness roster — the one query this module exists for                  */
 /* -------------------------------------------------------------------------- */
 
-/** Ledger reasons that count as work done, for the debt calculation (§5). */
-const DEBT_REASONS = ['chore_completed', 'on_time_bonus', 'covered_for_other'] as const;
-
 interface RosterRow {
   [column: string]: unknown;
   user_id: string;
   weight: string;
   position: number;
   active: boolean;
-  earned: string | number | null;
+  completed: string | number | null;
   committed: string | number | null;
   last_assigned_at: Date | string | null;
 }
@@ -384,7 +376,7 @@ function toDate(value: Date | string | null): Date | null {
 export interface RosterOptions {
   /** Instant the run is planned from. Blackouts are loaded from here forward. */
   readonly now: Date;
-  /** Lookback for `earned`. Defaults to the rotation's `balanceWindowDays`. */
+  /** Lookback for `completed`. Defaults to the rotation's `balanceWindowDays`. */
   readonly windowDays: number;
   /** How far ahead blackouts must be loaded — the materialization horizon. */
   readonly through: Date;
@@ -394,16 +386,19 @@ export interface RosterOptions {
  * The whole roster with its debt inputs, in one round trip.
  *
  * ```
- * earned    = SUM(points_ledger.delta) over the balance window, work reasons only
- * committed = SUM(effective points) of still-`scheduled` assigned occurrences
- * debt      = (earned + committed) / weight        -- computed in `rotation.ts`
+ * completed = COUNT(task_occurrences) done by them inside the balance window
+ * committed = COUNT(still-`scheduled` occurrences already assigned to them)
+ * debt      = (completed + committed) / weight     -- computed in `rotation.ts`
  * ```
  *
- * Three deliberate choices:
+ * Four deliberate choices:
  *
- * - **Effective points** are `COALESCE(points_override, series.points)`, so an
- *   occurrence an adult made worth double counts as double against the person
- *   carrying it.
+ * - Both terms are **counts of chores**, not sums of points. There is no points
+ *   ledger to read any more (D5): a per-person balance is a leaderboard however
+ *   it is labelled, so fairness is measured in "how many did you do".
+ * - `completed` counts rows, which makes it **idempotent for free**. An
+ *   occurrence can be `done` exactly once, so a double tap or an offline replay
+ *   cannot inflate anybody's share the way a second ledger row could.
  * - `committed` is not clipped to the balance window at its *upper* end. Every
  *   still-scheduled row from the window start onwards counts, because work
  *   already promised for next month is real load — clipping it would let one
@@ -418,10 +413,6 @@ export async function loadRotationRoster(
   options: RosterOptions,
 ): Promise<RotationCandidate[]> {
   const windowStart = new Date(options.now.getTime() - options.windowDays * 86_400_000);
-  const reasons = sql.join(
-    DEBT_REASONS.map((r) => sql`${r}`),
-    sql`, `,
-  );
 
   const rows = await ex.execute<RosterRow>(sql`
     select
@@ -429,21 +420,20 @@ export async function loadRotationRoster(
       rm.weight                      as weight,
       rm.position                    as position,
       rm.active                      as active,
-      coalesce(earned.total, 0)      as earned,
+      coalesce(completed.total, 0)   as completed,
       coalesce(committed.total, 0)   as committed,
       last_assigned.at               as last_assigned_at
     from rotation_members rm
     left join lateral (
-      select sum(pl.delta) as total
-      from points_ledger pl
-      where pl.user_id = rm.user_id
-        and pl.created_at >= ${ts(windowStart)}
-        and pl.reason in (${reasons})
-    ) earned on true
-    left join lateral (
-      select sum(coalesce(o.points_override, s.points)) as total
+      select count(*) as total
       from task_occurrences o
-      join task_series s on s.id = o.series_id
+      where o.completed_by_id = rm.user_id
+        and o.status = 'done'
+        and o.completed_at >= ${ts(windowStart)}
+    ) completed on true
+    left join lateral (
+      select count(*) as total
+      from task_occurrences o
       where o.assignee_id = rm.user_id
         and o.status = 'scheduled'
         and o.due_at >= ${ts(windowStart)}
@@ -468,7 +458,7 @@ export async function loadRotationRoster(
     weight: toNumber(row.weight),
     position: row.position,
     active: row.active,
-    earned: toNumber(row.earned),
+    completed: toNumber(row.completed),
     committed: toNumber(row.committed),
     lastAssignedAt: toDate(row.last_assigned_at),
     blackouts: blackouts.get(row.user_id) ?? [],
@@ -504,20 +494,10 @@ export async function listChoreMemberWeights(ex: Executor): Promise<MemberWeight
   return rows.map((row, index) => ({ userId: row.user_id, weight: row.weight, position: index }));
 }
 
-/** Reasons that count as "points earned" on the neutral load bar. */
-const EARNED_REASONS = [
-  'chore_completed',
-  'on_time_bonus',
-  'covered_for_other',
-  'streak_bonus',
-  'swap_bonus',
-] as const;
-
 export interface FairnessRow {
   readonly userId: string;
   readonly completed: number;
   readonly committed: number;
-  readonly earned: number;
   readonly coveredForOthers: number;
 }
 
@@ -526,16 +506,16 @@ interface FairnessSqlRow {
   user_id: string;
   completed: string | number | null;
   committed: string | number | null;
-  earned: string | number | null;
   covered_for_others: string | number | null;
 }
 
 /**
- * Per-member load over a window — the numbers behind «нагрузка за неделю».
+ * Per-member load over a window — the numbers behind «как разделились дела».
  *
- * There is no ORDER BY on any of these figures and no rank column anywhere in
- * the chain: D5 is explicit that a sibling leaderboard generates arguments, not
- * chores. The UI compares each member to their *own* fair share.
+ * Counts of chores, all of them. There is no ORDER BY on any of these figures
+ * and no rank column anywhere in the chain: D5 is explicit that a sibling
+ * leaderboard generates arguments, not chores. The UI turns these into a
+ * distribution, and shows each member only against their *own* fair share.
  */
 export async function loadFairnessRows(
   ex: Executor,
@@ -548,17 +528,12 @@ export async function loadFairnessRows(
     userIds.map((id) => sql`(${id}::uuid)`),
     sql`, `,
   );
-  const reasons = sql.join(
-    EARNED_REASONS.map((r) => sql`${r}`),
-    sql`, `,
-  );
 
   const rows = await ex.execute<FairnessSqlRow>(sql`
     select
       u.id                                  as user_id,
       coalesce(done.cnt, 0)                 as completed,
-      coalesce(sched.pts, 0)                as committed,
-      coalesce(earned.total, 0)             as earned,
+      coalesce(sched.cnt, 0)                as committed,
       coalesce(cov.cnt, 0)                  as covered_for_others
     from (values ${idTuples}) as u(id)
     left join lateral (
@@ -570,22 +545,13 @@ export async function loadFairnessRows(
         and o.completed_at < ${ts(window.to)}
     ) done on true
     left join lateral (
-      select sum(coalesce(o.points_override, s.points)) as pts
+      select count(*) as cnt
       from task_occurrences o
-      join task_series s on s.id = o.series_id
       where o.assignee_id = u.id
         and o.status = 'scheduled'
         and o.due_at >= ${ts(window.from)}
         and o.due_at < ${ts(window.to)}
     ) sched on true
-    left join lateral (
-      select sum(pl.delta) as total
-      from points_ledger pl
-      where pl.user_id = u.id
-        and pl.created_at >= ${ts(window.from)}
-        and pl.created_at < ${ts(window.to)}
-        and pl.reason in (${reasons})
-    ) earned on true
     left join lateral (
       select count(*) as cnt
       from task_occurrences o
@@ -602,7 +568,6 @@ export async function loadFairnessRows(
     userId: row.user_id,
     completed: toNumber(row.completed),
     committed: toNumber(row.committed),
-    earned: toNumber(row.earned),
     coveredForOthers: toNumber(row.covered_for_others),
   }));
 }
@@ -620,7 +585,6 @@ export interface ChoreOccurrence {
   readonly id: string;
   readonly seriesId: string;
   readonly title: string;
-  readonly points: number;
   readonly status: 'scheduled' | 'done' | 'skipped' | 'cancelled';
   readonly startsAt: Date;
   readonly dueAt: Date;
@@ -636,9 +600,6 @@ const occurrenceSelection = {
   id: taskOccurrences.id,
   seriesId: taskOccurrences.seriesId,
   title: sql<string>`coalesce(${taskOccurrences.titleOverride}, ${taskSeries.title})`,
-  points: sql<number>`coalesce(${taskOccurrences.pointsOverride}, ${taskSeries.points})`.mapWith(
-    Number,
-  ),
   status: taskOccurrences.status,
   startsAt: taskOccurrences.startsAt,
   dueAt: taskOccurrences.dueAt,
@@ -677,8 +638,8 @@ export async function findOccurrences(
 
 /**
  * Rewrite the assignee only. Used by swap acceptance, which happens *before*
- * anybody has earned anything — points follow the doer at completion time, so
- * there is no ledger consequence to a reassignment (D5).
+ * the chore is done — the rotation counts a completion against whoever actually
+ * did it, so a reassignment has no consequence beyond this one column (D5).
  */
 export async function reassignOccurrence(
   ex: Executor,
@@ -715,7 +676,13 @@ export async function markOccurrenceDone(
   return rows.length > 0;
 }
 
-/** Reopen a completed occurrence. The ledger is corrected separately (D5). */
+/**
+ * Reopen a completed occurrence.
+ *
+ * Nothing else needs correcting: fairness counts `status = 'done'` rows, so
+ * moving this one out of `done` removes it from every count in the same
+ * statement.
+ */
 export async function markOccurrenceScheduled(
   ex: Executor,
   occurrenceId: string,
@@ -733,15 +700,11 @@ export async function listFutureRotationOccurrences(
   ex: Executor,
   rotationId: string,
   from: Date,
-): Promise<Array<{ id: string; startsAt: Date; points: number }>> {
+): Promise<Array<{ id: string; startsAt: Date }>> {
   return ex
     .select({
       id: taskOccurrences.id,
       startsAt: taskOccurrences.startsAt,
-      points:
-        sql<number>`coalesce(${taskOccurrences.pointsOverride}, ${taskSeries.points})`.mapWith(
-          Number,
-        ),
     })
     .from(taskOccurrences)
     .innerJoin(taskSeries, eq(taskSeries.id, taskOccurrences.seriesId))
@@ -754,207 +717,6 @@ export async function listFutureRotationOccurrences(
       ),
     )
     .orderBy(asc(taskOccurrences.startsAt), asc(taskOccurrences.id));
-}
-
-/* -------------------------------------------------------------------------- */
-/* Points ledger — append only                                                 */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Append a ledger row, losing the race silently.
- *
- * `points_ledger_award_once_uq` is a partial unique index on
- * `(occurrence_id, user_id, reason)` for `chore_completed` / `on_time_bonus`,
- * so this is the double-award guard: the *database* refuses the second award
- * rather than the service trying to be careful. `undefined` back means the row
- * already existed.
- */
-export async function insertLedgerEntry(
-  ex: Executor,
-  values: NewPointsLedgerRow,
-): Promise<PointsLedgerRow | undefined> {
-  const [row] = await ex.insert(pointsLedger).values(values).onConflictDoNothing().returning();
-  return row;
-}
-
-/** Discretionary rows (`manual_award`, `penalty`, …) sit outside the index. */
-export async function insertLedgerEntryAlways(
-  ex: Executor,
-  values: NewPointsLedgerRow,
-): Promise<PointsLedgerRow> {
-  const [row] = await ex.insert(pointsLedger).values(values).returning();
-  if (!row) throw internal('points_ledger insert returned no row');
-  return row;
-}
-
-export async function findLedgerEntry(
-  ex: Executor,
-  occurrenceId: string,
-  userId: string,
-  reason: PointsReason,
-): Promise<PointsLedgerRow | undefined> {
-  const [row] = await ex
-    .select()
-    .from(pointsLedger)
-    .where(
-      and(
-        eq(pointsLedger.occurrenceId, occurrenceId),
-        eq(pointsLedger.userId, userId),
-        eq(pointsLedger.reason, reason),
-      ),
-    )
-    .limit(1);
-  return row;
-}
-
-/** `SUM(delta)`. There is no cached balance column and adding one is a bug (D5). */
-export async function sumBalance(
-  ex: Executor,
-  userId: string,
-  window?: { from: Date; to?: Date },
-): Promise<number> {
-  const filters = [
-    eq(pointsLedger.userId, userId),
-    window ? gte(pointsLedger.createdAt, window.from) : undefined,
-    window?.to ? lt(pointsLedger.createdAt, window.to) : undefined,
-  ].filter((f) => f !== undefined);
-
-  const [row] = await ex
-    .select({ total: sql<number>`coalesce(sum(${pointsLedger.delta}), 0)`.mapWith(Number) })
-    .from(pointsLedger)
-    .where(and(...filters));
-  return row?.total ?? 0;
-}
-
-export async function listLedger(
-  ex: Executor,
-  options: {
-    limit: number;
-    cursor?: Cursor | undefined;
-    userId?: string | undefined;
-    reasons?: readonly PointsReason[] | undefined;
-    from?: Date | undefined;
-    to?: Date | undefined;
-  },
-): Promise<Array<PointsLedgerRow & { occurrenceTitle: string | null }>> {
-  const filters = [
-    options.userId ? eq(pointsLedger.userId, options.userId) : undefined,
-    options.reasons?.length ? inArray(pointsLedger.reason, [...options.reasons]) : undefined,
-    options.from ? gte(pointsLedger.createdAt, options.from) : undefined,
-    options.to ? lt(pointsLedger.createdAt, options.to) : undefined,
-    options.cursor
-      ? or(
-          lt(pointsLedger.createdAt, options.cursor.createdAt),
-          and(
-            eq(pointsLedger.createdAt, options.cursor.createdAt),
-            lt(pointsLedger.id, options.cursor.id),
-          ),
-        )
-      : undefined,
-  ].filter((f) => f !== undefined);
-
-  return ex
-    .select({
-      id: pointsLedger.id,
-      userId: pointsLedger.userId,
-      delta: pointsLedger.delta,
-      reason: pointsLedger.reason,
-      occurrenceId: pointsLedger.occurrenceId,
-      awardedById: pointsLedger.awardedById,
-      note: pointsLedger.note,
-      createdAt: pointsLedger.createdAt,
-      occurrenceTitle: sql<
-        string | null
-      >`coalesce(${taskOccurrences.titleOverride}, ${taskSeries.title})`,
-    })
-    .from(pointsLedger)
-    .leftJoin(taskOccurrences, eq(taskOccurrences.id, pointsLedger.occurrenceId))
-    .leftJoin(taskSeries, eq(taskSeries.id, taskOccurrences.seriesId))
-    .where(filters.length > 0 ? and(...filters) : undefined)
-    .orderBy(desc(pointsLedger.createdAt), desc(pointsLedger.id))
-    .limit(options.limit + 1);
-}
-
-/* -------------------------------------------------------------------------- */
-/* Streaks                                                                     */
-/* -------------------------------------------------------------------------- */
-
-export async function findStreak(ex: Executor, userId: string): Promise<UserStreakRow | undefined> {
-  const [row] = await ex.select().from(userStreaks).where(eq(userStreaks.userId, userId)).limit(1);
-  return row;
-}
-
-export async function upsertStreak(
-  ex: Executor,
-  values: { userId: string; current: number; longest: number; lastResolvedAt: Date | null },
-): Promise<UserStreakRow> {
-  const [row] = await ex
-    .insert(userStreaks)
-    .values({ ...values, updatedAt: new Date() })
-    .onConflictDoUpdate({
-      target: userStreaks.userId,
-      set: {
-        current: values.current,
-        longest: values.longest,
-        lastResolvedAt: values.lastResolvedAt,
-        updatedAt: new Date(),
-      },
-    })
-    .returning();
-  if (!row) throw internal('user_streaks upsert returned no row');
-  return row;
-}
-
-/**
- * The events a streak folds over: **assigned occurrences that reached their
- * deadline**, oldest first. Calendar days are deliberately not involved —
- * a weekly chore would break a calendar-day streak six days out of seven
- * through no fault of the person doing it.
- */
-export async function listStreakEvents(
-  ex: Executor,
-  userId: string,
-  options: { after: Date | null; until: Date; limit: number },
-): Promise<
-  Array<{
-    occurrenceId: string;
-    dueAt: Date;
-    graceMinutes: number;
-    completedAt: Date | null;
-    status: string;
-  }>
-> {
-  const filters = [
-    eq(taskOccurrences.assigneeId, userId),
-    lte(taskOccurrences.dueAt, options.until),
-    options.after ? sql`${taskOccurrences.dueAt} > ${options.after}` : undefined,
-    inArray(taskOccurrences.status, ['done', 'skipped']),
-  ].filter((f) => f !== undefined);
-
-  return ex
-    .select({
-      occurrenceId: taskOccurrences.id,
-      dueAt: taskOccurrences.dueAt,
-      graceMinutes: taskSeries.graceMinutes,
-      completedAt: taskOccurrences.completedAt,
-      status: taskOccurrences.status,
-    })
-    .from(taskOccurrences)
-    .innerJoin(taskSeries, eq(taskSeries.id, taskOccurrences.seriesId))
-    .where(and(...filters))
-    .orderBy(asc(taskOccurrences.dueAt), asc(taskOccurrences.id))
-    .limit(options.limit);
-}
-
-/** Everybody with an assignment that has come due since the last sweep. */
-export async function listUsersWithResolvedWork(ex: Executor, since: Date): Promise<string[]> {
-  const rows = await ex
-    .selectDistinct({ userId: taskOccurrences.assigneeId })
-    .from(taskOccurrences)
-    .where(
-      and(gte(taskOccurrences.dueAt, since), inArray(taskOccurrences.status, ['done', 'skipped'])),
-    );
-  return rows.map((r) => r.userId).filter((id): id is string => id !== null);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1099,7 +861,6 @@ export async function listSwaps(
       toUserId: choreSwaps.toUserId,
       status: choreSwaps.status,
       message: choreSwaps.message,
-      bonusPoints: choreSwaps.bonusPoints,
       respondedById: choreSwaps.respondedById,
       respondedAt: choreSwaps.respondedAt,
       expiresAt: choreSwaps.expiresAt,

@@ -121,7 +121,6 @@ export interface ResolvedOccurrence {
   isOverdue: boolean;
   title: string;
   notes: string | null;
-  points: number;
   category: string | null;
   visibility: TaskSeriesRow['visibility'];
   timezone: string;
@@ -160,7 +159,7 @@ function overdueExpr(now: Date | undefined): SQL<boolean> {
 }
 
 /**
- * The resolved projection. `title`/`notes`/`points` are
+ * The resolved projection. `title`/`notes` are
  * `COALESCE(override, series_value)` — resolved once, here, in SQL.
  */
 function occurrenceSelection(now: Date | undefined) {
@@ -177,9 +176,6 @@ function occurrenceSelection(now: Date | undefined) {
     isOverdue: overdueExpr(now),
     title: sql<string>`coalesce(${taskOccurrences.titleOverride}, ${taskSeries.title})`,
     notes: sql<string | null>`coalesce(${taskOccurrences.notesOverride}, ${taskSeries.notes})`,
-    points: sql<number>`coalesce(${taskOccurrences.pointsOverride}, ${taskSeries.points})`.mapWith(
-      Number,
-    ),
     category: taskSeries.category,
     visibility: taskSeries.visibility,
     timezone: taskSeries.timezone,
@@ -729,7 +725,6 @@ export async function claimIfUnassigned(
 export interface OccurrenceOverridePatch {
   readonly titleOverride?: string | null;
   readonly notesOverride?: string | null;
-  readonly pointsOverride?: number | null;
   readonly startsAt?: Date;
   readonly dueAt?: Date;
   readonly localDate?: string;

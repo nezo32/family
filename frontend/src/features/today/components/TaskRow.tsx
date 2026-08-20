@@ -1,7 +1,7 @@
 import { Check } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { formatDuration } from '@/shared/lib/format';
-import { TODAY_RU, pointCount } from '../locale';
+import { TODAY_RU } from '../locale';
 import type { DashboardTask } from '../types';
 
 /**
@@ -56,7 +56,6 @@ export function TaskRow(props: {
         <p className="truncate text-sm font-medium text-foreground">{task.title}</p>
         <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
           <span className={cn(props.overdue && 'text-destructive')}>{when}</span>
-          {task.points > 0 ? <span>· {pointCount(task.points)}</span> : null}
         </p>
       </div>
     </li>

@@ -2,16 +2,9 @@ import { useState } from 'react';
 import { CalendarClock, Lock } from 'lucide-react';
 import type { RecurrenceView } from '@family/shared';
 import { Button } from '@/shared/ui/button';
-import { Input } from '@/shared/ui/input';
-import { Label } from '@/shared/ui/label';
+import { DateTimeField } from '@/shared/ui/date-time-field';
 import { TASKS_RU } from '../locale';
-import {
-  joinFloating,
-  ONCE,
-  scheduleFromView,
-  splitFloating,
-  type ScheduleValue,
-} from '../recurrence';
+import { ONCE, scheduleFromView, type ScheduleValue } from '../recurrence';
 import { RecurrenceBuilder } from './RecurrenceBuilder';
 
 /**
@@ -37,7 +30,6 @@ export function ScheduleField(props: {
 }) {
   const custom = props.view != null && scheduleFromView(props.view) === null;
   const [replacing, setReplacing] = useState(false);
-  const { date, time } = splitFloating(props.dtstartLocal);
 
   if (props.locked) {
     return (
@@ -81,34 +73,14 @@ export function ScheduleField(props: {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-1.5">
-          <Label htmlFor="task-date">{TASKS_RU.form.date}</Label>
-          <Input
-            id="task-date"
-            type="date"
-            value={date}
-            disabled={props.disabled}
-            onChange={(event) => {
-              props.onDtstartChange(joinFloating(event.target.value, time));
-            }}
-            className="h-11 text-base"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="task-time">{TASKS_RU.form.time}</Label>
-          <Input
-            id="task-time"
-            type="time"
-            value={time}
-            disabled={props.disabled}
-            onChange={(event) => {
-              props.onDtstartChange(joinFloating(date, event.target.value));
-            }}
-            className="h-11 text-base"
-          />
-        </div>
-      </div>
+      <DateTimeField
+        idPrefix="task"
+        dateLabel={TASKS_RU.form.date}
+        timeLabel={TASKS_RU.form.time}
+        value={props.dtstartLocal}
+        disabled={props.disabled}
+        onChange={props.onDtstartChange}
+      />
 
       <RecurrenceBuilder
         value={props.value}

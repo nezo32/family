@@ -6,7 +6,6 @@ CREATE TYPE "public"."visibility" AS ENUM('household', 'private', 'restricted');
 CREATE TYPE "public"."assigned_via" AS ENUM('rotation', 'manual', 'swap', 'claimed');--> statement-breakpoint
 CREATE TYPE "public"."event_source_kind" AS ENUM('manual', 'user_birthday', 'imported_ics');--> statement-breakpoint
 CREATE TYPE "public"."rsvp_status" AS ENUM('pending', 'yes', 'no', 'maybe');--> statement-breakpoint
-CREATE TYPE "public"."points_reason" AS ENUM('chore_completed', 'covered_for_other', 'on_time_bonus', 'streak_bonus', 'manual_award', 'redeemed', 'penalty', 'swap_bonus');--> statement-breakpoint
 CREATE TYPE "public"."rotation_strategy" AS ENUM('round_robin', 'weighted_balance', 'fixed', 'anyone');--> statement-breakpoint
 CREATE TYPE "public"."swap_status" AS ENUM('pending', 'accepted', 'declined', 'cancelled', 'expired');--> statement-breakpoint
 CREATE TYPE "public"."goal_status" AS ENUM('active', 'reached', 'archived', 'cancelled');--> statement-breakpoint
@@ -129,7 +128,6 @@ CREATE TABLE "task_occurrences" (
 	"is_exception" boolean DEFAULT false NOT NULL,
 	"title_override" text,
 	"notes_override" text,
-	"points_override" integer,
 	"assignee_id" uuid,
 	"assigned_via" "assigned_via",
 	"completed_by_id" uuid,
@@ -156,7 +154,6 @@ CREATE TABLE "task_series" (
 	"grace_minutes" integer DEFAULT 0 NOT NULL,
 	"rotation_id" uuid,
 	"default_assignee_id" uuid,
-	"points" integer DEFAULT 0 NOT NULL,
 	"category" text,
 	"auto_cancel_after_days" integer,
 	"supersedes_series_id" uuid,
@@ -225,7 +222,6 @@ CREATE TABLE "chore_swaps" (
 	"to_user_id" uuid,
 	"status" "swap_status" DEFAULT 'pending' NOT NULL,
 	"message" text,
-	"bonus_points" integer DEFAULT 0 NOT NULL,
 	"responded_by_id" uuid,
 	"responded_at" timestamp with time zone,
 	"expires_at" timestamp with time zone,
@@ -239,17 +235,6 @@ CREATE TABLE "kudos" (
 	"occurrence_id" uuid,
 	"emoji" text DEFAULT '👏' NOT NULL,
 	"message" text,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE "points_ledger" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"user_id" uuid NOT NULL,
-	"delta" integer NOT NULL,
-	"reason" "points_reason" NOT NULL,
-	"occurrence_id" uuid,
-	"awarded_by_id" uuid,
-	"note" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
@@ -281,14 +266,6 @@ CREATE TABLE "user_blackouts" (
 	"ends_at" timestamp with time zone NOT NULL,
 	"reason" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE "user_streaks" (
-	"user_id" uuid PRIMARY KEY NOT NULL,
-	"current" integer DEFAULT 0 NOT NULL,
-	"longest" integer DEFAULT 0 NOT NULL,
-	"last_resolved_at" timestamp with time zone,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
@@ -577,13 +554,9 @@ ALTER TABLE "chore_swaps" ADD CONSTRAINT "chore_swaps_responded_by_id_users_id_f
 ALTER TABLE "kudos" ADD CONSTRAINT "kudos_from_user_id_users_id_fk" FOREIGN KEY ("from_user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "kudos" ADD CONSTRAINT "kudos_to_user_id_users_id_fk" FOREIGN KEY ("to_user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "kudos" ADD CONSTRAINT "kudos_occurrence_id_task_occurrences_id_fk" FOREIGN KEY ("occurrence_id") REFERENCES "public"."task_occurrences"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "points_ledger" ADD CONSTRAINT "points_ledger_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "points_ledger" ADD CONSTRAINT "points_ledger_occurrence_id_task_occurrences_id_fk" FOREIGN KEY ("occurrence_id") REFERENCES "public"."task_occurrences"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "points_ledger" ADD CONSTRAINT "points_ledger_awarded_by_id_users_id_fk" FOREIGN KEY ("awarded_by_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "rotation_members" ADD CONSTRAINT "rotation_members_rotation_id_rotations_id_fk" FOREIGN KEY ("rotation_id") REFERENCES "public"."rotations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "rotation_members" ADD CONSTRAINT "rotation_members_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "user_blackouts" ADD CONSTRAINT "user_blackouts_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "user_streaks" ADD CONSTRAINT "user_streaks_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "goal_milestones" ADD CONSTRAINT "goal_milestones_goal_id_savings_goals_id_fk" FOREIGN KEY ("goal_id") REFERENCES "public"."savings_goals"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "goal_transactions" ADD CONSTRAINT "goal_transactions_goal_id_savings_goals_id_fk" FOREIGN KEY ("goal_id") REFERENCES "public"."savings_goals"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "goal_transactions" ADD CONSTRAINT "goal_transactions_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
@@ -653,8 +626,6 @@ CREATE INDEX "chore_swaps_from_user_idx" ON "chore_swaps" USING btree ("from_use
 CREATE INDEX "chore_swaps_occurrence_idx" ON "chore_swaps" USING btree ("occurrence_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "kudos_from_occurrence_emoji_uq" ON "kudos" USING btree ("from_user_id","occurrence_id","emoji");--> statement-breakpoint
 CREATE INDEX "kudos_to_user_idx" ON "kudos" USING btree ("to_user_id","created_at");--> statement-breakpoint
-CREATE INDEX "points_ledger_user_created_idx" ON "points_ledger" USING btree ("user_id","created_at");--> statement-breakpoint
-CREATE UNIQUE INDEX "points_ledger_award_once_uq" ON "points_ledger" USING btree ("occurrence_id","user_id","reason") WHERE "points_ledger"."occurrence_id" is not null and "points_ledger"."reason" in ('chore_completed', 'on_time_bonus');--> statement-breakpoint
 CREATE UNIQUE INDEX "rotation_members_rotation_user_uq" ON "rotation_members" USING btree ("rotation_id","user_id");--> statement-breakpoint
 CREATE INDEX "rotation_members_rotation_position_idx" ON "rotation_members" USING btree ("rotation_id","position");--> statement-breakpoint
 CREATE UNIQUE INDEX "rotations_name_uq" ON "rotations" USING btree ("name");--> statement-breakpoint

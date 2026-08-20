@@ -1,6 +1,12 @@
-import { Check, CloudOff, Trash2 } from 'lucide-react';
+import { Check, CloudOff, MoreVertical, Pencil, Trash2 } from 'lucide-react';
 import type { ShoppingItemResponse } from '@family/shared';
 import { Button } from '@/shared/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/shared/ui/dropdown-menu';
 import { cn } from '@/shared/lib/utils';
 import { formatNumber } from '@/shared/lib/format';
 import { SHOPPING_RU } from '../locale';
@@ -19,6 +25,21 @@ import { SHOPPING_RU } from '../locale';
  * - **`touch-action: manipulation`** kills the 300ms double-tap-zoom delay.
  * - **no horizontal overflow at 320px**: the name truncates, everything else
  *   is `shrink-0`.
+ *
+ * ## Editing without spoiling the tap
+ *
+ * «Изменить» and «Удалить» share one 44px overflow control on the far side —
+ * the same footprint the bare delete button used to occupy. That is deliberate:
+ * the row's whole job is to be an unmissable «купил» target, and every extra
+ * control on it is width taken from the thing people actually tap. Putting the
+ * edit affordance *inside* the row (an inline field, or tap-to-tick /
+ * long-press-to-edit) would make the common action ambiguous in order to serve
+ * the rare one. One menu costs one extra tap for a correction nobody makes
+ * mid-aisle, and costs the tick nothing.
+ *
+ * In shop mode the menu disappears entirely, exactly as the delete button did:
+ * that mode is for walking, and the row grows to 68px because a moving trolley
+ * is the constraint.
  */
 export function ItemRow(props: {
   item: ShoppingItemResponse;
@@ -27,9 +48,13 @@ export function ItemRow(props: {
   shopMode: boolean;
   canWrite: boolean;
   onToggle: (item: ShoppingItemResponse, bought: boolean) => void;
+  onEdit?: (item: ShoppingItemResponse) => void;
   onDelete?: (item: ShoppingItemResponse) => void;
 }) {
   const { item, shopMode, canWrite } = props;
+  const onEdit = props.onEdit;
+  const onDelete = props.onDelete;
+  const showMenu = canWrite && !shopMode && (onEdit !== undefined || onDelete !== undefined);
   const bought = item.state === 'bought';
   const quantity = formatQuantity(item);
 
@@ -101,19 +126,45 @@ export function ItemRow(props: {
         </span>
       </button>
 
-      {props.onDelete && canWrite && !shopMode ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          aria-label={SHOPPING_RU.deleteItem}
-          className="my-1 mr-1 size-11 shrink-0 self-center text-muted-foreground hover:text-destructive"
-          onClick={() => {
-            props.onDelete?.(item);
-          }}
-        >
-          <Trash2 className="size-4" aria-hidden />
-        </Button>
+      {showMenu ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={SHOPPING_RU.itemActions}
+              className="my-1 mr-1 size-11 shrink-0 self-center text-muted-foreground"
+            >
+              <MoreVertical className="size-4" aria-hidden />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-48">
+            {onEdit ? (
+              <DropdownMenuItem
+                className="min-h-11"
+                onSelect={() => {
+                  onEdit(item);
+                }}
+              >
+                <Pencil className="size-4" aria-hidden />
+                {SHOPPING_RU.editItem}
+              </DropdownMenuItem>
+            ) : null}
+            {onDelete ? (
+              <DropdownMenuItem
+                variant="destructive"
+                className="min-h-11"
+                onSelect={() => {
+                  onDelete(item);
+                }}
+              >
+                <Trash2 className="size-4" aria-hidden />
+                {SHOPPING_RU.deleteItem}
+              </DropdownMenuItem>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
       ) : null}
     </li>
   );

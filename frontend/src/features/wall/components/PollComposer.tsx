@@ -10,6 +10,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/shared/ui/dialog';
+import { DateTimeField } from '@/shared/ui/date-time-field';
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { Switch } from '@/shared/ui/switch';
@@ -154,15 +155,12 @@ export function PollComposer() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="poll-closes">{WALL_RU.polls.closesAt}</Label>
-            <Input
-              id="poll-closes"
-              type="datetime-local"
+            <DateTimeField
+              idPrefix="poll-closes"
+              dateLabel={WALL_RU.polls.closesAt}
               value={closesAtLocal}
-              onChange={(event) => {
-                setClosesAtLocal(event.target.value);
-              }}
-              className="text-base"
+              clearable
+              onChange={setClosesAtLocal}
             />
             <p className="text-xs text-muted-foreground">{WALL_RU.polls.closesAtHint}</p>
           </div>

@@ -43,7 +43,7 @@ function TaskGroupSection(props: {
         </span>
       </div>
       <p className="text-xs text-muted-foreground">{TASKS_RU.groupHint[props.group]}</p>
-      <ul className="grid gap-2 lg:grid-cols-2 xl:grid-cols-3">
+      <ul className="grid gap-2">
         {props.occurrences.map((occurrence) => (
           <TaskCard key={occurrence.id} occurrence={occurrence} members={props.members} />
         ))}

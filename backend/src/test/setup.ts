@@ -41,6 +41,24 @@ process.env.JWT_REFRESH_SECRET ??= TEST_SECRET;
 process.env.COOKIE_SECRET ??= TEST_SECRET;
 process.env.ENCRYPTION_KEY ??= TEST_SECRET;
 
+/**
+ * Object storage for the avatar suite.
+ *
+ * Gated on `TEST_S3_ENDPOINT` being offered explicitly, exactly like
+ * `TEST_DATABASE_URL`: with it unset, `config.storage.enabled` stays false, the
+ * app boots without an S3 client and `avatar.integration.test.ts` skips itself.
+ * It has to be done **here** rather than in the test file, because `getApp()`
+ * builds one app for the whole run and `getConfig()` memoizes on its first
+ * call — whichever suite happens to run first would otherwise freeze a config
+ * with no storage in it.
+ */
+if (process.env.TEST_S3_ENDPOINT) {
+  process.env.S3_ENDPOINT ??= process.env.TEST_S3_ENDPOINT;
+  process.env.S3_ACCESS_KEY_ID ??= process.env.TEST_S3_ACCESS_KEY_ID ?? 'family';
+  process.env.S3_SECRET_ACCESS_KEY ??= process.env.TEST_S3_SECRET_ACCESS_KEY ?? 'familysecret';
+  process.env.S3_BUCKET ??= process.env.TEST_S3_BUCKET ?? 'family-media-test';
+}
+
 process.env.ENABLE_WORKERS ??= 'false';
 process.env.ENABLE_SWAGGER ??= 'false';
 // `silent` is a valid pino level but NOT a member of the LOG_LEVEL enum in

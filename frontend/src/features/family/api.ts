@@ -1,9 +1,7 @@
 import { z } from 'zod';
 import {
-  fairnessSummaryResponseSchema,
   publicUserSchema,
   taskOccurrenceListResponseSchema,
-  type FairnessSummaryResponse,
   type TaskOccurrenceResponse,
   type UpdateMemberRequest,
 } from '@family/shared';
@@ -32,12 +30,12 @@ import { api } from '@/shared/api/client';
  * projection yet (only `selfUserSchema` has it). It is rendered when present
  * and silently skipped when not — noted in the handover for the contract owner.
  *
- * ### Two endpoints this screen wants that do not exist yet
+ * ### An endpoint this screen wants that does not exist yet
  *
- * `GET /chores/fairness` and `GET /tasks/occurrences` are specified in
- * `docs/architecture/scheduling.md` §7 but not implemented. Both are treated as
- * strictly optional enrichment: the load bar and the "ближайшие дела" list
- * degrade to a quiet line of text, and the roster itself never depends on them.
+ * `GET /tasks/occurrences` is specified in `docs/architecture/scheduling.md` §7
+ * but not implemented. It is treated as strictly optional enrichment: the
+ * "ближайшие дела" list degrades to a quiet line of text, and the roster itself
+ * never depends on it.
  */
 
 /* -------------------------------------------------------------------------- */
@@ -50,7 +48,6 @@ export const MEMBER_KEY_ROOT = ['members'] as const;
 export const familyKeys = {
   all: MEMBER_KEY_ROOT,
   roster: () => [...MEMBER_KEY_ROOT, 'roster'] as const,
-  load: (windowDays: number) => [...MEMBER_KEY_ROOT, 'load', windowDays] as const,
   upcoming: (memberId: string) => [...MEMBER_KEY_ROOT, 'upcoming', memberId] as const,
 };
 
@@ -82,23 +79,6 @@ export type Roster = z.infer<typeof rosterSchema>;
 export async function fetchRoster(signal?: AbortSignal): Promise<Roster> {
   const raw = await api.get<unknown>('/members', signal ? { signal } : {});
   return rosterSchema.parse(raw);
-}
-
-/**
- * The neutral load numbers (D5). `windowDays: 7` is "эта неделя".
- *
- * Note what the response deliberately does not contain: a rank. Every consumer
- * of this data compares a member to their own `fairShare`, never to each other.
- */
-export async function fetchWeeklyLoad(
-  windowDays: number,
-  signal?: AbortSignal,
-): Promise<FairnessSummaryResponse> {
-  const raw = await api.get<unknown>('/chores/fairness', {
-    query: { windowDays },
-    ...(signal ? { signal } : {}),
-  });
-  return fairnessSummaryResponseSchema.parse(raw);
 }
 
 /** The next few scheduled chores for one member — the detail sheet's body. */

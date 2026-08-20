@@ -3,12 +3,12 @@ import { PLURALS, pluralize } from '@/shared/lib/i18n';
 /**
  * Every user-facing string of the «Семья» section (D7).
  *
- * The tone rule that shapes this whole file comes from **D5**: load is
- * surfaced as a neutral statement of fact, never as a competition. There is no
- * "лучший", no "место", no "больше всех" anywhere below, and there must never
- * be — a leaderboard of siblings produces arguments, not clean rooms. Each
- * member is compared to *their own* fair share, and the phrasing stays flat
- * whichever side of it they are on.
+ * The tone rule that shapes this whole file comes from **D5**: this screen says
+ * who is in the family and what each person's role is, and it attaches no
+ * number to anybody. There is no "лучший", no "место", no "больше всех" and no
+ * score anywhere below, and there must never be — a leaderboard of siblings
+ * produces arguments, not clean rooms. The week's split of the housework is a
+ * family-level picture and lives on the chores screen.
  */
 export const FAMILY_RU = {
   title: 'Семья',
@@ -22,16 +22,6 @@ export const FAMILY_RU = {
   birthdayPrefix: 'День рождения',
   birthdayToday: 'День рождения сегодня 🎂',
   birthdayInDays: 'День рождения через',
-
-  /* weekly load ----------------------------------------------------------- */
-  loadTitle: 'Нагрузка за неделю',
-  loadHint: 'Сравниваем с личной нормой, а не друг с другом.',
-  loadShareLabel: 'Своя доля недели',
-  loadDone: 'сделано',
-  loadPlanned: 'запланировано',
-  loadEmpty: 'На этой неделе дел за этим участником не закреплено.',
-  loadUnavailable: 'Нагрузка за неделю пока недоступна.',
-  loadBarLabel: 'Доля недели',
 
   /* member sheet ---------------------------------------------------------- */
   sheetUpcoming: 'Ближайшие дела',
@@ -80,5 +70,4 @@ export const FAMILY_RU = {
 
 export const memberCount = (n: number): string => pluralize(n, PLURALS.member);
 export const choreCount = (n: number): string => pluralize(n, PLURALS.chore);
-export const pointCount = (n: number): string => pluralize(n, PLURALS.point);
 export const dayCount = (n: number): string => pluralize(n, PLURALS.day);

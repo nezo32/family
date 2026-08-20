@@ -21,6 +21,8 @@ import { cn } from '@/shared/lib/utils';
 import { ROLE_LABELS_RU } from '@family/shared';
 import { THEME_LABELS_RU, useTheme, type ThemeMode } from '../theme-provider';
 import { NAV_ITEMS, isNavItemActive } from './nav-items';
+import { usePageSlots } from './page-slots';
+import { SHELL_BAR_CONTAINER, SHELL_GUTTER } from './measures';
 
 /**
  * Top app bar: page title, notification bell, avatar menu.
@@ -29,6 +31,19 @@ import { NAV_ITEMS, isNavItemActive } from './nav-items';
  * `env(safe-area-inset-top)` because `apple-mobile-web-app-status-bar-style` is
  * `black-translucent` — the app paints under the status bar and has to make
  * room for it itself.
+ *
+ * ## On `≥ md` this bar is band 1 (§C4)
+ *
+ * It used to be 1200×57 holding a section title on the left and two icon
+ * buttons on the right, with a thousand pixels of nothing in between, while the
+ * page below repeated the same word as its `<h1>` and put its primary action a
+ * further 80px down. From `md` up the bar now carries the **page** title and
+ * the screen's action, hoisted out of `PageHeader` by a portal, and its inner
+ * container tracks the content container exactly — so the title starts on the
+ * main column's left edge and the avatar ends on the side column's right edge.
+ *
+ * The nav-derived section name is the fallback: it shows while a lazy route is
+ * still loading, and on the few screens that render no `PageHeader` at all.
  */
 export function TopAppBar(props: {
   /**
@@ -43,6 +58,7 @@ export function TopAppBar(props: {
   const navigate = useNavigate();
   const { data: me } = useMe();
   const { theme, setTheme } = useTheme();
+  const slots = usePageSlots();
 
   const active = NAV_ITEMS.find((item) => isNavItemActive(item, location.pathname));
   const title = active?.label ?? 'Семья';
@@ -50,16 +66,32 @@ export function TopAppBar(props: {
 
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-background/90 pt-safe backdrop-blur-md">
-      <div className="flex h-appbar items-center gap-2 px-4">
+      <div className={cn('flex h-appbar items-center gap-2', SHELL_GUTTER, SHELL_BAR_CONTAINER)}>
         {/*
-          `md:hidden`, not always-on. Below `md` this bar is the only wayfinding
-          there is, so it names the section. From `md` up the sidebar already
-          highlights the active item and the page renders the same words again as
-          its `<h1>` — three copies of «Настройки» stacked down the left edge.
+          Below `md` this bar is the only wayfinding there is, so it names the
+          section — and only the section: the page repeats the same words as its
+          `<h1>` right underneath, and the sidebar is not there to help.
         */}
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-base font-semibold tracking-tight md:hidden">{title}</h2>
+        <div className="min-w-0 flex-1 md:hidden">
+          <h2 className="truncate text-base font-semibold tracking-tight">{title}</h2>
         </div>
+
+        {/*
+          Band 1 on `≥ md`. `display: contents` on the slot so the portalled
+          `<h1>` becomes a flex child of this row directly — an empty wrapper
+          would otherwise eat a `gap` on every screen that publishes no title.
+        */}
+        <div className="hidden min-w-0 flex-1 items-center gap-3 md:flex">
+          <div ref={slots.setAppBarTitle} className="contents" />
+          {!slots.hasPageTitle ? (
+            <h1 className="min-w-0 flex-1 truncate text-[17px] leading-6 font-semibold tracking-tight">
+              {title}
+            </h1>
+          ) : null}
+        </div>
+
+        {/* The screen's one primary action (§C2 band 1), hoisted by `PageHeader`. */}
+        <div ref={slots.setAppBarActions} className="contents" />
 
         <Button
           variant="ghost"

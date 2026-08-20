@@ -10,6 +10,7 @@ import {
   Trash2,
   Users,
 } from 'lucide-react';
+import { SideColumn } from '@/app/layout/SideColumn';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
@@ -132,137 +133,135 @@ export default function GoalDetailPage() {
         }
       />
 
-      <div className="grid gap-5 pb-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-        <div className="space-y-5">
-          {/* ---- hero ------------------------------------------------- */}
-          <Card className="overflow-hidden">
-            <CardContent className="flex flex-col items-center gap-5 pt-6 text-center sm:flex-row sm:text-left">
-              <ProgressRing
-                percent={percent}
-                size={140}
-                thickness={12}
-                color={accent}
-                caption={reached ? GOALS_RU.statusReached : GOALS_RU.progressLabel}
-              />
-              <div className="min-w-0 flex-1 space-y-3">
-                {/* Same rule as `GoalCard`: the goal's colour identifies the
+      <div className="min-w-0 space-y-5 pb-6">
+        {/* ---- hero ------------------------------------------------- */}
+        <Card className="overflow-hidden">
+          <CardContent className="flex flex-col items-center gap-5 pt-6 text-center sm:flex-row sm:text-left">
+            <ProgressRing
+              percent={percent}
+              size={140}
+              thickness={12}
+              color={accent}
+              caption={reached ? GOALS_RU.statusReached : GOALS_RU.progressLabel}
+            />
+            <div className="min-w-0 flex-1 space-y-3">
+              {/* Same rule as `GoalCard`: the goal's colour identifies the
                     goal on the ring, it does not paint the headline figure.
                     A seeded sky-blue on the biggest number of the screen is
                     both the least legible text here and a different brand. */}
-                <p className="flex flex-wrap items-baseline justify-center gap-x-2 sm:justify-start">
-                  <span
-                    className="text-3xl font-semibold text-foreground tabular-nums"
-                    data-testid="goal-current-amount"
-                  >
-                    {formatMoney(goal.currentAmount)}
-                  </span>
-                  <span className="text-sm text-muted-foreground">
-                    {GOALS_RU.of} {formatMoney(goal.targetAmount)}
-                  </span>
-                </p>
+              <p className="flex flex-wrap items-baseline justify-center gap-x-2 sm:justify-start">
+                <span
+                  className="text-3xl font-semibold text-foreground tabular-nums"
+                  data-testid="goal-current-amount"
+                >
+                  {formatMoney(goal.currentAmount)}
+                </span>
+                <span className="text-sm text-muted-foreground">
+                  {GOALS_RU.of} {formatMoney(goal.targetAmount)}
+                </span>
+              </p>
 
-                <p className="text-sm text-muted-foreground">
-                  {reached ? (
-                    GOALS_RU.remainingDone
-                  ) : (
-                    <>
-                      {GOALS_RU.remaining}:{' '}
-                      <span className="font-medium tabular-nums text-foreground">
-                        {formatMoney(remaining)}
-                      </span>
-                    </>
-                  )}
-                </p>
-
-                <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
-                  <Badge variant="secondary" className="gap-1 font-normal">
-                    <Users className="size-3" aria-hidden />
-                    {goal.ownerId === null ? GOALS_RU.sharedGoal : GOALS_RU.personalGoal}
-                  </Badge>
-                  {goal.visibility === 'private' ? (
-                    <Badge variant="outline" className="font-normal">
-                      {GOALS_RU.privateGoal}
-                    </Badge>
-                  ) : null}
-                  <Badge variant="outline" className="font-normal">
-                    {GOAL_STATUS_RU[goal.status]}
-                  </Badge>
-                  <Badge variant="outline" className="gap-1 font-normal">
-                    <CalendarDays className="size-3" aria-hidden />
-                    {goal.deadline
-                      ? `${formatDateLong(`${goal.deadline}T00:00:00.000Z`)}${
-                          days === null ? '' : ` · ${daysLeftLabel(days)}`
-                        }`
-                      : GOALS_RU.noDeadline}
-                  </Badge>
-                </div>
-
-                {abilities.canContribute ? (
-                  <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
-                    <Button
-                      className="h-11 flex-1 gap-1.5 sm:flex-none"
-                      onClick={() => {
-                        setLedgerMode('contribute');
-                      }}
-                    >
-                      <Plus className="size-4" aria-hidden />
-                      {GOALS_RU.contribute}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="h-11 flex-1 gap-1.5 sm:flex-none"
-                      onClick={() => {
-                        setLedgerMode('withdraw');
-                      }}
-                    >
-                      <ArrowDownLeft className="size-4" aria-hidden />
-                      {GOALS_RU.withdraw}
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-            </CardContent>
-
-            {reached ? (
-              <div
-                className={cn(
-                  'flex items-center gap-3 border-t border-success/30 bg-success/10 px-6 py-4',
+              <p className="text-sm text-muted-foreground">
+                {reached ? (
+                  GOALS_RU.remainingDone
+                ) : (
+                  <>
+                    {GOALS_RU.remaining}:{' '}
+                    <span className="font-medium tabular-nums text-foreground">
+                      {formatMoney(remaining)}
+                    </span>
+                  </>
                 )}
-              >
-                <PartyPopper className="size-5 shrink-0 text-success" aria-hidden />
-                <div>
-                  <p className="font-medium text-success">{GOALS_RU.reachedBanner}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {GOALS_RU.reachedBannerDescription}
-                  </p>
-                </div>
+              </p>
+
+              <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
+                <Badge variant="secondary" className="gap-1 font-normal">
+                  <Users className="size-3" aria-hidden />
+                  {goal.ownerId === null ? GOALS_RU.sharedGoal : GOALS_RU.personalGoal}
+                </Badge>
+                {goal.visibility === 'private' ? (
+                  <Badge variant="outline" className="font-normal">
+                    {GOALS_RU.privateGoal}
+                  </Badge>
+                ) : null}
+                <Badge variant="outline" className="font-normal">
+                  {GOAL_STATUS_RU[goal.status]}
+                </Badge>
+                <Badge variant="outline" className="gap-1 font-normal">
+                  <CalendarDays className="size-3" aria-hidden />
+                  {goal.deadline
+                    ? `${formatDateLong(`${goal.deadline}T00:00:00.000Z`)}${
+                        days === null ? '' : ` · ${daysLeftLabel(days)}`
+                      }`
+                    : GOALS_RU.noDeadline}
+                </Badge>
               </div>
-            ) : null}
-          </Card>
 
-          {/* ---- milestones -------------------------------------------- */}
-          <Card>
-            <CardContent className="pt-6">
-              <MilestoneTimeline goal={goal} canManage={abilities.canManage} />
-            </CardContent>
-          </Card>
+              {abilities.canContribute ? (
+                <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
+                  <Button
+                    className="h-11 flex-1 gap-1.5 sm:flex-none"
+                    onClick={() => {
+                      setLedgerMode('contribute');
+                    }}
+                  >
+                    <Plus className="size-4" aria-hidden />
+                    {GOALS_RU.contribute}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-11 flex-1 gap-1.5 sm:flex-none"
+                    onClick={() => {
+                      setLedgerMode('withdraw');
+                    }}
+                  >
+                    <ArrowDownLeft className="size-4" aria-hidden />
+                    {GOALS_RU.withdraw}
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+          </CardContent>
 
-          {/* ---- chart -------------------------------------------------- */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">{GOALS_RU.chartTitle}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {transactions.isPending ? (
-                <Skeleton className="h-48 w-full" />
-              ) : (
-                <ContributionChart goal={goal} transactions={rows} />
+          {reached ? (
+            <div
+              className={cn(
+                'flex items-center gap-3 border-t border-success/30 bg-success/10 px-6 py-4',
               )}
-            </CardContent>
-          </Card>
-        </div>
+            >
+              <PartyPopper className="size-5 shrink-0 text-success" aria-hidden />
+              <div>
+                <p className="font-medium text-success">{GOALS_RU.reachedBanner}</p>
+                <p className="text-sm text-muted-foreground">{GOALS_RU.reachedBannerDescription}</p>
+              </div>
+            </div>
+          ) : null}
+        </Card>
 
-        {/* ---- side column --------------------------------------------- */}
+        {/* ---- milestones -------------------------------------------- */}
+        <Card>
+          <CardContent className="pt-6">
+            <MilestoneTimeline goal={goal} canManage={abilities.canManage} />
+          </CardContent>
+        </Card>
+
+        {/* ---- chart -------------------------------------------------- */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">{GOALS_RU.chartTitle}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {transactions.isPending ? (
+              <Skeleton className="h-48 w-full" />
+            ) : (
+              <ContributionChart goal={goal} transactions={rows} />
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* ---- side column: the shell's, not a nested grid of ours (§C1) ---- */}
+      <SideColumn>
         <div className="space-y-5">
           <Card>
             <CardHeader>
@@ -296,7 +295,7 @@ export default function GoalDetailPage() {
             </CardContent>
           </Card>
         </div>
-      </div>
+      </SideColumn>
 
       {abilities.canContribute && ledgerMode !== null ? (
         <ContributeDialog

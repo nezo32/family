@@ -61,6 +61,26 @@ beforeAll(() => {
   if (!Element.prototype.releasePointerCapture) {
     Element.prototype.releasePointerCapture = vi.fn();
   }
+  // vaul captures the pointer on every `pointerdown` inside a drawer, so
+  // without this *any* click in a bottom sheet throws.
+  if (!Element.prototype.setPointerCapture) {
+    Element.prototype.setPointerCapture = vi.fn();
+  }
+
+  // jsdom resolves an unset `transform` to the empty string; every real browser
+  // resolves it to `none`. vaul reads it on pointer-release
+  // (`style.transform || style.webkitTransform || style.mozTransform`), so ''
+  // falls through to `undefined` and it crashes on `.match()`. Answering `none`
+  // is what a browser would say, and it keeps sheet tests free of an uncaught
+  // exception that has nothing to do with the component under test.
+  const nativeGetComputedStyle = window.getComputedStyle.bind(window);
+  window.getComputedStyle = ((element: Element, pseudoElement?: string | null) => {
+    const style = nativeGetComputedStyle(element, pseudoElement ?? undefined);
+    if (style.transform === '') {
+      Object.defineProperty(style, 'transform', { configurable: true, value: 'none' });
+    }
+    return style;
+  }) as typeof window.getComputedStyle;
 
   // `AppShell` scroll restoration.
   window.scrollTo = vi.fn() as unknown as typeof window.scrollTo;

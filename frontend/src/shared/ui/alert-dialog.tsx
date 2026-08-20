@@ -58,11 +58,23 @@ function AlertDialogContent({
         data-slot="alert-dialog-content"
         data-size={size}
         className={cn(
-          "group/alert-dialog-content fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg duration-200 data-[size=sm]:max-w-xs data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[size=default]:sm:max-w-lg",
+          "group/alert-dialog-content fixed top-[calc(50%_+_(env(safe-area-inset-top,0px)_-_env(safe-area-inset-bottom,0px))_/_2)] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg duration-200 data-[size=sm]:max-w-xs data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[size=default]:sm:max-w-lg",
           // Same reason as `DialogContent`: the push pre-prompt is four
           // paragraphs and a short landscape phone has to be able to reach the
           // buttons.
-          "max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain",
+                    // Safe areas. A dialog is centred on the *viewport*, but in the
+          // installed PWA the viewport runs under the status bar (59px on an
+          // iPhone 15) and the home indicator (34px). Two changes, both needed:
+          //
+          //  - the centre moves down by half the difference between the insets,
+          //    so the free space left over is shared evenly between the two
+          //    bars rather than all of it landing at the bottom;
+          //  - the height ceiling counts the insets out, so a tall form cannot
+          //    grow its own title underneath the clock.
+          //
+          // A screen that overrides `max-h-*` opts out of the second half; the
+          // first half still keeps its padding clear of the status bar.
+          "max-h-[calc(100dvh_-_env(safe-area-inset-top,0px)_-_env(safe-area-inset-bottom,0px)_-_2rem)] overflow-y-auto overscroll-contain",
           className
         )}
         {...props}

@@ -125,7 +125,6 @@ function member(overrides: Partial<MemberRow> & Pick<MemberRow, 'id' | 'displayN
 function task(overrides: Partial<TaskRow> & Pick<TaskRow, 'id' | 'title' | 'dueAt'>): TaskRow {
   return {
     seriesId: `series-${overrides.id}`,
-    points: 5,
     category: null,
     assigneeId: ADULT_ID,
     graceMinutes: 0,
@@ -405,7 +404,7 @@ describe('permission gating of the aggregate', () => {
           milestoneSortOrder: 0,
         },
       ],
-      load: [{ userId: ADULT_ID, doneCount: 3, points: 15 }],
+      load: [{ userId: ADULT_ID, doneCount: 3 }],
       members: [
         member({ id: ADULT_ID, displayName: 'Аня', role: 'adult' }),
         member({ id: CHILD_ID, displayName: 'Маша', role: 'child' }),
@@ -612,8 +611,8 @@ describe('fairness is a load bar, never a leaderboard (D5)', () => {
       member({ id: CHILD_ID, displayName: 'Маша' }),
     ];
     const load: LoadRow[] = [
-      { userId: TEEN_ID, doneCount: 9, points: 40 },
-      { userId: ADULT_ID, doneCount: 1, points: 5 },
+      { userId: TEEN_ID, doneCount: 9 },
+      { userId: ADULT_ID, doneCount: 1 },
     ];
     const fairness = buildFairness({ userId: ADULT_ID, displayName: 'Аня' }, members, load, {
       weekStart: '2026-08-17',
@@ -696,8 +695,6 @@ describe('Russian pluralisation', () => {
     expect(countRu(1, RU_PLURALS.birthday)).toBe('1 день рождения');
     expect(countRu(5, RU_PLURALS.birthday)).toBe('5 дней рождения');
     expect(countRu(2, RU_PLURALS.event)).toBe('2 события');
-    expect(countRu(11, RU_PLURALS.point)).toBe('11 баллов');
-    expect(countRu(21, RU_PLURALS.point)).toBe('21 балл');
     expect(countRu(12, RU_PLURALS.year)).toBe('12 лет');
     expect(countRu(21, RU_PLURALS.year)).toBe('21 год');
     // Indeclinable — and that is the correct Russian, not a bug.
@@ -763,7 +760,7 @@ const ALL_SECTIONS: DigestSection[] = [
   'goals',
   'shopping',
   'wall',
-  'points',
+  'load',
 ];
 
 describe('digest composition', () => {
@@ -859,16 +856,19 @@ describe('digest composition', () => {
     const digest = composeDigest(
       digestData({
         load: [
-          { userId: ADULT_ID, doneCount: 21, points: 11 },
-          { userId: TEEN_ID, doneCount: 1, points: 2 },
+          { userId: ADULT_ID, doneCount: 21 },
+          { userId: TEEN_ID, doneCount: 1 },
         ],
       }),
-      ['points'],
+      ['load'],
       NOW,
     );
-    const points = digest.blocks[0];
-    expect(points?.lines[0]).toBe('Вы закрыли 21 задачу и набрали 11 баллов.');
-    expect(points?.lines[1]).toBe('Вся семья за неделю — 22 задачи.');
+    // Two counts of chores and nothing else. There was a «и набрали 11 баллов»
+    // on the end of the first line until D5 deleted the score (see the
+    // decision record); the sentence is deliberately shorter now.
+    const load = digest.blocks[0];
+    expect(load?.lines[0]).toBe('Вы закрыли 21 задачу.');
+    expect(load?.lines[1]).toBe('Вся семья за неделю — 22 задачи.');
   });
 
   it('drops an unknown section rather than crashing on a stale text[] row', () => {
@@ -1067,7 +1067,7 @@ describe('the weekly digest is sent at most once per (user, week)', () => {
           userId: CHILD_ID,
           displayName: 'Маша',
           role: 'child',
-          sections: ['tasks', 'goals', 'points'],
+          sections: ['tasks', 'goals', 'load'],
         }),
       ],
       goals: [

@@ -109,7 +109,6 @@ export function TaskForm(props: {
       graceMinutes: series?.graceMinutes ?? 0,
       rotationId: series?.rotationId ?? null,
       defaultAssigneeId: series?.defaultAssigneeId ?? null,
-      points: series?.points ?? 0,
       category: series?.category ?? null,
       autoCancelAfterDays: series?.autoCancelAfterDays ?? null,
     }),
@@ -168,37 +167,18 @@ export function TaskForm(props: {
         <FieldMessage error={errors.notes} />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <Label htmlFor="task-category">{TASKS_RU.form.category}</Label>
-          <Input
-            id="task-category"
-            placeholder={TASKS_RU.form.categoryPlaceholder}
-            autoComplete="off"
-            className="h-11 text-base"
-            {...form.register('category', {
-              setValueAs: (value: string) => (value === '' ? null : value),
-            })}
-          />
-          <FieldMessage error={errors.category} />
-        </div>
-
-        <div className="space-y-1.5">
-          <Label htmlFor="task-points">{TASKS_RU.form.points}</Label>
-          <Input
-            id="task-points"
-            type="number"
-            inputMode="numeric"
-            min={0}
-            max={1000}
-            className="h-11 text-base"
-            {...form.register('points', {
-              setValueAs: (value: string) => (value === '' ? 0 : Number(value)),
-            })}
-          />
-          <p className="text-xs text-muted-foreground">{TASKS_RU.form.pointsHint}</p>
-          <FieldMessage error={errors.points} />
-        </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="task-category">{TASKS_RU.form.category}</Label>
+        <Input
+          id="task-category"
+          placeholder={TASKS_RU.form.categoryPlaceholder}
+          autoComplete="off"
+          className="h-11 text-base"
+          {...form.register('category', {
+            setValueAs: (value: string) => (value === '' ? null : value),
+          })}
+        />
+        <FieldMessage error={errors.category} />
       </div>
 
       {can('task:assign') ? (

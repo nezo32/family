@@ -236,11 +236,10 @@ const taskSeriesFields = {
   visibility: visibilitySchema.default('household'),
   /** Minutes from start to deadline; added in wall-clock terms. */
   dueOffsetMinutes: z.number().int().min(0).max(60 * 24 * 30).default(0),
-  /** Lateness tolerated before a completion loses its on-time bonus. */
+  /** Lateness tolerated before a chore reads as overdue. */
   graceMinutes: z.number().int().min(0).max(60 * 24 * 7).default(0),
   rotationId: idSchema.nullish(),
   defaultAssigneeId: idSchema.nullish(),
-  points: z.number().int().min(0).max(1000).default(0),
   category: z.string().max(64).nullish(),
   autoCancelAfterDays: z.number().int().min(1).max(365).nullish(),
 };
@@ -268,7 +267,6 @@ export const taskSeriesUpdateSchema = z
     graceMinutes: z.number().int().min(0).max(60 * 24 * 7).optional(),
     rotationId: idSchema.nullish(),
     defaultAssigneeId: idSchema.nullish(),
-    points: z.number().int().min(0).max(1000).optional(),
     category: z.string().max(64).nullish(),
     autoCancelAfterDays: z.number().int().min(1).max(365).nullish(),
     /** Omit to keep the schedule. Present => the schedule itself is changing. */
@@ -303,7 +301,6 @@ export const taskSeriesResponseSchema = z.object({
   graceMinutes: z.number().int(),
   rotationId: idSchema.nullable(),
   defaultAssigneeId: idSchema.nullable(),
-  points: z.number().int(),
   category: z.string().nullable(),
   autoCancelAfterDays: z.number().int().nullable(),
   supersedesSeriesId: idSchema.nullable(),
@@ -353,7 +350,6 @@ export const taskOccurrenceResponseSchema = z.object({
   /** Already resolved: the override if present, otherwise the series value. */
   title: z.string(),
   notes: z.string().nullable(),
-  points: z.number().int(),
   category: z.string().nullable(),
   visibility: visibilitySchema,
 
@@ -395,7 +391,6 @@ export const taskCalendarQuerySchema = calendarRangeSchema;
 export const taskOccurrenceUpdateSchema = z.object({
   titleOverride: z.string().max(200).nullish(),
   notesOverride: z.string().max(4000).nullish(),
-  pointsOverride: z.number().int().min(0).max(1000).nullish(),
   /** Move this instance. Its `occurrenceKey` does **not** change. */
   startsLocal: floatingDateTimeSchema.optional(),
 });
@@ -403,8 +398,9 @@ export type TaskOccurrenceUpdate = z.infer<typeof taskOccurrenceUpdateSchema>;
 
 /**
  * Completion. `completedById` defaults to the caller; an adult may complete on
- * behalf of a child (`task:complete:any`), and the points then follow the
- * person named here, not the assignee (D5).
+ * behalf of a child (`task:complete:any`), and the chore is then credited to
+ * the person named here, not the assignee (D5) — credited only in the sense
+ * that the rotation counts it towards their share of the work.
  */
 export const taskCompleteSchema = z.object({
   completedById: idSchema.optional(),

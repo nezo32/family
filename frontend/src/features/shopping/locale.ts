@@ -28,6 +28,38 @@ export const SHOPPING_RU = {
   counters: (needed: number, total: number) =>
     `${formatCountRu(needed)} из ${pluralize(total, PLURALS.lineItem)}`,
 
+  /* list management ------------------------------------------------------ */
+  listActions: 'Действия со списком',
+  editList: 'Изменить список',
+  editListDescription: 'Название, значок и цвет видит вся семья.',
+  listIconLabel: 'Значок',
+  listColorLabel: 'Цвет',
+  listUpdated: 'Изменения сохранены',
+  archiveList: 'Убрать в архив',
+  unarchiveList: 'Вернуть из архива',
+  listArchivedToast: 'Список убран в архив',
+  listUnarchivedToast: 'Список снова в работе',
+  showArchived: 'Показать архив',
+  hideArchived: 'Скрыть архив',
+  archiveEmpty: 'В архиве пока пусто — списки, которые вы уберёте туда, будут ждать здесь.',
+  deleteList: 'Удалить список',
+  deleteListTitle: (name: string) => `Удалить «${name}»?`,
+  /**
+   * The count is the whole point of this sentence.
+   *
+   * `DELETE /shopping/lists/:id` answers `{ ok: true }`, takes no `confirm`
+   * flag and reports nothing — unlike `clear-bought`, which does both. So the
+   * number the user is warned about is the list's own `totalCount`, the same
+   * figure the card already shows, and the warning has to be shown *before* the
+   * request, because the server will not stop us.
+   */
+  deleteListBody: (n: number) =>
+    n === 0
+      ? 'Список пуст — удалить его насовсем? Отменить нельзя.'
+      : `В списке ${pluralize(n, PLURALS.lineItem)}. Удалить вместе со списком? Отменить нельзя.`,
+  deleteListArchiveHint: 'Если список ещё пригодится — уберите его в архив, он никуда не денется.',
+  listDeleted: 'Список удалён',
+
   /* items ---------------------------------------------------------------- */
   itemsEmptyTitle: 'Список пуст',
   itemsEmptyDescription: 'Напишите, что купить — по одному товару в строке.',
@@ -43,12 +75,38 @@ export const SHOPPING_RU = {
   clearBoughtEmpty: 'Купленного пока нет',
   cleared: 'Купленное убрано',
   deleteItem: 'Удалить позицию',
+  itemActions: 'Действия с позицией',
+  editItem: 'Изменить позицию',
+  editItemDescription: 'Что именно купить, сколько и в каком отделе искать.',
+  itemNameLabel: 'Название',
+  itemQuantityLabel: 'Сколько',
+  itemUnitLabel: 'Единица',
+  itemUnitPlaceholder: 'шт, кг, л',
+  itemCategoryLabel: 'Отдел',
+  itemCategoryPlaceholder: 'молочное',
+  itemCategoryHint: 'По отделам список выстраивается в порядке обхода магазина.',
+  itemNoteLabel: 'Заметка',
+  itemNotePlaceholder: 'Какой именно',
+  itemUrgentLabel: 'Срочно',
+  itemUrgentHint: 'Поднимем позицию наверх списка.',
+  itemUpdated: 'Позиция изменена',
+  itemQuantityInvalid: 'Количество — число больше нуля.',
   markBought: 'Отметить купленным',
   markNeeded: 'Вернуть в список',
 
   /* quick add ------------------------------------------------------------ */
   quickAddLabel: 'Что купить',
-  quickAddPlaceholder: '2 кг картошки\nмолоко 3 шт\nхлеб',
+  /*
+   * One line, and short enough to fit on one line at 320px.
+   *
+   * This used to be a three-line example («2 кг картошки» / «молоко 3 шт» /
+   * «хлеб») in a box that sizes itself to its *content* — and an empty field
+   * has no content. The third line was sliced in half by the bottom edge on the
+   * device, and because a placeholder renders at the same size as a typed item
+   * it read as a broken list rather than as a hint. The multi-line example
+   * lives in `quickAddHint` below, where it cannot be mistaken for data.
+   */
+  quickAddPlaceholder: 'Например, 2 кг картошки',
   quickAddHint: 'По одному товару в строке. Можно с количеством: «2 кг картошки».',
   quickAddSubmit: 'Добавить',
   quickAddCount: (n: number) => `Добавим ${pluralize(n, PLURALS.lineItemAccusative)}`,

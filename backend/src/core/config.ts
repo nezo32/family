@@ -35,6 +35,18 @@ const envSchema = z
       .default('info'),
     /** Comma-separated extra origins allowed by CORS (dev tooling, LAN testing). */
     CORS_EXTRA_ORIGINS: z.string().default(''),
+    /**
+     * Multiplies every rate limit. **Ignored in production**, where it is
+     * forced to 1.
+     *
+     * Exists for automated end-to-end runs: the access token lives in memory
+     * only, so each fresh browser context has to call `POST /auth/refresh`, and
+     * a suite that opens ~90 contexts in under a minute trips the 60/minute cap
+     * and goes red for a reason that has nothing to do with the code. A real
+     * family generates roughly one refresh a minute, so the shipped limits are
+     * not the problem — the harness is.
+     */
+    RATE_LIMIT_FACTOR: z.coerce.number().int().min(1).max(1000).default(1),
 
     // --- Data stores ---
     DATABASE_URL: z.string().url(),
@@ -66,6 +78,25 @@ const envSchema = z
     TELEGRAM_BOT_USERNAME: z.string().default(''),
     TELEGRAM_CLIENT_SECRET: z.string().default(''),
 
+    // --- Object storage (S3-compatible; RustFS in the reference stack) ---
+    /**
+     * Base URL of the S3 API, e.g. `http://rustfs:9000`. Empty disables
+     * storage entirely — the app still boots and uploads answer 503.
+     */
+    S3_ENDPOINT: z.string().default(''),
+    /** RustFS ignores the region, but the SDK refuses to sign without one. */
+    S3_REGION: z.string().default('us-east-1'),
+    S3_ACCESS_KEY_ID: z.string().default(''),
+    S3_SECRET_ACCESS_KEY: z.string().default(''),
+    S3_BUCKET: z.string().default('family-media'),
+    /**
+     * Mandatory for every non-AWS implementation: virtual-hosted style would
+     * resolve `family-media.rustfs` in DNS, which does not exist.
+     */
+    S3_FORCE_PATH_STYLE: bool(true),
+    /** Hard server-side cap on an uploaded avatar, in bytes. */
+    AVATAR_MAX_BYTES: z.coerce.number().int().positive().default(2 * 1024 * 1024),
+
     // --- Bootstrap ---
     /** The first user signing in with this email is auto-approved as `owner`. */
     BOOTSTRAP_OWNER_EMAIL: z.string().default(''),
@@ -86,6 +117,11 @@ const envSchema = z
     return {
       ...env,
       isProduction: env.NODE_ENV === 'production',
+      /**
+       * Never let a stray env var weaken production. The knob is a test
+       * affordance; in production the shipped limits are the limits.
+       */
+      rateLimitFactor: env.NODE_ENV === 'production' ? 1 : env.RATE_LIMIT_FACTOR,
       isTest: env.NODE_ENV === 'test',
       isDevelopment: env.NODE_ENV === 'development',
 
@@ -118,6 +154,27 @@ const envSchema = z
         publicKey: env.VAPID_PUBLIC_KEY,
         privateKey: env.VAPID_PRIVATE_KEY,
         subject: env.VAPID_SUBJECT,
+      },
+
+      /**
+       * Object storage, same shape as `oauth` and `push`: an `enabled` flag
+       * plus the settings, so a deployment that has not configured RustFS
+       * still boots and simply refuses uploads (503) instead of crashing at
+       * startup. All four values are required — a half-configured client
+       * fails at request time with an opaque signing error, which is a far
+       * worse way to learn that `S3_SECRET_ACCESS_KEY` was never set.
+       */
+      storage: {
+        enabled: Boolean(
+          env.S3_ENDPOINT && env.S3_ACCESS_KEY_ID && env.S3_SECRET_ACCESS_KEY && env.S3_BUCKET,
+        ),
+        endpoint: env.S3_ENDPOINT,
+        region: env.S3_REGION,
+        accessKeyId: env.S3_ACCESS_KEY_ID,
+        secretAccessKey: env.S3_SECRET_ACCESS_KEY,
+        bucket: env.S3_BUCKET,
+        forcePathStyle: env.S3_FORCE_PATH_STYLE,
+        avatarMaxBytes: env.AVATAR_MAX_BYTES,
       },
     };
   });

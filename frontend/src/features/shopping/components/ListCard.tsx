@@ -1,15 +1,24 @@
 import { Link } from 'react-router-dom';
-import { ChevronRight, ShoppingBasket } from 'lucide-react';
+import { ShoppingBasket } from 'lucide-react';
 import type { ShoppingListResponse } from '@family/shared';
 import { cn } from '@/shared/lib/utils';
 import { displayEmoji } from '@/shared/lib/emoji';
 import { SHOPPING_RU } from '../locale';
+import { ListActionsMenu } from './ListActionsMenu';
 
 /**
  * One list on the overview screen.
  *
- * A whole-card `<Link>` rather than a card with a link inside it: the target is
- * the entire 72px row, which is what a thumb in a coat pocket actually hits.
+ * The `<Link>` still covers everything that is not a control: the target is the
+ * whole 72px row, which is what a thumb in a coat pocket actually hits. The
+ * overflow menu is a **sibling** of the link rather than a button inside it —
+ * nesting an interactive element in an anchor is invalid, and every tap on the
+ * menu would also have navigated.
+ *
+ * It replaces the chevron rather than joining it. Two 44px controls plus the
+ * badge plus the icon leave the name about forty pixels to live in at 320px,
+ * and the row is obviously tappable without an arrow drawn on it.
+ *
  * The needed-count is the number people scan for, so it gets the accent colour
  * and the larger type; the total is context.
  */
@@ -19,13 +28,18 @@ export function ListCard(props: { list: ShoppingListResponse; to: string }) {
   // `spray-can`, which rendered as clipped text inside the coloured circle.
   const emoji = displayEmoji(list.icon);
   return (
-    <li>
+    <li
+      className={cn(
+        'flex min-h-18 items-center rounded-xl border border-border bg-card pr-1.5',
+        'focus-within:ring-[3px] focus-within:ring-ring/50',
+        list.isArchived && 'opacity-60',
+      )}
+    >
       <Link
         to={props.to}
         className={cn(
-          'flex min-h-18 items-center gap-3 rounded-xl border border-border bg-card px-3 py-2.5',
-          'touch-manipulation no-callout outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
-          list.isArchived && 'opacity-60',
+          'flex min-h-18 min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2.5',
+          'touch-manipulation no-callout outline-none',
         )}
       >
         <span
@@ -54,8 +68,10 @@ export function ListCard(props: { list: ShoppingListResponse; to: string }) {
             {list.neededCount}
           </span>
         ) : null}
-        <ChevronRight className="size-5 shrink-0 text-muted-foreground" aria-hidden />
       </Link>
+
+      {/* Renders nothing at all without `shopping:list:manage`. */}
+      <ListActionsMenu list={list} />
     </li>
   );
 }

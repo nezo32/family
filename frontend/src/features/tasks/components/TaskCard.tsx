@@ -7,7 +7,6 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { cn } from '@/shared/lib/utils';
 import { formatTime } from '@/shared/lib/format';
-import { PLURALS, pluralize } from '@/shared/lib/i18n';
 import { TASKS_RU } from '../locale';
 import { taskDetailPath } from '../routes';
 import { useClaimOccurrence, useCompleteOccurrence, useUncompleteOccurrence } from '../hooks';
@@ -127,9 +126,6 @@ export function TaskCard(props: {
           <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             <span>{formatTime(occurrence.startsAt)}</span>
             {occurrence.category ? <span>{occurrence.category}</span> : null}
-            {occurrence.points > 0 ? (
-              <span>{pluralize(occurrence.points, PLURALS.point)}</span>
-            ) : null}
           </span>
 
           <span className="mt-2 flex flex-wrap items-center gap-2">

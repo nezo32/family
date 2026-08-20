@@ -13,6 +13,8 @@ import type {
   ProductSuggestion,
   ShoppingItemResponse,
   ShoppingListResponse,
+  UpdateShoppingItem,
+  UpdateShoppingList,
 } from '@family/shared';
 import { useCan } from '@/shared/auth/use-can';
 import { notify } from '@/shared/lib/toast';
@@ -23,12 +25,15 @@ import {
   createItem,
   createList,
   deleteItem,
+  deleteList,
   fetchFrequentProducts,
   fetchItems,
   fetchLists,
   fetchProductSuggestions,
   shoppingKeys,
   toggleItem,
+  updateItem,
+  updateList,
 } from './api';
 import {
   EMPTY_ITEMS,
@@ -411,6 +416,156 @@ export function useCreateList(): UseMutationResult<
   });
 }
 
+/* --- the lists cache, which is more than one query ------------------------ */
+
+/**
+ * Every cached `lists` query, with the `includeArchived` its key was built for.
+ *
+ * There are two of them in a normal session: the overview asks for
+ * `includeArchived: false`, `ListPage` asks for `true` so that opening an
+ * archived list still shows its name. A rename that patched only the query the
+ * current screen happens to read would leave the other one printing the old
+ * name until something refetched it, which on a warm cache is "never".
+ */
+function listsQueries(qc: QueryClient): { key: readonly unknown[]; includeArchived: boolean }[] {
+  return qc
+    .getQueryCache()
+    .findAll({ queryKey: shoppingKeys.lists() })
+    .map((query) => {
+      const last = query.queryKey.at(-1);
+      const includeArchived =
+        typeof last === 'object' && last !== null && 'includeArchived' in last
+          ? Boolean((last as { includeArchived: unknown }).includeArchived)
+          : false;
+      return { key: query.queryKey, includeArchived };
+    });
+}
+
+type ListsSnapshot = readonly (readonly [readonly unknown[], ShoppingListResponse[] | undefined])[];
+
+function snapshotLists(qc: QueryClient): ListsSnapshot {
+  return listsQueries(qc).map(
+    ({ key }) => [key, qc.getQueryData<ShoppingListResponse[]>(key)] as const,
+  );
+}
+
+function restoreLists(qc: QueryClient, snapshot: ListsSnapshot | undefined): void {
+  for (const [key, data] of snapshot ?? []) qc.setQueryData(key, data);
+}
+
+/**
+ * Apply a patch to one row without letting `undefined` through.
+ *
+ * `UpdateShoppingList` is a partial with nullable members, so a plain
+ * `{ ...list, ...patch }` writes `icon: undefined` over a perfectly good icon
+ * the moment somebody renames a list without touching the icon field.
+ */
+function mergeList(list: ShoppingListResponse, patch: UpdateShoppingList): ShoppingListResponse {
+  return {
+    ...list,
+    ...(patch.name !== undefined && { name: patch.name }),
+    ...(patch.icon !== undefined && { icon: patch.icon ?? null }),
+    ...(patch.color !== undefined && { color: patch.color ?? null }),
+    ...(patch.isArchived !== undefined && { isArchived: patch.isArchived }),
+    ...(patch.sortOrder !== undefined && { sortOrder: patch.sortOrder }),
+  };
+}
+
+/**
+ * Rename, recolour, archive, unarchive — one `PATCH`, applied optimistically.
+ *
+ * Optimistic is safe here in the way it is not for a delete: every field is
+ * reversible, the previous value is held for the rollback, and the worst
+ * failure case is a name that flickers back to what it was under an error
+ * toast. Archiving is included on purpose — the card leaving the screen the
+ * instant you tap «Убрать в архив» is the whole point of choosing archive over
+ * delete, and a round-trip's worth of hesitation there makes the gentle option
+ * feel like the slow one.
+ *
+ * A list that is archived vanishes from the `includeArchived: false` query
+ * rather than sitting there wearing an «В архиве» label, which is what a plain
+ * field patch would have left behind.
+ */
+export function useUpdateList(
+  listId: string,
+): UseMutationResult<ShoppingListResponse, unknown, UpdateShoppingList, ListsSnapshot> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: UpdateShoppingList) => updateList(listId, body),
+    onMutate: async (body) => {
+      // An in-flight refetch that resolves after this write would undo it.
+      await qc.cancelQueries({ queryKey: shoppingKeys.lists() });
+      const previous = snapshotLists(qc);
+
+      for (const { key, includeArchived } of listsQueries(qc)) {
+        qc.setQueryData<ShoppingListResponse[]>(key, (lists) => {
+          if (lists === undefined) return lists;
+          const next = lists.map((list) =>
+            list.id === listId ? mergeList(list, body) : list,
+          );
+          return includeArchived ? next : next.filter((list) => !list.isArchived);
+        });
+      }
+
+      return previous;
+    },
+    onError: (error, _body, previous) => {
+      restoreLists(qc, previous);
+      notify.error(error);
+    },
+    onSuccess: (row) => {
+      for (const { key, includeArchived } of listsQueries(qc)) {
+        qc.setQueryData<ShoppingListResponse[]>(key, (lists) => {
+          if (lists === undefined) return lists;
+          const next = lists.map((list) => (list.id === row.id ? row : list));
+          return includeArchived ? next : next.filter((list) => !list.isArchived);
+        });
+      }
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: shoppingKeys.lists() });
+    },
+  });
+}
+
+/**
+ * Delete a list and everything on it.
+ *
+ * **Not optimistic, deliberately.** Every other write on this screen takes the
+ * row away first and apologises later, because the worst case is one line of
+ * «молоко» that has to be retyped. Here the worst case is a shared list the
+ * whole family was adding to, and there is no undo on the server — so the card
+ * stays exactly where it is until the API has confirmed the deletion. A failed
+ * delete therefore leaves the screen untouched; the only thing the user sees is
+ * the mapped Russian error.
+ *
+ * The confirmation is entirely the client's job. `DELETE /shopping/lists/:id`
+ * has no `confirm` flag (that is `clear-bought`) and returns `{ ok: true }`
+ * rather than a count, so the "и 12 позиций вместе с ним" warning is built from
+ * the list's own `totalCount` before the request goes out.
+ */
+export function useDeleteList(listId: string): UseMutationResult<{ ok: true }, unknown, void> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => deleteList(listId),
+    onSuccess: () => {
+      for (const { key } of listsQueries(qc)) {
+        qc.setQueryData<ShoppingListResponse[]>(key, (lists) =>
+          lists?.filter((list) => list.id !== listId),
+        );
+      }
+      // The items are gone server-side (`list_id` cascades); keeping their
+      // cache entry would let a stale `/shopping/:listId` render a full list.
+      qc.removeQueries({ queryKey: shoppingKeys.items(listId) });
+      notify.success(SHOPPING_RU.listDeleted);
+      void qc.invalidateQueries({ queryKey: shoppingKeys.lists() });
+    },
+    onError: (error) => {
+      notify.error(error);
+    },
+  });
+}
+
 export function useClearBought(listId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -443,6 +598,75 @@ export function useDeleteItem(listId: string) {
       void qc.invalidateQueries({ queryKey: shoppingKeys.lists() });
     },
   });
+}
+
+/**
+ * Edit one line: name, quantity, unit, отдел, note, urgency.
+ *
+ * ## Why this is not queued like an add or a toggle
+ *
+ * Adds and toggles go through the outbox because they happen *in the shop*,
+ * where the signal dies — and because both are idempotent on a `clientId`, so a
+ * replay is harmless. An edit is neither. It is a correction made at the
+ * kitchen table («три килограмма, не два»), and replaying a stale field patch
+ * over somebody else's later correction is exactly the silent data loss the
+ * queue exists to avoid. `PATCH /shopping/items/:id` is last-write-wins with no
+ * idempotency key, so it stays on the online path and fails loudly.
+ *
+ * Optimistic with a rollback, like {@link useDeleteItem}: the row is the thing
+ * the user is looking at, and a corrected quantity that appears half a second
+ * later reads as a dropped tap.
+ */
+export function useUpdateItem(
+  listId: string,
+): UseMutationResult<
+  ShoppingItemResponse,
+  unknown,
+  { itemId: string; body: UpdateShoppingItem },
+  { previous: ItemsCache | undefined }
+> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ itemId, body }: { itemId: string; body: UpdateShoppingItem }) =>
+      updateItem(itemId, body),
+    onMutate: ({ itemId, body }) => {
+      const previous = qc.getQueryData<ItemsCache>(itemsKey(listId));
+      const current = previous?.items.find((row) => row.id === itemId);
+      if (current !== undefined) {
+        qc.setQueryData<ItemsCache>(itemsKey(listId), (cache) =>
+          upsertItem(cache, mergeItem(current, body)),
+        );
+      }
+      return { previous };
+    },
+    onError: (error, _variables, context) => {
+      if (context?.previous) qc.setQueryData(itemsKey(listId), context.previous);
+      notify.error(error);
+    },
+    onSuccess: (row) => {
+      // The server may have filled in a category from `product_catalog`, so the
+      // row it returns wins over the one we guessed.
+      qc.setQueryData<ItemsCache>(itemsKey(row.listId), (cache) => upsertItem(cache, row));
+      notify.success(SHOPPING_RU.itemUpdated);
+      void qc.invalidateQueries({ queryKey: shoppingKeys.lists() });
+    },
+  });
+}
+
+/**
+ * Same `undefined`-safety as {@link mergeList}: a partial patch must not blank
+ * the fields it does not mention.
+ */
+function mergeItem(item: ShoppingItemResponse, patch: UpdateShoppingItem): ShoppingItemResponse {
+  return {
+    ...item,
+    ...(patch.name !== undefined && { name: patch.name }),
+    ...(patch.quantity !== undefined && { quantity: patch.quantity ?? null }),
+    ...(patch.unit !== undefined && { unit: patch.unit ?? null }),
+    ...(patch.category !== undefined && { category: patch.category ?? null }),
+    ...(patch.note !== undefined && { note: patch.note ?? null }),
+    ...(patch.isUrgent !== undefined && { isUrgent: patch.isUrgent }),
+  };
 }
 
 /* -------------------------------------------------------------------------- */

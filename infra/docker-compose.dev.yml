@@ -25,6 +25,8 @@ volumes:
     name: family_pg_data_dev
   redis_data_dev:
     name: family_redis_data_dev
+  rustfs_data_dev:
+    name: family_rustfs_data_dev
 
 services:
   postgres:
@@ -77,3 +79,46 @@ services:
       timeout: 5s
       retries: 20
       start_period: 5s
+
+  # Object storage for avatars. Unlike production this publishes its ports —
+  # the backend runs on the host under `pnpm dev` and has to reach it, and the
+  # console on :9001 is genuinely useful when you want to see what landed in
+  # the bucket. Loopback-bound, same reasoning as postgres above.
+  #
+  #     docker compose -f infra/docker-compose.dev.yml up -d rustfs
+  #
+  # Matching host-side env for `backend/.env`:
+  #     S3_ENDPOINT=http://127.0.0.1:9000
+  #     S3_ACCESS_KEY_ID=family
+  #     S3_SECRET_ACCESS_KEY=familysecret
+  #     S3_BUCKET=family-media
+  #
+  # The credentials are the same shape as production so nobody discovers
+  # signing for the first time on the VDI; they are not secrets here.
+  rustfs:
+    image: rustfs/rustfs:1.0.0-rc.2
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:${S3_PORT:-9000}:9000'
+      - '127.0.0.1:${S3_CONSOLE_PORT:-9001}:9001'
+    environment:
+      # `RUSTFS_ACCESS_KEY`/`RUSTFS_SECRET_KEY` — see the production file for
+      # why the `RUSTFS_ROOT_*` aliases are the wrong ones to use.
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY_ID:-family}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_ACCESS_KEY:-familysecret}
+      RUSTFS_ADDRESS: ':9000'
+      RUSTFS_CONSOLE_ADDRESS: ':9001'
+      RUSTFS_CONSOLE_ENABLE: 'true'
+      RUSTFS_REGION: ${S3_REGION:-us-east-1}
+      RUSTFS_OBS_LOG_DIRECTORY: ''
+      RUSTFS_OBS_LOGGER_LEVEL: warn
+      RUSTFS_CHECK_UPDATES: 'false'
+      TZ: ${TZ:-Europe/Moscow}
+    volumes:
+      - rustfs_data_dev:/data
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', '-o', '/dev/null', 'http://127.0.0.1:9000/health']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s

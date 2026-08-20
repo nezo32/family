@@ -20,7 +20,7 @@ import { sql, type SQL } from 'drizzle-orm';
  * it lands at query time — so it surfaced as a 500 on endpoints that had already
  * committed their write. It killed every occurrence read, chore rotation
  * creation, the weekly digest, every notification receipt ack, event reminders
- * and streak refresh.
+ * and the fairness window.
  *
  * ## Rule
  *

@@ -318,8 +318,9 @@ const tasksRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
         tags: ['tasks'],
         summary: 'Отметить выполнение',
         description:
-          'Идемпотентно: повторный запрос возвращает ту же задачу и не начисляет ' +
-          'очки второй раз. Очки получает тот, кто выполнил, а не тот, кому назначено.',
+          'Идемпотентно: повторный запрос возвращает ту же задачу и ничего не ' +
+          'записывает второй раз. Дело засчитывается тому, кто его сделал, ' +
+          'а не тому, кому оно было назначено.',
         params: idParamsSchema,
         body: taskCompleteSchema,
         response: { 200: taskOccurrenceResponseSchema },
@@ -334,7 +335,7 @@ const tasksRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
       config: TASK_ROUTE_ACCESS['POST /tasks/occurrences/:id/uncomplete'],
       schema: {
         tags: ['tasks'],
-        summary: 'Отменить выполнение (компенсирующие записи в реестре очков)',
+        summary: 'Отменить выполнение (дело перестаёт засчитываться)',
         params: idParamsSchema,
         body: uncompleteBodySchema,
         response: { 200: taskOccurrenceResponseSchema },

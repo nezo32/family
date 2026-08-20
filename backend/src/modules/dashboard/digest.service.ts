@@ -652,7 +652,7 @@ const EMPTY_LINES: Readonly<Record<DigestSection, string>> = {
   goals: 'Копилки пока стоят на месте — ничего страшного, неделя впереди.',
   shopping: 'Список покупок пуст — всё уже куплено.',
   wall: 'На стене за неделю тихо.',
-  points: 'Баллов на этой неделе никто ещё не набрал.',
+  load: 'На этой неделе дел пока никто не закрывал.',
   birthdays: 'Дней рождения на неделе нет.',
 };
 
@@ -780,24 +780,28 @@ function buildWall(data: DigestData): SectionResult {
   return { block: block('wall', lines), highlights: [] };
 }
 
-function buildPoints(data: DigestData): SectionResult {
-  if (!data.load) return { block: block('points', []), highlights: [] };
+/**
+ * «Как разделились дела» — two sentences, both counts of chores.
+ *
+ * Your own number and the family's total, and deliberately nothing in between:
+ * no score, no per-sibling breakdown, nothing to compare yourself against
+ * (D5).
+ */
+function buildLoad(data: DigestData): SectionResult {
+  if (!data.load) return { block: block('load', []), highlights: [] };
 
   const lines: string[] = [];
   const mine = data.load.find((l) => l.userId === data.actorId);
   const totalDone = data.load.reduce((n, l) => n + l.doneCount, 0);
 
-  if (mine && (mine.doneCount > 0 || mine.points !== 0)) {
-    lines.push(
-      `Вы закрыли ${countRu(mine.doneCount, RU_PLURALS.taskAccusative)} ` +
-        `и набрали ${countRu(mine.points, RU_PLURALS.point)}.`,
-    );
+  if (mine && mine.doneCount > 0) {
+    lines.push(`Вы закрыли ${countRu(mine.doneCount, RU_PLURALS.taskAccusative)}.`);
   }
   if (totalDone > 0) {
     // Neutral, aggregate, never a ranking (D5).
     lines.push(`Вся семья за неделю — ${countRu(totalDone, RU_PLURALS.task)}.`);
   }
-  return { block: block('points', lines), highlights: [] };
+  return { block: block('load', lines), highlights: [] };
 }
 
 const BUILDERS: Readonly<Record<DigestSection, (data: DigestData) => SectionResult>> = {
@@ -806,7 +810,7 @@ const BUILDERS: Readonly<Record<DigestSection, (data: DigestData) => SectionResu
   goals: buildGoals,
   shopping: buildShopping,
   wall: buildWall,
-  points: buildPoints,
+  load: buildLoad,
   birthdays: buildBirthdays,
 };
 
@@ -817,7 +821,7 @@ const SUMMARY_ORDER: readonly DigestSection[] = [
   'tasks',
   'shopping',
   'goals',
-  'points',
+  'load',
   'wall',
 ];
 
@@ -926,8 +930,8 @@ export function actorForSubscriber(subscriber: DigestSubscriber): DashboardActor
  * Reads everything the requested sections need, and **only** what they need.
  *
  * The forward window (`[today, today+7)`) drives tasks, events and birthdays;
- * the trailing window (`[today-7, today)`) drives points, the wall and the
- * week's contributions. Mixing the two is how a digest ends up congratulating
+ * the trailing window (`[today-7, today)`) drives the load split, the wall and
+ * the week's contributions. Mixing the two is how a digest ends up congratulating
  * you for chores you have not done yet.
  */
 export async function gatherDigestData(
@@ -958,7 +962,7 @@ export async function gatherDigestData(
   const permitted = sections.filter((section) => {
     if (section === 'goals') return access.goals;
     if (section === 'shopping') return access.shopping;
-    if (section === 'points') return access.fairness;
+    if (section === 'load') return access.fairness;
     if (section === 'tasks') return access.tasks;
     if (section === 'events') return access.events;
     return true;
@@ -984,7 +988,7 @@ export async function gatherDigestData(
       wants('goals') ? port.loadGoalContributions(behind) : Promise.resolve<number | null>(null),
       wants('shopping') ? port.loadShopping(12) : Promise.resolve<ShoppingSnapshot | null>(null),
       wants('wall') ? port.loadWallCounts(behind) : Promise.resolve<WallCounts | null>(null),
-      wants('points') ? port.loadLoad(behind) : Promise.resolve<LoadRow[] | null>(null),
+      wants('load') ? port.loadLoad(behind) : Promise.resolve<LoadRow[] | null>(null),
     ]);
 
   return {

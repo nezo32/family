@@ -38,7 +38,6 @@ import {
   type MaterializeResult,
   type OccurrenceDecorator,
 } from '../../core/recurrence/materializer.js';
-import { PointsService } from '../chores/points.service.js';
 import { loadRotationSnapshot } from '../chores/chores.service.js';
 import { RotationRun, type RotationSnapshot } from '../chores/rotation.js';
 import { emitIntent } from '../notifications/notifications.service.js';
@@ -352,11 +351,13 @@ export type CompletionOutcome = 'completed' | 'already_done' | 'conflict';
  * 1. the conditional `WHERE status = 'scheduled'` in the repository, which
  *    updates zero rows the second time;
  * 2. this function, which turns "zero rows updated but the row is `done`" into
- *    a **success**, not an error — the client's intent was satisfied;
- * 3. `points_ledger_award_once_uq`, the database's own refusal to book a second
- *    `chore_completed` for the same (occurrence, user) (D5).
+ *    a **success**, not an error — the client's intent was satisfied.
  *
- * Only outcome `'completed'` books points. That is the whole double-award fix.
+ * There is no third guard any more and none is needed. Fairness counts rows
+ * where `status = 'done'` (D5), and a row can only be done once, so a replayed
+ * completion is arithmetically incapable of counting twice. The points ledger
+ * needed a partial unique index to promise that; the occurrence row is the
+ * promise.
  */
 export function resolveCompletion(status: OccurrenceStatus): CompletionOutcome {
   switch (status) {
@@ -383,8 +384,8 @@ export function resolveCompletion(status: OccurrenceStatus): CompletionOutcome {
  *
  * The *algorithm* is imported directly, because `chores/rotation.ts` is pure
  * domain logic with no I/O: this module drives a {@link RotationRun} in
- * ascending occurrence-key order so each pick folds its own points back into
- * the winner's `committed` debt before the next occurrence is considered (D5).
+ * ascending occurrence-key order so each pick folds itself straight back into
+ * the winner's `committed` count before the next occurrence is considered (D5).
  * That accumulation has to happen inside one materialization pass, which is why
  * the port hands over a snapshot rather than answering one question at a time.
  *
@@ -398,7 +399,7 @@ export interface RotationPort {
    * (`scheduling.md` §9).
    */
   exists(ex: Executor, rotationId: string): Promise<boolean>;
-  /** The roster with `earned`/`committed`/`lastAssignedAt` already resolved. */
+  /** The roster with `completed`/`committed`/`lastAssignedAt` already resolved. */
   loadSnapshot(
     ex: Executor,
     rotationId: string,
@@ -408,29 +409,6 @@ export interface RotationPort {
   saveCursor(ex: Executor, rotationId: string, cursor: number): Promise<void>;
 }
 
-/** Points booking. Satisfied as-is by `chores/points.service.ts`. */
-export interface PointsPort {
-  bookCompletion(
-    ex: Executor,
-    input: {
-      occurrenceId: string;
-      completedById: string;
-      assigneeId: string | null;
-      points: number;
-      dueAt: Date;
-      graceMinutes: number;
-      completedAt: Date;
-    },
-  ): Promise<unknown>;
-  reverseCompletion(
-    ex: Executor,
-    occurrenceId: string,
-    userId: string,
-    reversedById: string,
-  ): Promise<number>;
-}
-
-/** The swap badge on an occurrence card. Owned by chores; read-only here. */
 export interface SwapPort {
   pendingSwapIds(ex: Executor, occurrenceIds: readonly string[]): Promise<Map<string, string>>;
 }
@@ -486,7 +464,6 @@ export function createDefaultSwapPort(): SwapPort {
 
 export interface TasksServiceDeps {
   readonly rotation?: RotationPort;
-  readonly points?: PointsPort;
   readonly swaps?: SwapPort;
   /** Injected so tests and a deterministic nightly run share one clock. */
   readonly now?: () => Date;
@@ -514,7 +491,6 @@ export function toOccurrenceResponse(
     isOverdue: row.isOverdue,
     title: row.title,
     notes: row.notes,
-    points: row.points,
     category: row.category,
     visibility: row.visibility,
     assigneeId: row.assigneeId,
@@ -540,7 +516,6 @@ export function toSeriesResponse(series: TaskSeriesRow): TaskSeriesResponse {
     graceMinutes: series.graceMinutes,
     rotationId: series.rotationId,
     defaultAssigneeId: series.defaultAssigneeId,
-    points: series.points,
     category: series.category,
     autoCancelAfterDays: series.autoCancelAfterDays,
     supersedesSeriesId: series.supersedesSeriesId,
@@ -583,7 +558,6 @@ export function localDateIn(instant: Date, timezone: string): string {
 
 export class TasksService {
   private readonly rotation: RotationPort;
-  private readonly points: PointsPort;
   private readonly swaps: SwapPort;
   private readonly now: () => Date;
 
@@ -592,7 +566,6 @@ export class TasksService {
     deps: TasksServiceDeps = {},
   ) {
     this.rotation = deps.rotation ?? createDefaultRotationPort();
-    this.points = deps.points ?? new PointsService(db);
     this.swaps = deps.swaps ?? createDefaultSwapPort();
     this.now = deps.now ?? (() => new Date());
   }
@@ -624,7 +597,6 @@ export class TasksService {
         graceMinutes: input.graceMinutes,
         rotationId: input.rotationId ?? null,
         defaultAssigneeId: input.defaultAssigneeId ?? null,
-        points: input.points,
         category: input.category ?? null,
         autoCancelAfterDays: input.autoCancelAfterDays ?? null,
       };
@@ -733,7 +705,6 @@ export class TasksService {
     const patch: repo.OccurrenceOverridePatch = {
       ...(input.title === undefined ? {} : { titleOverride: input.title }),
       ...(input.notes === undefined ? {} : { notesOverride: input.notes ?? null }),
-      ...(input.points === undefined ? {} : { pointsOverride: input.points }),
     };
 
     await repo.applyOccurrenceOverride(tx, occurrence.id, patch);
@@ -796,7 +767,6 @@ export class TasksService {
         input.defaultAssigneeId === undefined
           ? series.defaultAssigneeId
           : (input.defaultAssigneeId ?? null),
-      points: input.points ?? series.points,
       category: input.category === undefined ? series.category : (input.category ?? null),
       autoCancelAfterDays:
         input.autoCancelAfterDays === undefined
@@ -813,8 +783,8 @@ export class TasksService {
    * §3.4 — edit all.
    *
    * Metadata-only changes delete nothing: `COALESCE(override, series_value)`
-   * means every non-overridden occurrence picks the new title or point value up
-   * for free, and every override keeps winning.
+   * means every non-overridden occurrence picks the new title or note up for
+   * free, and every override keeps winning.
    *
    * A **schedule** change deletes the future `scheduled`, non-exception rows
    * and re-materializes. The watermark is pulled back to `now` rather than
@@ -838,7 +808,6 @@ export class TasksService {
     if (input.defaultAssigneeId !== undefined) {
       patch.defaultAssigneeId = input.defaultAssigneeId ?? null;
     }
-    if (input.points !== undefined) patch.points = input.points;
     if (input.category !== undefined) patch.category = input.category ?? null;
     if (input.autoCancelAfterDays !== undefined) {
       patch.autoCancelAfterDays = input.autoCancelAfterDays ?? null;
@@ -1067,9 +1036,6 @@ export class TasksService {
       const patch: repo.OccurrenceOverridePatch = {
         ...(input.titleOverride === undefined ? {} : { titleOverride: input.titleOverride ?? null }),
         ...(input.notesOverride === undefined ? {} : { notesOverride: input.notesOverride ?? null }),
-        ...(input.pointsOverride === undefined
-          ? {}
-          : { pointsOverride: input.pointsOverride ?? null }),
         ...(input.startsLocal === undefined
           ? {}
           : planOccurrenceMove(input.startsLocal, {
@@ -1084,16 +1050,19 @@ export class TasksService {
   }
 
   /**
-   * Completion — idempotent, and the only path that books points.
+   * Completion — idempotent.
    *
    * The conditional `WHERE status = 'scheduled'` is what makes an offline
    * replay or a double tap safe: the second attempt updates zero rows, so
-   * {@link resolveCompletion} reports `already_done` and the ledger is never
-   * touched a second time. `points_ledger_award_once_uq` backs that up in the
-   * database (D5), because a service being careful is not a guarantee.
+   * {@link resolveCompletion} reports `already_done` and nothing is written
+   * twice. That single row is also the whole fairness record now — the rotation
+   * counts `done` occurrences (D5), so there is no second place for a duplicate
+   * to land.
    *
-   * Points follow the **doer**, not the assignee — that is what makes the
-   * fairness loop self-correcting.
+   * The chore counts towards the **doer**, not the assignee — that is what
+   * makes the fairness loop self-correcting: covering for your brother means
+   * the rotation asks less of you next week, which is payment in time off
+   * rather than in a score.
    */
   async complete(
     actor: TaskActor,
@@ -1123,7 +1092,7 @@ export class TasksService {
       switch (resolveCompletion(current.status)) {
         case 'already_done':
           // The client's intent is already satisfied. Not an error, and
-          // emphatically not a second award.
+          // emphatically not a second write.
           return null;
         case 'conflict':
           throw conflict('Задача уже закрыта или отменена');
@@ -1133,18 +1102,8 @@ export class TasksService {
 
       const row = await repo.completeIfScheduled(tx, { id, completedById, completedAt });
       // Lost the race with a concurrent completion: somebody else's update
-      // already flipped the row, so this request books nothing.
+      // already flipped the row, so this request writes nothing.
       if (!row) return null;
-
-      await this.points.bookCompletion(tx, {
-        occurrenceId: id,
-        completedById,
-        assigneeId: row.assigneeId,
-        points: current.points,
-        dueAt: current.dueAt,
-        graceMinutes: current.graceMinutes,
-        completedAt,
-      });
 
       // Written on the caller's transaction, so a rolled-back completion can
       // never produce a notification (D10).
@@ -1155,7 +1114,7 @@ export class TasksService {
         entityType: 'task_occurrence',
         entityId: id,
         dedupeKey: `task_completed:${id}:${completedAt.toISOString()}`,
-        payload: { title: current.title, completedById, points: current.points },
+        payload: { title: current.title, completedById },
       });
       return intent.dispatch;
     });
@@ -1166,22 +1125,24 @@ export class TasksService {
     return this.reloadOccurrence(this.db, actor, id);
   }
 
-  /** Undo. Compensating ledger entries, never a delete — the ledger is append-only. */
+  /**
+   * Undo.
+   *
+   * One status flip and nothing else. Fairness reads `status = 'done'`, so
+   * reopening the row removes it from every count in the same statement — no
+   * compensating entries, no derived state to rewind (D5).
+   */
   async uncomplete(actor: TaskActor, id: string): Promise<TaskOccurrenceResponse> {
     requireRead(actor);
     if (!actor.can('task:complete:any')) throw forbidden('Missing permission: task:complete:any');
 
     await this.db.transaction(async (tx) => {
       const current = await this.loadReadableOccurrence(tx, actor, id);
-      const previousDoer = current.completedById;
 
       const row = await repo.uncompleteIfDone(tx, id);
       if (!row) {
         if (current.status === 'scheduled') return; // already reopened — idempotent
         throw conflict('Задача не отмечена выполненной');
-      }
-      if (previousDoer !== null) {
-        await this.points.reverseCompletion(tx, id, previousDoer, actor.userId);
       }
     });
 
@@ -1256,7 +1217,6 @@ export class TasksService {
           occurrenceId: id,
           title: current.title,
           assigneeId: input.assigneeId,
-          points: current.points,
           dueAt: current.dueAt.toISOString(),
           dueLabel: shortDueLabel(current.startsLocal),
         },
@@ -1327,12 +1287,11 @@ export class TasksService {
     }
 
     const fallback = series.defaultAssigneeId;
-    const points = series.points;
     const manual: AssignedVia = 'manual';
 
     const decorate: OccurrenceDecorator = (occurrence) => {
       if (run) {
-        const pick = run.assign(occurrence.startsAt, points);
+        const pick = run.assign(occurrence.startsAt);
         if (pick.userId !== null) {
           return { assignee_id: pick.userId, assigned_via: pick.assignedVia };
         }

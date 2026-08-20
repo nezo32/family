@@ -1,5 +1,5 @@
 {
-  "id": "aace84f7-4342-41a0-ab12-f5d77f18986e",
+  "id": "58f40e71-6352-40cb-8b51-be23e4088a2c",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -989,12 +989,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "points_override": {
-          "name": "points_override",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
         "assignee_id": {
           "name": "assignee_id",
           "type": "uuid",
@@ -1303,13 +1297,6 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
-        },
-        "points": {
-          "name": "points",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
         },
         "category": {
           "name": "category",
@@ -2081,13 +2068,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "bonus_points": {
-          "name": "bonus_points",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
         "responded_by_id": {
           "name": "responded_by_id",
           "type": "uuid",
@@ -2382,160 +2362,6 @@
           "tableTo": "task_occurrences",
           "columnsFrom": [
             "occurrence_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.points_ledger": {
-      "name": "points_ledger",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "delta": {
-          "name": "delta",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "reason": {
-          "name": "reason",
-          "type": "points_reason",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "occurrence_id": {
-          "name": "occurrence_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "awarded_by_id": {
-          "name": "awarded_by_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "note": {
-          "name": "note",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "points_ledger_user_created_idx": {
-          "name": "points_ledger_user_created_idx",
-          "columns": [
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "points_ledger_award_once_uq": {
-          "name": "points_ledger_award_once_uq",
-          "columns": [
-            {
-              "expression": "occurrence_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "reason",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"points_ledger\".\"occurrence_id\" is not null and \"points_ledger\".\"reason\" in ('chore_completed', 'on_time_bonus')",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "points_ledger_user_id_users_id_fk": {
-          "name": "points_ledger_user_id_users_id_fk",
-          "tableFrom": "points_ledger",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "points_ledger_occurrence_id_task_occurrences_id_fk": {
-          "name": "points_ledger_occurrence_id_task_occurrences_id_fk",
-          "tableFrom": "points_ledger",
-          "tableTo": "task_occurrences",
-          "columnsFrom": [
-            "occurrence_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "points_ledger_awarded_by_id_users_id_fk": {
-          "name": "points_ledger_awarded_by_id_users_id_fk",
-          "tableFrom": "points_ledger",
-          "tableTo": "users",
-          "columnsFrom": [
-            "awarded_by_id"
           ],
           "columnsTo": [
             "id"
@@ -2848,66 +2674,6 @@
         "user_blackouts_user_id_users_id_fk": {
           "name": "user_blackouts_user_id_users_id_fk",
           "tableFrom": "user_blackouts",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.user_streaks": {
-      "name": "user_streaks",
-      "schema": "",
-      "columns": {
-        "user_id": {
-          "name": "user_id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "current": {
-          "name": "current",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "longest": {
-          "name": "longest",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "last_resolved_at": {
-          "name": "last_resolved_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "user_streaks_user_id_users_id_fk": {
-          "name": "user_streaks_user_id_users_id_fk",
-          "tableFrom": "user_streaks",
           "tableTo": "users",
           "columnsFrom": [
             "user_id"
@@ -5819,20 +5585,6 @@
         "yes",
         "no",
         "maybe"
-      ]
-    },
-    "public.points_reason": {
-      "name": "points_reason",
-      "schema": "public",
-      "values": [
-        "chore_completed",
-        "covered_for_other",
-        "on_time_bonus",
-        "streak_bonus",
-        "manual_award",
-        "redeemed",
-        "penalty",
-        "swap_bonus"
       ]
     },
     "public.rotation_strategy": {

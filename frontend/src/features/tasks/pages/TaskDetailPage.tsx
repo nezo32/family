@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import type { EditScope } from '@family/shared';
 import { Can } from '@/shared/auth/Can';
+import { SideColumn } from '@/app/layout/SideColumn';
 import { useCan } from '@/shared/auth/use-can';
 import { PageHeader } from '@/shared/components/PageHeader';
 import { ErrorState } from '@/shared/components/ErrorState';
@@ -20,7 +21,7 @@ import { Button } from '@/shared/ui/button';
 import { Separator } from '@/shared/ui/separator';
 import { ROUTES } from '@/shared/lib/routes';
 import { formatDateTime } from '@/shared/lib/format';
-import { COMMON, PLURALS, pluralize } from '@/shared/lib/i18n';
+import { COMMON } from '@/shared/lib/i18n';
 import { TASKS_RU } from '../locale';
 import { isRecurring } from '../recurrence';
 import {
@@ -151,102 +152,97 @@ export default function TaskDetailPage() {
         }
       />
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
-        <div className="min-w-0 space-y-5">
-          <div className="flex flex-col gap-2 sm:flex-row">
-            {!closed ? (
-              <Button
-                className="min-h-12 flex-1"
-                variant={isDone ? 'outline' : 'default'}
-                disabled={
-                  complete.isPending ||
-                  uncomplete.isPending ||
-                  (!isDone && !can('task:complete', occurrence))
-                }
-                onClick={() => {
-                  if (isDone) uncomplete.mutate({ occurrenceId: occurrence.id });
-                  else complete.mutate({ occurrenceId: occurrence.id });
-                }}
-              >
-                {isDone ? (
-                  <>
-                    <RotateCcw className="size-4" aria-hidden />
-                    {TASKS_RU.card.uncomplete}
-                  </>
-                ) : (
-                  <>
-                    <Check className="size-4" aria-hidden />
-                    {TASKS_RU.card.complete}
-                  </>
-                )}
-              </Button>
-            ) : null}
-
-            {!isDone && !closed ? (
-              <Can perm="task:update" resource={series ?? occurrence}>
-                <Button
-                  variant="outline"
-                  className="min-h-12"
-                  onClick={() => {
-                    setSkipping(true);
-                  }}
-                >
-                  <SkipForward className="size-4" aria-hidden />
-                  {TASKS_RU.actions.skip}
-                </Button>
-              </Can>
-            ) : null}
-          </div>
-
-          <dl className="grid gap-x-6 gap-y-3 rounded-2xl border border-border bg-card p-4 sm:grid-cols-2">
-            <Row label={TASKS_RU.detail.starts} value={formatDateTime(occurrence.startsAt)} />
-            <Row label={TASKS_RU.detail.due} value={formatDateTime(occurrence.dueAt)} />
-            {occurrence.category ? (
-              <Row label={TASKS_RU.detail.category} value={occurrence.category} />
-            ) : null}
-            {occurrence.points > 0 ? (
-              <Row
-                label={TASKS_RU.detail.points}
-                value={pluralize(occurrence.points, PLURALS.point)}
-              />
-            ) : null}
-            {occurrence.completedAt ? (
-              <Row
-                label={TASKS_RU.detail.completedAt}
-                value={formatDateTime(occurrence.completedAt)}
-              />
-            ) : null}
-          </dl>
-
-          {occurrence.notes ? (
-            <section className="space-y-1 rounded-2xl border border-border bg-card p-4">
-              <h2 className="text-sm font-semibold text-foreground">{TASKS_RU.detail.notes}</h2>
-              <p className="text-sm text-pretty whitespace-pre-line text-muted-foreground">
-                {occurrence.notes}
-              </p>
-            </section>
+      <div className="min-w-0 space-y-5">
+        <div className="flex flex-col gap-2 sm:flex-row">
+          {!closed ? (
+            <Button
+              className="min-h-12 flex-1"
+              variant={isDone ? 'outline' : 'default'}
+              disabled={
+                complete.isPending ||
+                uncomplete.isPending ||
+                (!isDone && !can('task:complete', occurrence))
+              }
+              onClick={() => {
+                if (isDone) uncomplete.mutate({ occurrenceId: occurrence.id });
+                else complete.mutate({ occurrenceId: occurrence.id });
+              }}
+            >
+              {isDone ? (
+                <>
+                  <RotateCcw className="size-4" aria-hidden />
+                  {TASKS_RU.card.uncomplete}
+                </>
+              ) : (
+                <>
+                  <Check className="size-4" aria-hidden />
+                  {TASKS_RU.card.complete}
+                </>
+              )}
+            </Button>
           ) : null}
 
-          <section className="space-y-3 rounded-2xl border border-border bg-card p-4">
-            <h2 className="text-sm font-semibold text-foreground">{TASKS_RU.detail.assignee}</h2>
-            <AssigneeControl occurrence={occurrence} members={roster} />
-            {!can('task:assign') ? (
-              <p className="text-xs text-muted-foreground">{TASKS_RU.assign.readOnlyHint}</p>
-            ) : null}
-            {mine && !isDone && !closed ? (
-              <>
-                <Separator />
-                <SwapRequestButton
-                  occurrence={occurrence}
-                  members={roster.filter((member) => member.id !== userId)}
-                  outgoing={myPendingSwap}
-                />
-              </>
-            ) : null}
-          </section>
+          {!isDone && !closed ? (
+            <Can perm="task:update" resource={series ?? occurrence}>
+              <Button
+                variant="outline"
+                className="min-h-12"
+                onClick={() => {
+                  setSkipping(true);
+                }}
+              >
+                <SkipForward className="size-4" aria-hidden />
+                {TASKS_RU.actions.skip}
+              </Button>
+            </Can>
+          ) : null}
         </div>
 
-        <aside className="space-y-4">
+        <dl className="grid gap-x-6 gap-y-3 rounded-2xl border border-border bg-card p-4 sm:grid-cols-2">
+          <Row label={TASKS_RU.detail.starts} value={formatDateTime(occurrence.startsAt)} />
+          <Row label={TASKS_RU.detail.due} value={formatDateTime(occurrence.dueAt)} />
+          {occurrence.category ? (
+            <Row label={TASKS_RU.detail.category} value={occurrence.category} />
+          ) : null}
+          {occurrence.completedAt ? (
+            <Row
+              label={TASKS_RU.detail.completedAt}
+              value={formatDateTime(occurrence.completedAt)}
+            />
+          ) : null}
+        </dl>
+
+        {occurrence.notes ? (
+          <section className="space-y-1 rounded-2xl border border-border bg-card p-4">
+            <h2 className="text-sm font-semibold text-foreground">{TASKS_RU.detail.notes}</h2>
+            <p className="text-sm text-pretty whitespace-pre-line text-muted-foreground">
+              {occurrence.notes}
+            </p>
+          </section>
+        ) : null}
+
+        <section className="space-y-3 rounded-2xl border border-border bg-card p-4">
+          <h2 className="text-sm font-semibold text-foreground">{TASKS_RU.detail.assignee}</h2>
+          <AssigneeControl occurrence={occurrence} members={roster} />
+          {!can('task:assign') ? (
+            <p className="text-xs text-muted-foreground">{TASKS_RU.assign.readOnlyHint}</p>
+          ) : null}
+          {mine && !isDone && !closed ? (
+            <>
+              <Separator />
+              <SwapRequestButton
+                occurrence={occurrence}
+                members={roster.filter((member) => member.id !== userId)}
+                outgoing={myPendingSwap}
+              />
+            </>
+          ) : null}
+        </section>
+      </div>
+
+      {/* §C1: the shell owns the second column; this page only says what goes in it. */}
+      <SideColumn>
+        <div className="space-y-4">
           <section className="space-y-2 rounded-2xl border border-border bg-card p-4">
             <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
               <CalendarClock className="size-4" aria-hidden />
@@ -288,8 +284,8 @@ export default function TaskDetailPage() {
               ) : null}
             </div>
           </section>
-        </aside>
-      </div>
+        </div>
+      </SideColumn>
 
       {series ? (
         <TaskEditor

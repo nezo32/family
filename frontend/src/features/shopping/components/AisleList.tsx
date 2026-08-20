@@ -21,6 +21,7 @@ export function AisleList(props: {
   shopMode: boolean;
   canWrite: boolean;
   onToggle: (item: ShoppingItemResponse, bought: boolean) => void;
+  onEdit?: (item: ShoppingItemResponse) => void;
   onDelete?: (item: ShoppingItemResponse) => void;
 }) {
   const [tailOpen, setTailOpen] = useState(false);
@@ -54,6 +55,7 @@ export function AisleList(props: {
                 shopMode={props.shopMode}
                 canWrite={props.canWrite}
                 onToggle={props.onToggle}
+                {...(props.onEdit ? { onEdit: props.onEdit } : {})}
                 {...(props.onDelete ? { onDelete: props.onDelete } : {})}
               />
             ))}
@@ -90,6 +92,7 @@ export function AisleList(props: {
                   shopMode={props.shopMode}
                   canWrite={props.canWrite}
                   onToggle={props.onToggle}
+                  {...(props.onEdit ? { onEdit: props.onEdit } : {})}
                   {...(props.onDelete ? { onDelete: props.onDelete } : {})}
                 />
               ))}

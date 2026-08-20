@@ -1,3 +1,5 @@
+import type { Temporal as TemporalPolyfill } from 'temporal-polyfill';
+
 /**
  * Temporal bootstrap.
  *
@@ -11,8 +13,7 @@
  */
 
 declare global {
-  // eslint-disable-next-line no-var
-  var Temporal: typeof import('temporal-polyfill').Temporal | undefined;
+  var Temporal: typeof TemporalPolyfill | undefined;
 }
 
 export async function installTemporal(): Promise<void> {

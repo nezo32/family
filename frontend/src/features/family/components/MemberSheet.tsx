@@ -3,7 +3,6 @@ import { Check, ListTodo } from 'lucide-react';
 import {
   ROLE_DESCRIPTIONS_RU,
   ROLE_LABELS_RU,
-  type FairnessMember,
   type Role,
 } from '@family/shared';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/shared/ui/sheet';
@@ -28,7 +27,6 @@ import {
   useUpdateMemberRole,
 } from '../hooks';
 import { RoleBadge, StatusBadge } from './RoleBadge';
-import { WeekLoadBar } from './WeekLoadBar';
 import { ChoreWeightControl } from './ChoreWeightControl';
 
 /**
@@ -49,7 +47,6 @@ import { ChoreWeightControl } from './ChoreWeightControl';
  */
 export function MemberSheet(props: {
   member: RosterMember | null;
-  load: FairnessMember | undefined;
   isSelf: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -110,15 +107,6 @@ export function MemberSheet(props: {
               <RoleBadge role={member.role} />
               <StatusBadge status={member.status} />
             </div>
-
-            {/* ---- the neutral week --------------------------------------- */}
-            <section className="space-y-2">
-              <h3 className="text-sm font-semibold text-foreground">{FAMILY_RU.loadTitle}</h3>
-              <WeekLoadBar load={props.load} />
-              <p className="text-xs text-muted-foreground">{FAMILY_RU.loadHint}</p>
-            </section>
-
-            <Separator />
 
             {/* ---- upcoming ----------------------------------------------- */}
             <section className="space-y-2">

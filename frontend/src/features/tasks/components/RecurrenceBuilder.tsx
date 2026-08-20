@@ -1,4 +1,5 @@
 import type { RecurrenceEnd, Weekday } from '@family/shared';
+import { DateField } from '@/shared/ui/date-field';
 import { Input } from '@/shared/ui/input';
 import { TASKS_RU, WEEKDAY_OPTIONS_RU } from '../locale';
 import {
@@ -240,18 +241,21 @@ export function RecurrenceBuilder(props: {
           ) : null}
 
           {value.ends.type === 'until' ? (
-            <label className="flex min-h-11 flex-wrap items-center gap-2 text-sm text-muted-foreground">
+            <div className="flex min-h-11 flex-wrap items-center gap-2 text-sm text-muted-foreground">
               <span>{TASKS_RU.recurrence.endsUntil}</span>
-              <Input
-                type="date"
+              <DateField
+                label={TASKS_RU.recurrence.endsUntil}
                 value={splitFloating(value.ends.untilLocal).date}
                 disabled={disabled}
-                onChange={(event) => {
-                  setEnds({ type: 'until', untilLocal: `${event.target.value}T23:59:00` });
+                className="w-full sm:w-56"
+                onChange={(next) => {
+                  if (next === '') return;
+                  // 23:59 keeps the last occurrence of the final day inside the
+                  // window; the time half of this value is never shown.
+                  setEnds({ type: 'until', untilLocal: `${next}T23:59:00` });
                 }}
-                className="h-11 w-44 text-base"
               />
-            </label>
+            </div>
           ) : null}
         </div>
       ) : null}

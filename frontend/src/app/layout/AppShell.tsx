@@ -3,17 +3,26 @@ import { Outlet, useLocation, useNavigation } from 'react-router-dom';
 import { LoadingScreen } from '@/shared/components/LoadingScreen';
 import { setFamilyTimeZone } from '@/shared/lib/format';
 import { useMe } from '@/shared/auth/use-me';
+import { cn } from '@/shared/lib/utils';
 import { InstallPrompt } from '@/features/auth/components/InstallPrompt';
+import { PushOnboarding } from '@/features/settings/push/PushOnboarding';
 import { useShoppingSync } from '@/features/shopping/hooks';
 import { NotificationsPanel, useUnreadCount } from '@/features/notifications';
 import { BottomTabBar } from './BottomTabBar';
 import { DesktopSidebar } from './DesktopSidebar';
 import { TopAppBar } from './TopAppBar';
+import { PageSlotsContext, usePageSlotsHost } from './page-slots';
+import { SHELL_CONTAINER, SHELL_GRID, SHELL_GUTTER, SHELL_SIDE } from './measures';
 
 /**
  * The authenticated application chrome.
  *
  * Layout:  [sidebar (≥md)] [ app bar / scrolling main / tab bar (<md) ]
+ *
+ * `<main>` is the §C1 grid — a main column that is never wider than 720px and,
+ * from 1088px up, a side column beside it. The arithmetic, and the two places
+ * it departs from the written spec, are in `measures.ts`; the mechanism a
+ * screen uses to fill the side column is in `page-slots.ts`.
  *
  * Scroll handling deserves a note. The page — not an inner div — is the scroll
  * container, because iOS only collapses the URL bar and only runs the native
@@ -41,6 +50,12 @@ export function AppShell() {
    */
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const unread = useUnreadCount();
+  /**
+   * The app bar's title/action areas and the grid's side column, published to
+   * every screen below. See `page-slots.ts` for why this is a portal target
+   * rather than a prop.
+   */
+  const slots = usePageSlotsHost();
   const openNotifications = useCallback(() => {
     setNotificationsOpen(true);
   }, []);
@@ -76,37 +91,77 @@ export function AppShell() {
   }, [location.key]);
 
   return (
-    <div className="flex min-h-dvh bg-background">
-      <DesktopSidebar />
+    /*
+      `px-safe` on the shell, not on `main`: in landscape the notch takes a
+      59px bite out of one side, and this is the one element with no horizontal
+      padding of its own to collide with. The fixed tab bar is a descendant but
+      positions against the viewport, so it carries its own `px-safe`.
+    */
+    <PageSlotsContext.Provider value={slots}>
+      <div className="flex min-h-dvh bg-background px-safe">
+        <DesktopSidebar />
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <TopAppBar unreadCount={unread.data ?? 0} onOpenNotifications={openNotifications} />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <TopAppBar unreadCount={unread.data ?? 0} onOpenNotifications={openNotifications} />
 
-        <main
-          id="main"
-          className="flex-1 px-4 pt-4 pb-[calc(var(--spacing-tabbar)+env(safe-area-inset-bottom,0px)+1rem)] md:px-6 md:pb-8"
-          aria-busy={navigation.state === 'loading'}
-        >
-          <div className="mx-auto w-full max-w-3xl xl:max-w-5xl">
-            {/*
-              Self-suppressing: nothing renders when already installed, when the
-              user has not engaged yet, or for two weeks after a dismissal. It
-              lives in the shell because push on iOS is unreachable until the
-              app is on the Home Screen, so the prompt has to be able to appear
-              wherever the user happens to be.
-            */}
-            <InstallPrompt className="mb-4" />
-            <Suspense fallback={<LoadingScreen />}>
-              <Outlet />
-            </Suspense>
-          </div>
-        </main>
+          {/*
+            The bottom reserve, measured on an iPhone 15 in standalone: the bar
+            renders 91px tall (56px of `--spacing-tabbar` + a 1px top border +
+            34px of home-indicator inset) and this reserves 106px, so the last
+            row of content clears it by 15px. `env(safe-area-inset-bottom)`
+            appears here exactly once and nowhere below — a screen that adds its
+            own `pb-safe` to something that is *not* sitting on the home
+            indicator pays the 34px twice, which is what used to leave the
+            shopping composer floating in the middle of an empty screen.
+          */}
+          <main
+            id="main"
+            className={cn(
+              'flex-1 pt-4 pb-[calc(var(--spacing-tabbar)+env(safe-area-inset-bottom,0px)+1rem)] md:pb-8',
+              SHELL_GUTTER,
+            )}
+            aria-busy={navigation.state === 'loading'}
+          >
+            <div className={cn(SHELL_CONTAINER, SHELL_GRID)}>
+              <div className="min-w-0">
+                {/*
+                  Self-suppressing: nothing renders when already installed, when
+                  the user has not engaged yet, or for two weeks after a
+                  dismissal. It lives in the shell because push on iOS is
+                  unreachable until the app is on the Home Screen, so the prompt
+                  has to be able to appear wherever the user happens to be.
+                */}
+                <InstallPrompt className="mb-4" />
+                {/*
+                  And once the app *is* installed (or on a platform that never
+                  needed to be), the same slot offers notifications — the feature
+                  is otherwise invisible, because nothing else in the app ever
+                  mentions it. Self-suppressing in the same way, and it stands
+                  down entirely while the install card is up: see
+                  `push/onboarding.ts` for the funnel, whose one hard rule is
+                  that the OS permission prompt can be shown once, ever.
+                */}
+                <PushOnboarding className="mb-4" />
+                <Suspense fallback={<LoadingScreen />}>
+                  <Outlet />
+                </Suspense>
+              </div>
 
-        <BottomTabBar />
+              {/*
+                The side column (§C4). Always in the DOM because it is the
+                portal target; `empty:hidden` keeps it from costing a grid gap
+                on the screens that publish nothing into it.
+              */}
+              <aside ref={slots.setSide} aria-label="Дополнительно" className={SHELL_SIDE} />
+            </div>
+          </main>
+
+          <BottomTabBar />
+        </div>
+
+        <NotificationsPanel open={notificationsOpen} onOpenChange={setNotificationsOpen} />
       </div>
-
-      <NotificationsPanel open={notificationsOpen} onOpenChange={setNotificationsOpen} />
-    </div>
+    </PageSlotsContext.Provider>
   );
 }
 

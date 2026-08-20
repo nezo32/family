@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { ChevronLeft, Eraser, ShoppingCart } from 'lucide-react';
 import { PageHeader } from '@/shared/components/PageHeader';
 import { EmptyState } from '@/shared/components/EmptyState';
@@ -25,11 +25,14 @@ import {
   useShoppingLists,
   useShoppingSync,
   useToggleItem,
+  useUpdateItem,
   useWakeLock,
 } from '../hooks';
 import { boughtTail } from '../grouping';
 import { AisleList } from '../components/AisleList';
 import { FrequentStrip } from '../components/FrequentStrip';
+import { EditItemDialog } from '../components/EditItemDialog';
+import { ListActionsMenu } from '../components/ListActionsMenu';
 import { OfflineBanner } from '../components/OfflineBanner';
 import { QuickAddBar } from '../components/QuickAddBar';
 
@@ -47,9 +50,24 @@ import { QuickAddBar } from '../components/QuickAddBar';
  * losing your place in the list because you flipped a mode is exactly the kind
  * of thing that gets an app deleted.
  *
- * The quick-add box sits at the **bottom** on phones, inside the safe area:
- * that is where the thumb is, and where the keyboard will not cover the list
- * being typed into.
+ * ### Where the composer sits
+ *
+ * At the **bottom** on phones — that is where the thumb is, and where the
+ * keyboard will not cover the list being typed into. Two things make that true
+ * rather than merely intended:
+ *
+ *  - `min-h-app-content` on the page. Without it the page is only as tall as
+ *    its content, so on a list with two items the "bottom" of the page was
+ *    two-thirds of the way up the screen and the composer floated there with
+ *    ~700px of empty background under it.
+ *  - the `sticky` offset is the height of the tab bar, not `0`. `bottom-0`
+ *    pins to the bottom of the *viewport*, which on a phone is behind the tab
+ *    bar; on a list long enough to scroll the composer disappeared under it.
+ *
+ * It deliberately does **not** carry `pb-safe`. The home indicator is the tab
+ * bar's problem — it is the thing physically sitting on it — and `AppShell`
+ * has already reserved that inset once. Paying it again here is what put a
+ * second 34px band in the middle of the screen.
  */
 export default function ListPage() {
   const listId = useActiveListId();
@@ -60,7 +78,16 @@ export default function ListPage() {
   const [shopMode, setShopMode] = useShopMode();
   useWakeLock(shopMode);
 
-  const lists = useShoppingLists();
+  const navigate = useNavigate();
+  /*
+   * `includeArchived: true` on purpose. The overview asks for the active lists
+   * only, so with the default query an archived list opened from a shared link
+   * — or the list you have this second archived from the menu below — resolves
+   * to `undefined`, the header falls back to «Покупки» and the menu that just
+   * archived it disappears. Reading the superset costs one extra cached query
+   * and keeps the screen coherent either side of the tap.
+   */
+  const lists = useShoppingLists(true);
   const list = useMemo(
     () => lists.data?.find((candidate) => candidate.id === listId),
     [lists.data, listId],
@@ -74,9 +101,18 @@ export default function ListPage() {
   const addItems = useAddItems(listId ?? '');
   const toggleItem = useToggleItem(listId ?? '');
   const deleteItem = useDeleteItem(listId ?? '');
+  const updateItem = useUpdateItem(listId ?? '');
+  /*
+   * The row being corrected, held by id rather than by value: the cache row is
+   * the source of truth, so an optimistic patch (or somebody else's edit
+   * arriving) is reflected in the open dialog instead of being shadowed by a
+   * stale copy taken at the moment the menu was tapped.
+   */
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const clearBought = useClearBought(listId ?? '');
 
   const boughtCount = boughtTail(items).length;
+  const editingItem = items.find((row) => row.id === editingItemId) ?? null;
 
   if (listId === null) {
     return (
@@ -89,7 +125,16 @@ export default function ListPage() {
   }
 
   return (
-    <div className={cn('flex min-h-0 flex-col', shopMode && 'text-[1.02rem]')}>
+    <div
+      className={cn(
+        'flex min-h-0 flex-col',
+        // Fill the screen so "the bottom of the page" is the bottom of the
+        // screen. Phones only — from `md` up there is no tab bar to sit above
+        // and the page is a normal document again.
+        'min-h-app-content md:min-h-0',
+        shopMode && 'text-[1.02rem]',
+      )}
+    >
       <PageHeader
         eyebrow={
           <Link
@@ -115,6 +160,15 @@ export default function ListPage() {
               />
               {SHOPPING_RU.shopMode}
             </Label>
+            {list ? (
+              <ListActionsMenu
+                list={list}
+                onDeleted={() => {
+                  // The screen we are standing on no longer exists.
+                  void navigate(ROUTES.shopping, { replace: true });
+                }}
+              />
+            ) : null}
             {boughtCount > 0 ? (
               <Can perm="shopping:list:manage">
                 <Button
@@ -181,6 +235,9 @@ export default function ListPage() {
             shopMode={shopMode}
             canWrite={canWrite}
             onToggle={toggleItem}
+            onEdit={(item) => {
+              setEditingItemId(item.id);
+            }}
             onDelete={(item) => {
               deleteItem.mutate(item.id);
             }}
@@ -190,18 +247,37 @@ export default function ListPage() {
 
       {canWrite ? (
         /*
-         * Sticky at the bottom of the content column, above the tab bar and
-         * clear of the home indicator. `sticky` rather than `fixed`: a fixed
-         * element inside an iOS PWA jumps around while the software keyboard
-         * animates in, and the shell owns the real fixed chrome.
+         * Sticky at the bottom of the content column, above the tab bar.
+         * `sticky` rather than `fixed`: a fixed element inside an iOS PWA jumps
+         * around while the software keyboard animates in, and the shell owns
+         * the real fixed chrome.
+         *
+         * `mt-auto` puts it against the bottom of the (now full-height) column;
+         * the sticky offset keeps it there once the list is long enough to
+         * scroll underneath it.
          */
-        <div className="sticky bottom-0 z-20 -mx-4 border-t border-border bg-background/95 px-4 pt-3 pb-safe backdrop-blur-sm md:-mx-6 md:px-6">
+        <div className="sticky bottom-[calc(var(--spacing-tabbar)+env(safe-area-inset-bottom,0px))] z-20 -mx-4 mt-auto border-t border-border bg-background/95 px-4 pt-3 pb-3 backdrop-blur-sm md:-mx-6 md:bottom-0 md:px-6">
           <QuickAddBar
             catalogue={catalogue}
             onAdd={(drafts) => addItems(drafts)}
             disabled={!canWrite}
           />
         </div>
+      ) : null}
+
+      {editingItem ? (
+        <EditItemDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setEditingItemId(null);
+          }}
+          item={editingItem}
+          pending={updateItem.isPending}
+          onSave={(body) => {
+            setEditingItemId(null);
+            updateItem.mutate({ itemId: editingItem.id, body });
+          }}
+        />
       ) : null}
     </div>
   );

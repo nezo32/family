@@ -52,9 +52,8 @@ const REPEATABLE: Array<{ name: JobName; pattern: string }> = [
   { name: 'scheduler.birthdays', pattern: '30 0 * * *' },
   // Weekly digest fan-out; per-user weekday/time filtering happens in the handler.
   { name: 'scheduler.weekly-digest', pattern: '0 * * * *' },
-  // Expire stale swap offers and refresh streaks, before the nightly sweeps.
+  // Expire stale swap offers, before the nightly sweeps.
   { name: 'chores.expire-swaps', pattern: '20 3 * * *' },
-  { name: 'chores.streaks', pattern: '40 3 * * *' },
   // Housekeeping.
   { name: 'maintenance.prune-refresh-tokens', pattern: '15 3 * * *' },
   { name: 'maintenance.prune-oauth-transactions', pattern: '*/30 * * * *' },

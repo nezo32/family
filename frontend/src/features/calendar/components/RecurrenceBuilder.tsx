@@ -1,4 +1,5 @@
 import type { RecurrenceEnd, Weekday } from '@family/shared';
+import { DateField } from '@/shared/ui/date-field';
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { cn } from '@/shared/lib/utils';
@@ -265,13 +266,11 @@ function RecurrenceEndsField(props: {
       ) : null}
 
       {props.value.type === 'until' ? (
-        <Input
-          aria-label={CALENDAR_RU.recurrence.endsUntilLabel}
-          type="date"
-          className="h-11 w-full sm:w-56"
+        <DateField
+          label={CALENDAR_RU.recurrence.endsUntilLabel}
+          className="w-full sm:w-56"
           value={props.value.untilLocal.slice(0, 10)}
-          onChange={(event) => {
-            const date = event.target.value;
+          onChange={(date) => {
             if (!date) return;
             props.onChange({ type: 'until', untilLocal: toFloatingLocal(date, '23:59') });
           }}

@@ -19,14 +19,23 @@ import type { AssignedVia, RotationStrategy } from '@family/shared';
  * ## The debt model
  *
  * ```
- * debt = (earned + committed) / weight
+ * debt = (completed + committed) / weight
  * ```
  *
- * - `earned`    — points actually booked to the member over the balance window.
- * - `committed` — points of still-`scheduled` work already assigned to them.
- * - `weight`    — capacity multiplier. A 0.4-weight child carrying 4 points has
+ * - `completed` — how many chores the member actually did over the balance
+ *                 window. A **count**, not a score: nobody is ever shown this
+ *                 number as a total, it only orders the queue.
+ * - `committed` — how many chores are already on their plate and not done yet.
+ * - `weight`    — capacity multiplier. A 0.4-weight child carrying 4 chores has
  *                 the same debt as a 1.0-weight adult carrying 10, so both are
  *                 equally "next" — which is how proportional load emerges.
+ *
+ * This used to be denominated in points, and that is the mistake D5 now
+ * records: a per-person points balance is a leaderboard whatever it is called,
+ * and siblings compete for it. Counting chores keeps the scheduling signal —
+ * "who has been carrying the week" — and throws the score away. Every chore
+ * counts as exactly one, which also means the family never has to argue about
+ * whether the bins are worth more than the dishes.
  *
  * `committed` is what stops one pass handing a single person the whole month:
  * {@link RotationRun.assign} folds each pick straight back into that member's
@@ -60,9 +69,9 @@ export interface RotationCandidate {
   readonly position: number;
   /** Soft removal — an inactive member keeps their history but takes no work. */
   readonly active: boolean;
-  /** `SUM(delta)` of chore/bonus/cover reasons over the balance window. */
-  readonly earned: number;
-  /** Effective points of still-`scheduled` occurrences already assigned. */
+  /** Chores they completed inside the balance window (`status = 'done'`). */
+  readonly completed: number;
+  /** Count of still-`scheduled` occurrences already assigned to them. */
   readonly committed: number;
   /** `MAX(starts_at)` over their assignments. NULL => never assigned. */
   readonly lastAssignedAt: Date | null;
@@ -102,7 +111,7 @@ export interface RotationPick {
 export interface RotationStanding {
   readonly userId: string;
   readonly weight: number;
-  readonly earned: number;
+  readonly completed: number;
   readonly committed: number;
   readonly debt: number;
   readonly eligible: boolean;
@@ -126,9 +135,16 @@ export const DEBT_EPSILON = 1e-9;
 /** An excused member. Expressed as a debt so the preview can still show them. */
 export const EXCUSED_DEBT = Number.POSITIVE_INFINITY;
 
-export function computeDebt(earned: number, committed: number, weight: number): number {
+/**
+ * `(completed + committed) / weight`, both terms counts of chores.
+ *
+ * The signature is unchanged from the points-era version on purpose: only what
+ * the numbers *mean* changed. The arithmetic that makes proportional load work
+ * was never about points.
+ */
+export function computeDebt(completed: number, committed: number, weight: number): number {
   if (!(weight > 0)) return EXCUSED_DEBT;
-  return (earned + committed) / weight;
+  return (completed + committed) / weight;
 }
 
 /** Blackouts are half-open: a window ending at 09:00 frees the 09:00 chore. */
@@ -199,7 +215,7 @@ interface RunState {
   readonly weight: number;
   readonly position: number;
   readonly active: boolean;
-  readonly earned: number;
+  readonly completed: number;
   readonly blackouts: readonly BlackoutWindow[];
   committed: number;
   lastAssignedAt: Date | null;
@@ -211,7 +227,7 @@ function toRunState(candidate: RotationCandidate): RunState {
     weight: candidate.weight,
     position: candidate.position,
     active: candidate.active,
-    earned: candidate.earned,
+    completed: candidate.completed,
     blackouts: candidate.blackouts,
     committed: candidate.committed,
     lastAssignedAt: candidate.lastAssignedAt,
@@ -228,7 +244,7 @@ function toRunState(candidate: RotationCandidate): RunState {
  * Without that, a single pass would hand one person the entire next month.
  *
  * The class is stateful but still pure: it performs no I/O, and the sequence of
- * picks is a function of the snapshot plus the `(at, points)` arguments alone.
+ * picks is a function of the snapshot plus the `at` arguments alone.
  */
 export class RotationRun {
   private readonly strategy: RotationStrategy;
@@ -266,12 +282,15 @@ export class RotationRun {
   /**
    * Pick the assignee for one occurrence.
    *
-   * @param at     the occurrence instant, used for blackout evaluation
-   * @param points effective points of the occurrence, folded into `committed`
+   * Every occurrence counts as exactly **one** chore against the winner. There
+   * is no per-chore weight and there will not be one: "the bins are worth three
+   * and the dishes are worth one" is the argument this app should not host.
+   *
+   * @param at the occurrence instant, used for blackout evaluation
    */
-  assign(at: Date, points: number): RotationPick {
+  assign(at: Date): RotationPick {
     const pick = this.pickFor(at);
-    if (pick.userId !== null) this.record(pick.userId, at, points);
+    if (pick.userId !== null) this.record(pick.userId, at);
     return pick;
   }
 
@@ -287,9 +306,9 @@ export class RotationRun {
         return {
           userId: s.userId,
           weight: s.weight,
-          earned: s.earned,
+          completed: s.completed,
           committed: s.committed,
-          debt: computeDebt(s.earned, s.committed, s.weight),
+          debt: computeDebt(s.completed, s.committed, s.weight),
           eligible: reason === null,
           reason,
         };
@@ -303,14 +322,14 @@ export class RotationRun {
       });
   }
 
-  private record(userId: string, at: Date, points: number): void {
+  private record(userId: string, at: Date): void {
     const state = this.states.find((s) => s.userId === userId);
     if (state === undefined) return;
-    state.committed += points;
-    // The tie-break also has to move, or a rotation of zero-point chores would
-    // give every occurrence to the same person: with no points, debt never
-    // changes and "longest since last assignment" is the only thing separating
-    // two members.
+    state.committed += 1;
+    // The tie-break has to move too: two members who are level again after this
+    // pick are separated only by "longest since their last assignment", and a
+    // stale timestamp would hand the next occurrence straight back to the same
+    // person.
     if (state.lastAssignedAt === null || state.lastAssignedAt.getTime() < at.getTime()) {
       state.lastAssignedAt = at;
     }
@@ -336,9 +355,9 @@ export class RotationRun {
     if (eligible.length === 0) return unassigned(this.emptyReason());
 
     let best = eligible[0] as RunState;
-    let bestDebt = computeDebt(best.earned, best.committed, best.weight);
+    let bestDebt = computeDebt(best.completed, best.committed, best.weight);
     for (const candidate of eligible.slice(1)) {
-      const debt = computeDebt(candidate.earned, candidate.committed, candidate.weight);
+      const debt = computeDebt(candidate.completed, candidate.committed, candidate.weight);
       if (compareByDebt({ ...candidate, debt }, { ...best, debt: bestDebt }) < 0) {
         best = candidate;
         bestDebt = debt;
@@ -364,7 +383,7 @@ export class RotationRun {
       return {
         userId: candidate.userId,
         assignedVia: 'rotation',
-        debt: computeDebt(candidate.earned, candidate.committed, candidate.weight),
+        debt: computeDebt(candidate.completed, candidate.committed, candidate.weight),
         unassignedReason: null,
       };
     }
@@ -386,7 +405,7 @@ export class RotationRun {
     return {
       userId: first.userId,
       assignedVia: 'rotation',
-      debt: computeDebt(first.earned, first.committed, first.weight),
+      debt: computeDebt(first.completed, first.committed, first.weight),
       unassignedReason: null,
     };
   }
@@ -414,12 +433,8 @@ function normalizeCursor(cursor: number, length: number): number {
  * One-shot pick, for callers that assign a single occurrence (a manual
  * "rotate this one" or a `reassignFuture` sweep of one row).
  */
-export function pickAssignee(
-  snapshot: RotationSnapshot,
-  at: Date,
-  points = 0,
-): RotationPick {
-  return new RotationRun(snapshot).assign(at, points);
+export function pickAssignee(snapshot: RotationSnapshot, at: Date): RotationPick {
+  return new RotationRun(snapshot).assign(at);
 }
 
 export interface PreviewStep {
@@ -435,10 +450,9 @@ export interface PreviewStep {
  */
 export function previewAssignments(
   snapshot: RotationSnapshot,
-  options: { at: Date; count: number; points?: number; stepMs?: number },
+  options: { at: Date; count: number; stepMs?: number },
 ): PreviewStep[] {
   const run = new RotationRun(snapshot);
-  const points = options.points ?? 0;
   // Successive picks are spread a day apart so a blackout in the middle of the
   // preview window shows up where the family expects to see it.
   const step = options.stepMs ?? 86_400_000;
@@ -447,7 +461,7 @@ export function previewAssignments(
   for (let i = 0; i < options.count; i += 1) {
     const at = new Date(options.at.getTime() + i * step);
     const standings = run.standings(at);
-    steps.push({ at, pick: run.assign(at, points), standings });
+    steps.push({ at, pick: run.assign(at), standings });
   }
   return steps;
 }

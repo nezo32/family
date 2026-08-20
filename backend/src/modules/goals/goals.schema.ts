@@ -154,9 +154,9 @@ export const goalMilestones = pgTable(
 );
 
 /**
- * The moneybox ledger. **APPEND-ONLY** (D6; the same rule as `points_ledger` in
- * D5): no `UPDATE`, no `DELETE`, no soft delete. A mistake is corrected by
- * inserting the inverse row with `kind = 'correction'` and a note.
+ * The moneybox ledger. **APPEND-ONLY** (D6): no `UPDATE`, no `DELETE`, no soft
+ * delete. A mistake is corrected by inserting the inverse row with
+ * `kind = 'correction'` and a note.
  *
  * Balance:
  *   `SELECT goal_id, SUM(delta) FROM goal_transactions GROUP BY goal_id`

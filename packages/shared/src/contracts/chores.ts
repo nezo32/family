@@ -12,11 +12,16 @@ import {
 } from './common.js';
 
 /**
- * Chore fairness contracts (D5): rotations, blackouts, swaps, points and the
+ * Chore fairness contracts (D5): rotations, blackouts, swaps, kudos and the
  * fairness read models.
  *
+ * There are no points anywhere in this file, and there must never be again:
+ * scoring a person turns a family into a leaderboard (D5). Fairness is measured
+ * in **chores completed**, a scheduling input the rotation divides by capacity
+ * — never a balance shown to anybody as a total.
+ *
  * The framing rule for every response here: surface load as a neutral
- * "this week" bar, never a sibling leaderboard. That is why the fairness
+ * "this week" split, never a sibling leaderboard. That is why the fairness
  * summary reports a *share* and a *debt*, and deliberately has no rank field.
  */
 
@@ -36,18 +41,6 @@ export const swapStatusSchema = z.enum([
   'expired',
 ]);
 export type SwapStatus = z.infer<typeof swapStatusSchema>;
-
-export const pointsReasonSchema = z.enum([
-  'chore_completed',
-  'covered_for_other',
-  'on_time_bonus',
-  'streak_bonus',
-  'manual_award',
-  'redeemed',
-  'penalty',
-  'swap_bonus',
-]);
-export type PointsReason = z.infer<typeof pointsReasonSchema>;
 
 /* -------------------------------------------------------------------------- */
 /* Rotations                                                                   */
@@ -131,9 +124,11 @@ export const rotationPreviewResponseSchema = z.object({
   picks: z.array(
     z.object({
       userId: idSchema,
-      /** `(earned + committed) / weight` at the moment of the pick. Lowest wins. */
+      /** `(completed + committed) / weight` at the moment of the pick. Lowest wins. */
       debt: z.number(),
-      earned: z.number().int(),
+      /** Chores they completed inside the balance window. */
+      completed: z.number().int(),
+      /** Chores already on their plate but not done yet. */
       committed: z.number().int(),
       weight: choreWeightSchema,
       eligible: z.boolean(),
@@ -189,8 +184,6 @@ export const swapCreateSchema = z.object({
   /** Omit for an **open offer** to the whole family; first taker wins. */
   toUserId: idSchema.optional(),
   message: z.string().max(500).nullish(),
-  /** Sweetener out of the asker's own balance. Booked only on completion. */
-  bonusPoints: z.number().int().min(0).max(100).default(0),
   /** Auto-expire. Defaults server-side to the occurrence deadline. */
   expiresAt: isoDateTimeSchema.optional(),
 });
@@ -213,7 +206,6 @@ export const swapResponseSchema = z.object({
   toUserId: idSchema.nullable(),
   status: swapStatusSchema,
   message: z.string().nullable(),
-  bonusPoints: z.number().int(),
   respondedById: idSchema.nullable(),
   respondedAt: isoDateTimeSchema.nullable(),
   expiresAt: isoDateTimeSchema.nullable(),
@@ -229,63 +221,6 @@ export const swapListQuerySchema = cursorPaginationSchema.extend({
 export type SwapListQuery = z.infer<typeof swapListQuerySchema>;
 
 export const swapListResponseSchema = paginatedSchema(swapResponseSchema);
-
-/* -------------------------------------------------------------------------- */
-/* Points                                                                      */
-/* -------------------------------------------------------------------------- */
-
-export const pointsEntryResponseSchema = z.object({
-  id: idSchema,
-  userId: idSchema,
-  delta: z.number().int(),
-  reason: pointsReasonSchema,
-  occurrenceId: idSchema.nullable(),
-  /** Denormalized for the history list. NULL once the occurrence is purged. */
-  occurrenceTitle: z.string().nullable(),
-  awardedById: idSchema.nullable(),
-  note: z.string().nullable(),
-  createdAt: isoDateTimeSchema,
-});
-export type PointsEntryResponse = z.infer<typeof pointsEntryResponseSchema>;
-
-/**
- * Manual award or penalty. The ledger is append-only (D5): a mistake is fixed
- * with an opposite entry, never an edit, so there is no update or delete route.
- */
-export const pointsAwardSchema = z
-  .object({
-    userId: idSchema,
-    delta: z.number().int().min(-1000).max(1000),
-    reason: z.enum(['manual_award', 'penalty', 'redeemed']),
-    note: z.string().max(500).nullish(),
-  })
-  .refine((v) => v.delta !== 0, { message: 'delta не может быть нулевым', path: ['delta'] })
-  .refine((v) => (v.reason === 'manual_award' ? v.delta > 0 : v.delta < 0), {
-    message: 'Знак delta должен соответствовать причине',
-    path: ['delta'],
-  });
-export type PointsAward = z.infer<typeof pointsAwardSchema>;
-
-export const pointsLedgerQuerySchema = cursorPaginationSchema.extend({
-  userId: idSchema.optional(),
-  reason: z.array(pointsReasonSchema).optional(),
-  from: isoDateSchema.optional(),
-  to: isoDateSchema.optional(),
-});
-export type PointsLedgerQuery = z.infer<typeof pointsLedgerQuerySchema>;
-
-export const pointsLedgerResponseSchema = paginatedSchema(pointsEntryResponseSchema);
-
-export const pointsBalanceSchema = z.object({
-  userId: idSchema,
-  /** `SUM(delta)` over all time. Never a cached column (D5). */
-  balance: z.number().int(),
-  /** `SUM(delta)` inside the requested window. */
-  windowTotal: z.number().int(),
-  currentStreak: z.number().int(),
-  longestStreak: z.number().int(),
-});
-export type PointsBalance = z.infer<typeof pointsBalanceSchema>;
 
 /* -------------------------------------------------------------------------- */
 /* Fairness read model                                                         */
@@ -305,19 +240,18 @@ export const fairnessQuerySchema = z.object({
 export type FairnessQuery = z.infer<typeof fairnessQuerySchema>;
 
 /**
- * "This week's load", the neutral bar from D5. Note the absence of a rank: the
- * UI compares each member to their *own fair share*, not to each other.
+ * "This week's split of the housework", the neutral view from D5. Note the
+ * absence of a rank: the UI compares each member to their *own fair share*, not
+ * to each other, and shows no per-person total at all.
  */
 export const fairnessMemberSchema = z.object({
   userId: idSchema,
   weight: choreWeightSchema,
-  /** Chores completed in the window. */
+  /** Chores completed in the window. A scheduling input, never a score. */
   completed: z.number().int(),
   /** Still-scheduled chores assigned in the window. */
   committed: z.number().int(),
-  /** Points earned in the window. */
-  earned: z.number().int(),
-  /** `(earned + committed) / weight` — the rotation's ordering key. */
+  /** `(completed + committed) / weight` — the rotation's ordering key. */
   debt: z.number(),
   /** This member's weight as a fraction of total weight, 0..1. */
   fairShare: z.number(),
@@ -350,7 +284,7 @@ export type FairnessSummaryResponse = z.infer<typeof fairnessSummaryResponseSche
 export const kudosCreateSchema = z.object({
   toUserId: idSchema,
   occurrenceId: idSchema.nullish(),
-  /** A single emoji. Carries no points on purpose (D5: no heavy gamification). */
+  /** A single emoji. A thank-you addressed to a person, never a tally (D5). */
   emoji: z.string().min(1).max(8).default('\u{1F44F}'),
   message: z.string().max(280).nullish(),
 });

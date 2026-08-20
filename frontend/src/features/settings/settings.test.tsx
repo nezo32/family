@@ -1,10 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import type { LinkedIdentityList } from '@family/shared';
 
+import { InstallPrompt } from '@/features/auth/components/InstallPrompt';
+import {
+  INSTALL_DISMISSED_KEY,
+  INSTALL_ENGAGEMENT_KEY,
+  recordEngagement,
+} from '@/features/auth/components/install';
 import { parsePushPayload, notificationOptions, safeNavigatePath } from './push/payload';
 import { ackKey, ackPath, postAck } from './push/ack-queue';
 import {
@@ -14,7 +20,16 @@ import {
   pushAvailability,
   reconcileSubscription,
   setPrimedRegistration,
+  setPrimedVapidKeyForTests,
 } from './push/push';
+import {
+  PUSH_PROMPT_DISMISSED_KEY,
+  PUSH_PROMPT_SHOWN_KEY,
+  dismissPushPrompt,
+  shouldOfferPushPrompt,
+} from './push/onboarding';
+import { PushOnboarding } from './push/PushOnboarding';
+import { SETTINGS_RU } from './locale';
 import { canUnlink } from './api';
 import AccountsPage from './pages/AccountsPage';
 
@@ -443,5 +458,179 @@ describe('unbinding the last login method', () => {
     expect(canUnlink(identitiesResponse(['google']))).toBe(false);
     expect(canUnlink(identitiesResponse(['google', 'telegram']))).toBe(true);
     expect(canUnlink(undefined)).toBe(false);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* 6. the self-raised notification offer (research doc §13)                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The funnel is the feature. Everything below tests a *refusal*, because the
+ * failure this code exists to prevent is not "the card looked wrong" — it is
+ * `Notification.requestPermission()` firing at a moment the user was not ready
+ * for. That prompt can be shown **once, ever**; a «Не разрешать» leaves
+ * `Notification.permission` permanently `'denied'` and the only way back is iOS
+ * Settings, which no family member finds.
+ */
+
+const IPHONE_SAFARI_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 26_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.6 Mobile/15E148 Safari/604.1';
+
+function stubUserAgent(userAgent: string, maxTouchPoints = 5): void {
+  Object.defineProperty(window.navigator, 'userAgent', { configurable: true, value: userAgent });
+  Object.defineProperty(window.navigator, 'maxTouchPoints', {
+    configurable: true,
+    value: maxTouchPoints,
+  });
+}
+
+/** The real shape of a Safari tab on iOS: the API is *absent*, not `'denied'`. */
+function removeNotificationApi(): void {
+  Reflect.deleteProperty(window as unknown as Record<string, unknown>, 'Notification');
+  Reflect.deleteProperty(window as unknown as Record<string, unknown>, 'PushManager');
+}
+
+/**
+ * Mirrors the pair of slots `AppShell` renders, because "show the install sheet
+ * instead" is a statement about the two of them together: `PushOnboarding`
+ * stands down where push cannot work, and the install card is what remains.
+ */
+function renderShellSlots() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <InstallPrompt />
+        <PushOnboarding />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+/** Walk past the "never on first paint" delay. */
+function settle(): void {
+  act(() => {
+    vi.advanceTimersByTime(5000);
+  });
+}
+
+describe('the notification offer in the app shell', () => {
+  const originalUserAgent = window.navigator.userAgent;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    window.localStorage.removeItem(INSTALL_ENGAGEMENT_KEY);
+    window.localStorage.removeItem(INSTALL_DISMISSED_KEY);
+    window.localStorage.removeItem(PUSH_PROMPT_DISMISSED_KEY);
+    window.localStorage.removeItem(PUSH_PROMPT_SHOWN_KEY);
+    setPrimedVapidKeyForTests(
+      'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U',
+    );
+    stubServiceWorker(fakeSubscription());
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('{}', { status: 200 }))),
+    );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    setPrimedVapidKeyForTests('');
+    stubUserAgent(originalUserAgent, 0);
+  });
+
+  it('says nothing on first paint, before the user has done anything', () => {
+    stubNotification('default');
+
+    renderShellSlots();
+    // The gate is checked on a timer, so "first paint" is genuinely first paint.
+    expect(screen.queryByTestId('push-offer-card')).not.toBeInTheDocument();
+
+    settle();
+    expect(screen.queryByTestId('push-offer-card')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('install-card')).not.toBeInTheDocument();
+  });
+
+  it('says nothing once the OS prompt has already been answered', () => {
+    // Two engagements: signed in, and did something real. The only thing left
+    // standing between the user and the card is the permission state.
+    recordEngagement();
+    recordEngagement();
+
+    stubNotification('granted');
+    renderShellSlots();
+    settle();
+    expect(screen.queryByTestId('push-offer-card')).not.toBeInTheDocument();
+    expect(shouldOfferPushPrompt({ engaged: true })).toBe(false);
+
+    stubNotification('denied');
+    // Nothing we can render brings a denied permission back; only iOS Settings.
+    expect(shouldOfferPushPrompt({ engaged: true })).toBe(false);
+  });
+
+  it('honours a «Не сейчас» for a fortnight, then may ask once more', () => {
+    recordEngagement();
+    recordEngagement();
+    stubNotification('default');
+
+    expect(shouldOfferPushPrompt({ engaged: true })).toBe(true);
+    dismissPushPrompt();
+
+    renderShellSlots();
+    settle();
+    expect(screen.queryByTestId('push-offer-card')).not.toBeInTheDocument();
+
+    expect(shouldOfferPushPrompt({ engaged: true })).toBe(false);
+    expect(
+      shouldOfferPushPrompt({ engaged: true, now: Date.now() + 15 * 24 * 60 * 60 * 1000 }),
+    ).toBe(true);
+  });
+
+  it('offers the install sheet instead when `Notification` does not exist', () => {
+    // iPhone Safari tab. `window.Notification` is undefined here, so push cannot
+    // be turned on at all — asking about notifications would be a dead end, and
+    // installing is the thing that unblocks it.
+    stubUserAgent(IPHONE_SAFARI_UA);
+    removeNotificationApi();
+    recordEngagement();
+    recordEngagement();
+
+    expect(pushAvailability()).toBe('needs-install');
+
+    renderShellSlots();
+    settle();
+
+    expect(screen.getByTestId('install-card')).toBeInTheDocument();
+    expect(screen.queryByTestId('push-offer-card')).not.toBeInTheDocument();
+    expect(shouldOfferPushPrompt({ engaged: true })).toBe(false);
+  });
+
+  it('reaches the OS prompt only through an explicit yes to our own dialog', async () => {
+    const requestPermission = stubNotification('default', () => Promise.resolve('granted'));
+    recordEngagement();
+    recordEngagement();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+    renderShellSlots();
+    settle();
+
+    const card = await screen.findByTestId('push-offer-card');
+    expect(card).toBeInTheDocument();
+    // Merely showing the card must not have spent the one-shot prompt.
+    expect(requestPermission).not.toHaveBeenCalled();
+
+    // Tap 1: our card. Opens our dialog, and still spends nothing.
+    await user.click(screen.getByRole('button', { name: SETTINGS_RU.push.offerAccept }));
+    await screen.findByText(SETTINGS_RU.push.promptWarning);
+    expect(requestPermission).not.toHaveBeenCalled();
+
+    // Tap 2: «Разрешить» in our dialog. Only now, and synchronously.
+    await user.click(screen.getByRole('button', { name: SETTINGS_RU.push.promptAccept }));
+    await waitFor(() => {
+      expect(requestPermission).toHaveBeenCalledTimes(1);
+    });
   });
 });

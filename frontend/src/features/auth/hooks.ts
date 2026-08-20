@@ -14,6 +14,7 @@ import { meKeys } from '@/shared/auth/use-me';
 import { setAccessToken } from '@/shared/api/token-store';
 import { resetRefreshState, signOut } from '@/shared/api/refresh';
 import { authKeys, fetchAccountStatus, forgetTicket, login, register, rememberTicket } from './api';
+import { recordEngagement } from './components/install';
 
 /**
  * TanStack Query wrappers for the auth feature.
@@ -61,6 +62,15 @@ function applyAuthOutcome(outcome: AuthOutcome, context: OutcomeContext): void {
     resetRefreshState();
     setAccessToken(outcome.session.accessToken);
     forgetTicket();
+    /*
+     * Signing in is the first thing that is unambiguously *not* first paint, and
+     * it is the gate both self-raised prompts wait on — the install card
+     * (`shouldOfferInstall`) and the notification card
+     * (`shouldOfferPushPrompt`). Nothing was calling this, so the counter never
+     * left 0 and neither prompt could ever appear: the install funnel and the
+     * whole notification feature were unreachable from the UI.
+     */
+    recordEngagement();
     context.onSession();
     context.navigate(safeNext(context.next), { replace: true });
     return;
@@ -92,6 +102,10 @@ export function useLogin(
   const queryClient = useQueryClient();
 
   return useMutation({
+    // Signing in is counted by `applyAuthOutcome` below, once, and only when a
+    // session actually came back. The blanket counter in `app/providers.tsx`
+    // would otherwise also count a `pending_approval` outcome as engagement.
+    meta: { engagement: false },
     mutationFn: (body: LoginRequest) => login(body),
     onSuccess: (outcome) => {
       applyAuthOutcome(outcome, {
@@ -114,6 +128,7 @@ export function useRegister(
   const queryClient = useQueryClient();
 
   return useMutation({
+    meta: { engagement: false },
     mutationFn: (body: RegisterRequest) => register(body),
     onSuccess: (outcome) => {
       // Normally this ends on `/auth/pending`; the very first member of a brand
@@ -138,6 +153,8 @@ export function useLogout(): { logout: () => Promise<void>; isPending: boolean }
   const queryClient = useQueryClient();
 
   const mutation = useMutation({
+    // Leaving is not engagement.
+    meta: { engagement: false },
     mutationFn: async () => {
       await signOut();
     },

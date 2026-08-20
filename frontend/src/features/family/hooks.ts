@@ -9,7 +9,6 @@ import {
 import {
   assignableRoles,
   canManageRole,
-  type FairnessMember,
   type Role,
   type TaskOccurrenceResponse,
 } from '@family/shared';
@@ -21,7 +20,6 @@ import {
   familyKeys,
   fetchRoster,
   fetchUpcomingTasks,
-  fetchWeeklyLoad,
   reactivateMember,
   suspendMember,
   updateMember,
@@ -46,9 +44,6 @@ import { FAMILY_RU } from './locale';
  *     need. The permission gate always sits in front of it (D4).
  */
 
-/** The load window shown on this screen: the last seven days. */
-export const LOAD_WINDOW_DAYS = 7;
-
 /** How far ahead the member sheet looks for "ближайшие дела". */
 const UPCOMING_WINDOW_DAYS = 14;
 
@@ -64,46 +59,6 @@ export function useRoster(): UseQueryResult<Roster, Error> {
     queryFn: ({ signal }) => fetchRoster(signal),
     enabled: isReady && can('member:read'),
   });
-}
-
-export interface WeeklyLoadResult {
-  /** `userId` → their own numbers. Empty when the endpoint is unavailable. */
-  byMember: ReadonlyMap<string, FairnessMember>;
-  /** False when there is simply no load data to show — not an error state. */
-  isAvailable: boolean;
-  isPending: boolean;
-}
-
-/**
- * The neutral weekly load (D5).
- *
- * Requires the `any` scope on `task:read`: load across the *whole family* is a
- * different question from "my own chores", and a child holding `task:read:own`
- * must not be able to ask it.
- */
-export function useWeeklyLoad(): WeeklyLoadResult {
-  const { scopeFor, isReady } = useCan();
-
-  const query = useQuery({
-    queryKey: familyKeys.load(LOAD_WINDOW_DAYS),
-    queryFn: ({ signal }) => fetchWeeklyLoad(LOAD_WINDOW_DAYS, signal),
-    enabled: isReady && scopeFor('task:read') === 'any',
-    // Enrichment: a missing endpoint must cost one request, not three.
-    retry: false,
-    staleTime: 60_000,
-  });
-
-  const { data, isSuccess, isPending, fetchStatus } = query;
-
-  return useMemo(() => {
-    const byMember = new Map<string, FairnessMember>();
-    for (const member of data?.members ?? []) byMember.set(member.userId, member);
-    return {
-      byMember,
-      isAvailable: isSuccess && byMember.size > 0,
-      isPending: isPending && fetchStatus !== 'idle',
-    };
-  }, [data, isSuccess, isPending, fetchStatus]);
 }
 
 export function useMemberUpcomingTasks(

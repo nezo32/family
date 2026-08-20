@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { QueryClient } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
-import type { ShoppingItemResponse } from '@family/shared';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, render, renderHook, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
+import type { ReactNode } from 'react';
+import type { Permission, ShoppingItemResponse, ShoppingListResponse } from '@family/shared';
 
 /**
  * The offline contract, tested where it actually breaks.
@@ -41,14 +44,19 @@ vi.mock('@/shared/lib/toast', () => ({
 }));
 
 import { ApiError, NetworkError } from '@/shared/api/errors';
+import { meKeys } from '@/shared/auth/use-me';
+import { makeMe } from '@/test/me';
 import { shoppingKeys } from './api';
 import { optimisticItem, upsertItem, type ItemsCache } from './grouping';
-import { createOutboxHandlers } from './hooks';
+import { createOutboxHandlers, useUpdateItem, useUpdateList } from './hooks';
+import { ListCard } from './components/ListCard';
+import { ItemRow } from './components/ItemRow';
+import { SHOPPING_RU } from './locale';
 import { parseQuickAddLine, parseQuickAddText } from '@family/shared';
 import { OfflineBanner } from './components/OfflineBanner';
 import * as outbox from './outbox';
 
-const { post, notifyError } = mocks;
+const { patch, del, post, notifyError } = mocks;
 
 const LIST_ID = '11111111-1111-4111-8111-111111111111';
 const CLIENT_ID = '22222222-2222-4222-8222-222222222222';
@@ -336,5 +344,344 @@ describe('quick-add parsing', () => {
     ['2 кг картошки', 'картошка'],
   ])('keys «%s» exactly as the server does (%s)', (input, key) => {
     expect(parseQuickAddLine(input)?.normalizedName).toBe(key);
+  });
+});
+
+
+/* -------------------------------------------------------------------------- */
+/* List management                                                            */
+/* -------------------------------------------------------------------------- */
+
+function listRow(overrides: Partial<ShoppingListResponse> = {}): ShoppingListResponse {
+  return {
+    id: LIST_ID,
+    name: 'Продукты',
+    icon: null,
+    color: null,
+    isArchived: false,
+    sortOrder: 0,
+    createdById: 'user-1',
+    neededCount: 3,
+    totalCount: 12,
+    createdAt: '2026-08-19T10:00:00.000Z',
+    updatedAt: '2026-08-19T10:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function cachedList(): ShoppingListResponse | undefined {
+  return qc.getQueryData<ShoppingListResponse[]>(shoppingKeys.list(false))?.[0];
+}
+
+function renderCard(permissions: Permission[], list = listRow()) {
+  // Seeding `['me']` rather than stubbing the endpoint keeps `useCan()` on its
+  // real code path: the permission list still comes through the contract.
+  qc.setQueryData(meKeys.detail(), makeMe({ permissions }));
+  qc.setQueryData(shoppingKeys.list(false), [list]);
+
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>
+        <ul>
+          <ListCard list={list} to={`/shopping/${list.id}`} />
+        </ul>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+async function openMenu(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: SHOPPING_RU.listActions }));
+}
+
+describe('list management — who may touch a list at all', () => {
+  /**
+   * A child holds `shopping:read` and `shopping:write`: they may add
+   * «мороженое» and tick it off. They may not archive or destroy the container
+   * everybody else is writing into — and they must not be shown a greyed-out
+   * «Удалить список» either, because a disabled control is an invitation to
+   * wonder what you did wrong.
+   */
+  it('renders no management control at all for shopping:write without list:manage', () => {
+    renderCard(['shopping:read', 'shopping:write']);
+
+    expect(screen.queryByRole('button', { name: SHOPPING_RU.listActions })).toBeNull();
+    expect(screen.queryByText(SHOPPING_RU.deleteList)).toBeNull();
+    expect(screen.queryByText(SHOPPING_RU.archiveList)).toBeNull();
+    // The list itself is still readable — this is about the container, not the
+    // contents.
+    expect(screen.getByText('Продукты')).toBeInTheDocument();
+  });
+
+  it('offers edit, archive and delete to a holder of shopping:list:manage', async () => {
+    const user = userEvent.setup();
+    renderCard(['shopping:read', 'shopping:write', 'shopping:list:manage']);
+
+    await openMenu(user);
+
+    expect(await screen.findByText(SHOPPING_RU.editList)).toBeInTheDocument();
+    // Archive is the gentle option and comes first; delete sits below the
+    // separator wearing the destructive colour.
+    expect(screen.getByText(SHOPPING_RU.archiveList)).toBeInTheDocument();
+    expect(screen.getByText(SHOPPING_RU.deleteList)).toBeInTheDocument();
+  });
+
+  it('offers «вернуть из архива» instead of «убрать в архив» on an archived list', async () => {
+    const user = userEvent.setup();
+    renderCard(['shopping:list:manage'], listRow({ isArchived: true }));
+
+    await openMenu(user);
+
+    expect(await screen.findByText(SHOPPING_RU.unarchiveList)).toBeInTheDocument();
+    expect(screen.queryByText(SHOPPING_RU.archiveList)).toBeNull();
+  });
+});
+
+describe('deleting a list', () => {
+  /**
+   * `DELETE /shopping/lists/:id` takes no `confirm` flag and answers
+   * `{ ok: true }` — the server will not tell us, before or after, how much it
+   * destroyed. So the count in the warning is the list's own `totalCount`, and
+   * it has to be a real number: «вы уверены?» is not a question anybody can
+   * answer.
+   */
+  it('says how many позиций go with the list', async () => {
+    const user = userEvent.setup();
+    renderCard(['shopping:list:manage'], listRow({ totalCount: 12 }));
+
+    await openMenu(user);
+    await user.click(await screen.findByText(SHOPPING_RU.deleteList));
+
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent('Удалить «Продукты»?');
+    expect(dialog).toHaveTextContent('В списке 12 позиций. Удалить вместе со списком?');
+    // And it points at the reversible option while there is still time.
+    expect(dialog).toHaveTextContent(SHOPPING_RU.deleteListArchiveHint);
+  });
+
+  it('agrees the count with the number, rather than always saying «позиций»', async () => {
+    const user = userEvent.setup();
+    renderCard(['shopping:list:manage'], listRow({ totalCount: 2 }));
+
+    await openMenu(user);
+    await user.click(await screen.findByText(SHOPPING_RU.deleteList));
+
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('В списке 2 позиции.');
+  });
+
+  it('does not pretend an empty list is full of things', async () => {
+    const user = userEvent.setup();
+    renderCard(['shopping:list:manage'], listRow({ totalCount: 0, neededCount: 0 }));
+
+    await openMenu(user);
+    await user.click(await screen.findByText(SHOPPING_RU.deleteList));
+
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Список пуст');
+  });
+
+  it('drops the list from the cache only after the server confirms it', async () => {
+    const user = userEvent.setup();
+    del.mockResolvedValue({ ok: true });
+    renderCard(['shopping:list:manage']);
+
+    await openMenu(user);
+    await user.click(await screen.findByText(SHOPPING_RU.deleteList));
+    await user.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', {
+        name: SHOPPING_RU.deleteList,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(del).toHaveBeenCalledWith(`/shopping/lists/${LIST_ID}`);
+    });
+    await waitFor(() => {
+      expect(cachedList()).toBeUndefined();
+    });
+    // The items belonged to a list that no longer exists.
+    expect(qc.getQueryData(shoppingKeys.items(LIST_ID))).toBeUndefined();
+  });
+
+  /**
+   * The delete is deliberately **not** optimistic: a shared list is not a row
+   * of «молоко» somebody can retype. So "rolling back" a failed delete means
+   * the list was never taken away in the first place — the card is still there,
+   * the cache still holds it, and the only thing that changed is a Russian
+   * error toast mapped from the `ErrorCode`.
+   */
+  it('leaves the list exactly where it was when the delete fails', async () => {
+    const user = userEvent.setup();
+    del.mockRejectedValue(new ApiError({ code: 'FORBIDDEN', status: 403 }));
+    renderCard(['shopping:list:manage']);
+
+    await openMenu(user);
+    await user.click(await screen.findByText(SHOPPING_RU.deleteList));
+    await user.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', {
+        name: SHOPPING_RU.deleteList,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(notifyError).toHaveBeenCalled();
+    });
+    expect(cachedList()?.name).toBe('Продукты');
+    expect(screen.getByText('Продукты')).toBeInTheDocument();
+  });
+});
+
+describe('renaming a list', () => {
+  function wrapper({ children }: { children: ReactNode }) {
+    return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+  }
+
+  /**
+   * Rename is the one list operation that *is* safe to do optimistically: every
+   * field is reversible and the previous row is held for the rollback. The
+   * assertion below is the whole contract — the new name is on screen before
+   * the request lands, and the old one is back if it never does.
+   */
+  it('shows the new name immediately and puts the old one back when the patch fails', async () => {
+    qc.setQueryData(shoppingKeys.list(false), [listRow()]);
+
+    let reject: (error: unknown) => void = () => undefined;
+    patch.mockReturnValue(
+      new Promise((_resolve, rejectFn: (error: unknown) => void) => {
+        reject = rejectFn;
+      }),
+    );
+
+    const { result } = renderHook(() => useUpdateList(LIST_ID), { wrapper });
+
+    act(() => {
+      result.current.mutate({ name: 'Овощи' });
+    });
+    await waitFor(() => {
+      expect(cachedList()?.name).toBe('Овощи');
+    });
+
+    act(() => {
+      reject(new ApiError({ code: 'VALIDATION_ERROR', status: 400 }));
+    });
+
+    await waitFor(() => {
+      expect(cachedList()?.name).toBe('Продукты');
+    });
+    expect(notifyError).toHaveBeenCalled();
+  });
+
+  it('archives by taking the card off the active list, not by labelling it', async () => {
+    qc.setQueryData(shoppingKeys.list(false), [listRow()]);
+    qc.setQueryData(shoppingKeys.list(true), [listRow()]);
+    patch.mockResolvedValue(listRow({ isArchived: true }));
+
+    const { result } = renderHook(() => useUpdateList(LIST_ID), { wrapper });
+
+    await act(async () => {
+      await result.current.mutateAsync({ isArchived: true });
+    });
+
+    // Gone from the query the overview reads…
+    expect(qc.getQueryData<ShoppingListResponse[]>(shoppingKeys.list(false))).toEqual([]);
+    // …and still present, flagged, in the one `ListPage` reads.
+    expect(
+      qc.getQueryData<ShoppingListResponse[]>(shoppingKeys.list(true))?.[0]?.isArchived,
+    ).toBe(true);
+  });
+});
+
+
+/* -------------------------------------------------------------------------- */
+/* Editing one line                                                           */
+/* -------------------------------------------------------------------------- */
+
+describe('editing an item', () => {
+  function hookWrapper({ children }: { children: ReactNode }) {
+    return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+  }
+
+  function renderRow(overrides: { shopMode?: boolean; canWrite?: boolean } = {}) {
+    return render(
+      <ul>
+        <ItemRow
+          item={serverRow()}
+          pending={false}
+          shopMode={overrides.shopMode ?? false}
+          canWrite={overrides.canWrite ?? true}
+          onToggle={() => undefined}
+          onEdit={() => undefined}
+          onDelete={() => undefined}
+        />
+      </ul>,
+    );
+  }
+
+  /**
+   * One 44px control on the far side, holding both actions — the same footprint
+   * the bare delete button used to have. The «купил» target must not shrink to
+   * make room for a correction nobody makes mid-aisle.
+   */
+  it('keeps edit and delete behind a single overflow control', async () => {
+    const user = userEvent.setup();
+    renderRow();
+
+    // The row is still one big checkbox, and the menu has not eaten a second
+    // slot next to it.
+    expect(screen.getByRole('checkbox')).toBeInTheDocument();
+    const triggers = screen.getAllByRole('button', { name: SHOPPING_RU.itemActions });
+    expect(triggers).toHaveLength(1);
+
+    await user.click(triggers[0]!);
+
+    expect(await screen.findByText(SHOPPING_RU.editItem)).toBeInTheDocument();
+    expect(screen.getByText(SHOPPING_RU.deleteItem)).toBeInTheDocument();
+  });
+
+  it('offers nothing but the tick in shop mode', () => {
+    renderRow({ shopMode: true });
+
+    expect(screen.queryByRole('button', { name: SHOPPING_RU.itemActions })).toBeNull();
+    expect(screen.getByRole('checkbox')).toBeInTheDocument();
+  });
+
+  it('offers nothing at all to a reader without shopping:write', () => {
+    renderRow({ canWrite: false });
+
+    expect(screen.queryByRole('button', { name: SHOPPING_RU.itemActions })).toBeNull();
+  });
+
+  it('shows the corrected quantity at once and restores it when the patch fails', async () => {
+    qc.setQueryData<ItemsCache>(shoppingKeys.items(LIST_ID), {
+      items: [serverRow({ quantity: 2 })],
+      nextCursor: null,
+    });
+
+    let reject: (error: unknown) => void = () => undefined;
+    patch.mockReturnValue(
+      new Promise((_resolve, rejectFn: (error: unknown) => void) => {
+        reject = rejectFn;
+      }),
+    );
+
+    const { result } = renderHook(() => useUpdateItem(LIST_ID), { wrapper: hookWrapper });
+
+    act(() => {
+      result.current.mutate({ itemId: 'server-1', body: { quantity: 3 } });
+    });
+    await waitFor(() => {
+      expect(cache()?.items[0]?.quantity).toBe(3);
+    });
+    // A partial patch must not blank the fields it never mentioned.
+    expect(cache()?.items[0]?.unit).toBe('шт');
+    expect(cache()?.items[0]?.name).toBe('Молоко');
+
+    act(() => {
+      reject(new ApiError({ code: 'VALIDATION_ERROR', status: 400 }));
+    });
+
+    await waitFor(() => {
+      expect(cache()?.items[0]?.quantity).toBe(2);
+    });
+    expect(notifyError).toHaveBeenCalled();
   });
 });

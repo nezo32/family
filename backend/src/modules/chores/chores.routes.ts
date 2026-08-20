@@ -15,11 +15,6 @@ import {
   kudosListResponseSchema,
   kudosResponseSchema,
   okSchema,
-  pointsAwardSchema,
-  pointsBalanceSchema,
-  pointsEntryResponseSchema,
-  pointsLedgerQuerySchema,
-  pointsLedgerResponseSchema,
   rotationCreateSchema,
   rotationListQuerySchema,
   rotationListResponseSchema,
@@ -79,12 +74,6 @@ import { ChoresService, type ChoreActor } from './chores.service.js';
  */
 
 const idParamsSchema = z.object({ id: idSchema });
-
-const balanceQuerySchema = z.object({
-  /** Defaults to the caller. Another member needs `task:read:any`. */
-  userId: idSchema.optional(),
-  windowDays: z.coerce.number().int().min(1).max(365).default(28),
-});
 
 /** The auth plugin guarantees `req.auth` on every guarded route; this narrows it. */
 function actorOf(request: FastifyRequest): ChoreActor {
@@ -306,60 +295,6 @@ const choresRoutes: FastifyPluginAsync = async (fastify) => {
     async (request) => service.swaps.cancel(actorOf(request), request.params.id),
   );
 
-  /* ------------------------------- points ------------------------------ */
-
-  app.get(
-    '/chores/points',
-    {
-      config: { scoped: 'task:read', notFoundOnDeny: true },
-      schema: {
-        tags: ['chores'],
-        summary: 'История очков (журнал только на добавление)',
-        querystring: pointsLedgerQuerySchema,
-        response: { 200: pointsLedgerResponseSchema },
-      },
-    },
-    async (request) => {
-      const actor = actorOf(request);
-      // Without `:any` you only ever see your own ledger (D4: narrow, don't 403).
-      const userId = actor.can('task:read:any') ? request.query.userId : actor.id;
-      return service.points.listLedger({ ...request.query, userId });
-    },
-  );
-
-  app.post(
-    '/chores/points',
-    {
-      config: { permission: 'task:assign:any' },
-      schema: {
-        tags: ['chores'],
-        summary: 'Начислить или списать очки вручную',
-        body: pointsAwardSchema,
-        response: { 201: pointsEntryResponseSchema },
-      },
-    },
-    async (request, reply) =>
-      reply.code(201).send(await service.points.award(actorOf(request), request.body)),
-  );
-
-  app.get(
-    '/chores/points/balance',
-    {
-      config: { scoped: 'task:read', notFoundOnDeny: true },
-      schema: {
-        tags: ['chores'],
-        summary: 'Баланс очков и серии',
-        querystring: balanceQuerySchema,
-        response: { 200: pointsBalanceSchema },
-      },
-    },
-    async (request) => {
-      const actor = actorOf(request);
-      const userId = actor.can('task:read:any') ? (request.query.userId ?? actor.id) : actor.id;
-      return service.points.balanceFor(userId, request.query.windowDays);
-    },
-  );
-
   /* ------------------------------ fairness ----------------------------- */
 
   app.get(
@@ -368,7 +303,7 @@ const choresRoutes: FastifyPluginAsync = async (fastify) => {
       config: { permission: 'task:read:any', notFoundOnDeny: true },
       schema: {
         tags: ['chores'],
-        summary: 'Нагрузка за период — нейтральная полоса, без рейтинга',
+        summary: 'Как разделились дела за период — распределение, без рейтинга',
         querystring: fairnessQuerySchema,
         response: { 200: fairnessSummaryResponseSchema },
       },

@@ -144,7 +144,7 @@ export default function GoalsPage() {
           }
         />
       ) : (
-        <ul className="grid grid-cols-1 gap-4 pb-4 sm:grid-cols-2 xl:grid-cols-3">
+        <ul className="grid grid-cols-1 gap-4 pb-4 sm:grid-cols-2">
           {goals.map((goal) => (
             <li key={goal.id} className="min-w-0">
               <GoalCard goal={goal} roster={roster} canContribute={abilities.canContribute} />
@@ -162,7 +162,7 @@ export default function GoalsPage() {
 
 function GoalGridSkeleton() {
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       {[0, 1, 2, 3].map((card) => (
         <div key={card} className="space-y-4 rounded-2xl border p-5">
           <div className="flex items-start gap-4">

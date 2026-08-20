@@ -5,16 +5,29 @@ import { EmptyState } from '@/shared/components/EmptyState';
 import { TASKS_RU } from '../locale';
 
 /**
- * «Нагрузка за неделю» — the neutral bar of D5.
+ * «Как разделились дела на этой неделе» — the one place the family sees its own
+ * distribution of housework.
  *
- * Explicitly **not** a leaderboard: there is no rank, no ordering by effort, no
- * winner. Members are listed alphabetically and each row compares one person to
- * **their own fair share** (the tick on the bar), never to a sibling. The
- * contract has no `rank` field for exactly this reason, and adding one here
- * would be a regression: ranking siblings generates arguments, not chores.
+ * This is the component that survived the removal of the score system (D5), and
+ * it only survived on terms. What it is: a picture of how one week's work split
+ * across the household, so an adult can notice a lopsided week and start a
+ * conversation. What it is deliberately not:
  *
- * Points are shown quietly, as something already earned — never as a score to
- * beat.
+ * - **no per-person totals.** There used to be «3 · 21 балл» beside every name.
+ *   A number attached to a person, printed next to their siblings' numbers, is
+ *   a scoreboard whatever the header says — and a child reading a smaller
+ *   number next to a bigger one learns they are losing. The bars stayed; the
+ *   numbers went.
+ * - **no ranking.** Members are listed alphabetically, never by effort, and
+ *   there is no position, medal or arrow. The contract has no `rank` field for
+ *   exactly this reason, and adding one here would be a regression.
+ * - **no score.** Nothing here accumulates across weeks. The window resets, and
+ *   with it any sense that somebody is "behind".
+ *
+ * Each row compares one person to **their own fair share** — the tick on their
+ * bar, derived from their rotation weight. Two children with different weights
+ * can both sit exactly on their mark, and that is the point: the honest
+ * question is "is the split about right", not "who did most".
  */
 export function WeeklyLoad(props: {
   members: readonly FairnessMember[];
@@ -60,17 +73,12 @@ export function WeeklyLoad(props: {
           const name = user?.displayName ?? '—';
           return (
             <li key={member.userId} className="space-y-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <span className="flex min-w-0 items-center gap-2">
-                  {user ? (
-                    <UserAvatar user={user} size="xs" highlighted={user.id === userId} />
-                  ) : null}
-                  <span className="truncate text-sm text-foreground">{name}</span>
-                </span>
-                <span className="shrink-0 text-xs text-muted-foreground">
-                  {member.completed} · {member.earned} {TASKS_RU.load.earned.toLowerCase()}
-                </span>
-              </div>
+              <span className="flex min-w-0 items-center gap-2">
+                {user ? (
+                  <UserAvatar user={user} size="xs" highlighted={user.id === userId} />
+                ) : null}
+                <span className="truncate text-sm text-foreground">{name}</span>
+              </span>
 
               <div
                 className="relative h-2.5 w-full overflow-hidden rounded-full bg-muted"
@@ -91,9 +99,7 @@ export function WeeklyLoad(props: {
               </div>
 
               {member.coveredForOthers > 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  {TASKS_RU.load.covered}: {member.coveredForOthers}
-                </p>
+                <p className="text-xs text-muted-foreground">{TASKS_RU.load.covered}</p>
               ) : null}
             </li>
           );

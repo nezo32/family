@@ -1,15 +1,20 @@
 import { Gauge } from 'lucide-react';
-import { TODAY_RU, choreCount, eventCount, pointWord, taskCount } from '../locale';
+import { TODAY_RU, choreCount, eventCount, taskCount } from '../locale';
 import type { DashboardFairness, WeekResponse } from '../types';
 import { WidgetCard } from './WidgetCard';
 
 /**
- * «Ваша неделя» — the neutral load bar from D5.
+ * «Ваша неделя» — my own share of the week, from D5.
  *
- * Deliberately absent: a rank, a medal, another member's numbers next to mine.
- * The bar is my share of the family's week against the whole; the server sends
- * a neutral Russian `note` alongside it (the contract guarantees it is never
- * comparative), and that sentence is the only interpretation shown.
+ * Deliberately absent: a rank, a medal, a score, another member's numbers next
+ * to mine. The bar is my share of the family's week against the whole; the
+ * server sends a neutral Russian `note` alongside it (the contract guarantees
+ * it is never comparative), and that sentence is the only interpretation shown.
+ *
+ * There was a «баллы» tile in the middle of the row below until the score
+ * system was removed — a number that follows a person around and grows when
+ * they do chores is the sibling scoreboard D5 rules out, whatever it is
+ * labelled.
  *
  * The second line is the week *ahead*, from `GET /dashboard/week` — it answers
  * "is tomorrow going to be busy" without leaving the home screen.
@@ -32,9 +37,8 @@ export function LoadWidget(props: {
         <span className="bg-primary" style={{ width: `${String(share)}%` }} />
       </div>
 
-      <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
+      <dl className="mt-3 grid grid-cols-2 gap-2 text-center">
         <Stat value={String(me.doneCount)} label={TODAY_RU.loadDone} />
-        <Stat value={String(me.points)} label={pointWord(me.points)} />
         <Stat value={`${String(share)} %`} label={TODAY_RU.loadShare} />
       </dl>
 

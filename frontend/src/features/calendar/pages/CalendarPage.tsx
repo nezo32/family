@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { EventOccurrenceResponse } from '@family/shared';
 import { CalendarDays, Plus } from 'lucide-react';
+import { SideColumn } from '@/app/layout/SideColumn';
 import { PageHeader } from '@/shared/components/PageHeader';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { ErrorState } from '@/shared/components/ErrorState';
@@ -196,9 +197,17 @@ export default function CalendarPage() {
             emptyAction={createButton}
           />
         )}
-
-        <SubscribeCard />
       </div>
+
+      {/*
+        §C4: «Подписаться на календарь» is side-column content — it is the
+        thing you do once and never again, and it has been sitting under the
+        agenda pushing the next month off the fold. Below 1088px the shell
+        drops it back to the bottom of the page, exactly where it is now.
+      */}
+      <SideColumn>
+        <SubscribeCard />
+      </SideColumn>
 
       <EventDetailSheet
         occurrence={detail}

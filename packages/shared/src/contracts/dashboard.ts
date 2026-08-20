@@ -57,7 +57,6 @@ export const dashboardTaskSchema = z.object({
   dueDate: isoDateSchema,
   /** `HH:mm` local. `null` for an all-day / end-of-day task. */
   dueTime: z.string().nullable(),
-  points: z.number().int(),
   category: z.string().nullable(),
   assigneeId: idSchema.nullable(),
   /** Derived from the clock, never stored (see `docs/architecture/scheduling.md` §4). */
@@ -136,9 +135,11 @@ export const dashboardMilestoneSchema = z.object({
 export type DashboardMilestone = z.infer<typeof dashboardMilestoneSchema>;
 
 /**
- * This week's load — deliberately **not** a leaderboard (D5).
+ * This week's split of the housework — deliberately **not** a leaderboard (D5).
  *
- * `members` is ordered by display name, never by score, and there is no rank,
+ * There are no points here and there never will be again: a number that follows
+ * a person around and goes up when they do chores turns siblings into rivals.
+ * `members` is ordered by display name, never by effort, and there is no rank,
  * no medal and no "лучший" field. `sharePercent` is a share of the family's
  * total for the week, so a member who did nothing reads as `0` rather than as
  * "last place". The frontend renders a neutral bar.
@@ -147,7 +148,6 @@ export const dashboardLoadMemberSchema = z.object({
   userId: idSchema,
   displayName: z.string(),
   doneCount: z.number().int().min(0),
-  points: z.number().int(),
   /** `numeric(4,2)` as a decimal string — see `choreWeightSchema`. */
   weight: z.string(),
   /**
@@ -164,7 +164,7 @@ export const dashboardFairnessSchema = z.object({
   weekStart: isoDateSchema,
   weekEnd: isoDateSchema,
   me: dashboardLoadMemberSchema,
-  /** Every active member, sorted by name. Never by score. */
+  /** Every active member, sorted by name. Never by effort. */
   members: z.array(dashboardLoadMemberSchema),
   /** A neutral Russian sentence. Never comparative, never a ranking. */
   note: z.string(),
