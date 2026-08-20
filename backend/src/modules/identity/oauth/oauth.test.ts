@@ -84,9 +84,7 @@ describe('telegram Login Widget HMAC (legacy)', () => {
    * would fail if the implementation quietly changed derivation.
    */
   const handComputed = (dcs: string) =>
-    createHmac('sha256', createHash('sha256').update(BOT_TOKEN).digest())
-      .update(dcs)
-      .digest('hex');
+    createHmac('sha256', createHash('sha256').update(BOT_TOKEN).digest()).update(dcs).digest('hex');
 
   const authDate = 1_700_000_000;
   const now = new Date(authDate * 1000 + 60_000);
@@ -159,7 +157,11 @@ describe('telegram Login Widget HMAC (legacy)', () => {
     const hash = signWidget(basePayload);
     const muchLater = new Date((authDate + 86_400 + 60) * 1000);
     expect(() =>
-      verifyTelegramWidget({ payload: { ...basePayload, hash }, botToken: BOT_TOKEN, now: muchLater }),
+      verifyTelegramWidget({
+        payload: { ...basePayload, hash },
+        botToken: BOT_TOKEN,
+        now: muchLater,
+      }),
     ).toThrowError(/too old/);
   });
 
@@ -167,7 +169,11 @@ describe('telegram Login Widget HMAC (legacy)', () => {
     const hash = signWidget(basePayload);
     const earlier = new Date((authDate - 3600) * 1000);
     expect(() =>
-      verifyTelegramWidget({ payload: { ...basePayload, hash }, botToken: BOT_TOKEN, now: earlier }),
+      verifyTelegramWidget({
+        payload: { ...basePayload, hash },
+        botToken: BOT_TOKEN,
+        now: earlier,
+      }),
     ).toThrowError(/in the future/);
   });
 });
@@ -776,7 +782,7 @@ describe('telegram refusal detection', () => {
 
 describe('telegram login domain probe', () => {
   const reply = (body: string) =>
-    ((() => Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch);
+    (() => Promise.resolve(new Response(body, { status: 200 }))) as unknown as typeof fetch;
 
   it('asks Telegram with the origin and bot id we would really send', async () => {
     let seen = '';
@@ -800,7 +806,7 @@ describe('telegram login domain probe', () => {
     expect(result.indeterminate).toBe(false);
   });
 
-  it('reports Telegram\'s own words when the domain is not registered', async () => {
+  it("reports Telegram's own words when the domain is not registered", async () => {
     const result = await probeTelegramLoginDomain({
       botId: '8936828934',
       origin: 'https://nezo.su',
@@ -863,7 +869,7 @@ describe('telegram token endpoint errors', () => {
    * all. Left alone it surfaces as «"response" body "access_token" property must
    * be a string», which names neither Telegram nor the client secret.
    */
-  it('rewrites Telegram\'s HTTP 200 rejection to the status RFC 6749 requires', async () => {
+  it("rewrites Telegram's HTTP 200 rejection to the status RFC 6749 requires", async () => {
     const normalized = await normalizeTelegramTokenResponse(json({ error: 'invalid_client' }));
     expect(normalized.status).toBe(400);
     await expect(normalized.json()).resolves.toEqual({ error: 'invalid_client' });
@@ -897,7 +903,7 @@ describe('telegram token endpoint errors', () => {
     expect(isTelegramTokenEndpoint('not a url')).toBe(false);
   });
 
-  it('unwraps the library error back into Telegram\'s own words', () => {
+  it("unwraps the library error back into Telegram's own words", () => {
     const err = new ResponseBodyError('server responded with an error in the response body', {
       cause: { error: 'invalid_client', error_description: 'client authentication failed' },
       response: new Response('{}', { status: 400 }),
@@ -963,7 +969,11 @@ describe('oauth route plugin', () => {
   const configOf = (routes: RouteOptions[], method: string, url: string) => {
     const route = routes.find((r) => r.url === url && r.method === method);
     expect(route, `${method} ${url} is not registered`).toBeDefined();
-    return (route?.config ?? {}) as { public?: boolean; allowCrossSite?: boolean; permission?: string };
+    return (route?.config ?? {}) as {
+      public?: boolean;
+      allowCrossSite?: boolean;
+      permission?: string;
+    };
   };
 
   it('registers every documented route under /api', async () => {

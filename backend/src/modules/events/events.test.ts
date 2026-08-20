@@ -1086,7 +1086,6 @@ describe.skipIf(!TEST_DATABASE_URL)('events (database)', () => {
     }
   });
 
-
   it('finds a due reminder against a real database', async () => {
     // Regression: every `Date` in this query reached postgres.js raw, and
     // `drizzle-orm/postgres-js` nulls that driver's timestamp serialisers — so

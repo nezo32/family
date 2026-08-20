@@ -8,18 +8,18 @@ keep the filenames and pixel sizes identical so nothing else has to change.
 
 ## Required files
 
-| File | Size | Purpose | Notes |
-|---|---|---|---|
-| `icons/icon-192.png` | 192×192 | manifest, `purpose: any` | transparent corners, 22 % corner radius |
-| `icons/icon-512.png` | 512×512 | manifest, `purpose: any` + install splash | same artwork, larger |
-| `icons/maskable-192.png` | 192×192 | manifest, `purpose: maskable` | **full-bleed background**, artwork inside the central 80 % safe zone |
-| `icons/maskable-512.png` | 512×512 | manifest, `purpose: maskable` | same rules |
-| `icons/apple-touch-icon-180.png` | 180×180 | `<link rel="apple-touch-icon">` | **no transparency, no rounded corners** — iOS applies its own mask and a transparent PNG shows as a black square on the Home Screen |
-| `../favicon.ico` | 32×32 | browser tab (legacy) | PNG-encoded inside an ICO container |
-| `../favicon.svg` | vector | browser tab (modern) + `mask-icon` | |
-| `../screenshots/mobile-today.png` | 1080×1920 | manifest `screenshots`, `form_factor: narrow` | **must be replaced with a real capture** before any store listing / richer install UI |
-| `../screenshots/mobile-tasks.png` | 1080×1920 | manifest `screenshots`, `form_factor: narrow` | as above |
-| `../screenshots/desktop-today.png` | 1280×800 | manifest `screenshots`, `form_factor: wide` | as above |
+| File                               | Size      | Purpose                                       | Notes                                                                                                                               |
+| ---------------------------------- | --------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `icons/icon-192.png`               | 192×192   | manifest, `purpose: any`                      | transparent corners, 22 % corner radius                                                                                             |
+| `icons/icon-512.png`               | 512×512   | manifest, `purpose: any` + install splash     | same artwork, larger                                                                                                                |
+| `icons/maskable-192.png`           | 192×192   | manifest, `purpose: maskable`                 | **full-bleed background**, artwork inside the central 80 % safe zone                                                                |
+| `icons/maskable-512.png`           | 512×512   | manifest, `purpose: maskable`                 | same rules                                                                                                                          |
+| `icons/apple-touch-icon-180.png`   | 180×180   | `<link rel="apple-touch-icon">`               | **no transparency, no rounded corners** — iOS applies its own mask and a transparent PNG shows as a black square on the Home Screen |
+| `../favicon.ico`                   | 32×32     | browser tab (legacy)                          | PNG-encoded inside an ICO container                                                                                                 |
+| `../favicon.svg`                   | vector    | browser tab (modern) + `mask-icon`            |                                                                                                                                     |
+| `../screenshots/mobile-today.png`  | 1080×1920 | manifest `screenshots`, `form_factor: narrow` | **must be replaced with a real capture** before any store listing / richer install UI                                               |
+| `../screenshots/mobile-tasks.png`  | 1080×1920 | manifest `screenshots`, `form_factor: narrow` | as above                                                                                                                            |
+| `../screenshots/desktop-today.png` | 1280×800  | manifest `screenshots`, `form_factor: wide`   | as above                                                                                                                            |
 
 ## Still needed from a designer
 
@@ -37,8 +37,8 @@ the maskable safe zone, and the opaque Apple touch icon.
 
 ## Palette
 
-| Token | Value | Used for |
-|---|---|---|
-| clay (primary) | `#c2643a` | icon background |
+| Token              | Value     | Used for                                        |
+| ------------------ | --------- | ----------------------------------------------- |
+| clay (primary)     | `#c2643a` | icon background                                 |
 | cream (background) | `#fdf8f2` | the house silhouette, light theme `theme-color` |
-| warm charcoal | `#211d19` | dark theme `theme-color` |
+| warm charcoal      | `#211d19` | dark theme `theme-color`                        |

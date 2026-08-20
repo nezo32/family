@@ -1,101 +1,140 @@
-import { useState } from 'react';
-import { Plus, Vote, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Clock, Plus, Users, X } from 'lucide-react';
 import { createPollSchema } from '@family/shared';
+import { FormSheet } from '@/shared/ui/form-sheet';
+import { Section, SectionStack } from '@/shared/ui/section';
+import { ValueRow } from '@/shared/ui/value-row';
+import { OptionList, OptionRow, PickerSheet } from '@/shared/ui/option-sheet';
 import { Button } from '@/shared/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/shared/ui/dialog';
-import { DateTimeField } from '@/shared/ui/date-time-field';
 import { Input } from '@/shared/ui/input';
-import { Label } from '@/shared/ui/label';
 import { Switch } from '@/shared/ui/switch';
-import { InlineSpinner } from '@/shared/components';
-import { COMMON } from '@/shared/lib/i18n';
+import { Textarea } from '@/shared/ui/textarea';
+import { isoInDays } from '../api';
 import { useCreatePoll } from '../hooks';
 import { WALL_RU } from '../locale';
 
-const MAX_OPTIONS = 10;
-
 /**
- * Ask the family something.
+ * Ask the family something (§F3).
  *
- * The option list is dynamic, so validity is checked by running the shared
- * contract over the draft rather than by re-implementing "at least two
- * non-empty options" here. Nothing is submitted until the contract agrees,
- * which is why this form shows no error text at all: the button is simply not
+ * The option list is dynamic, so validity is checked by running the **shared
+ * contract** over the assembled draft rather than by re-implementing "at least
+ * two non-empty options" here. Nothing is submitted until the contract agrees,
+ * which is why this form shows no error text at all: «Спросить» is simply not
  * available yet, and an empty option row is self-explanatory.
+ *
+ * ## «Ждём ответы» is a duration, not a datetime
+ *
+ * The old form put a `datetime-local` pair in the middle of the sheet for a
+ * deadline nobody sets to the minute. A family says «до завтра», so the choices
+ * are «сколько нужно · сутки · 3 дня · неделю» behind one row that states the
+ * current answer. The value still goes to the API as a real instant.
  */
-export function PollComposer() {
-  const [open, setOpen] = useState(false);
-  const [question, setQuestion] = useState('');
-  const [options, setOptions] = useState<string[]>(['', '']);
-  const [allowMultiple, setAllowMultiple] = useState(false);
-  const [closesAtLocal, setClosesAtLocal] = useState('');
+
+const MAX_OPTIONS = 10;
+const MIN_OPTIONS = 2;
+
+const CLOSES_CHOICES = [
+  { days: null, label: WALL_RU.polls.closesNever },
+  { days: 1, label: WALL_RU.polls.closesDay },
+  { days: 3, label: WALL_RU.polls.closesThreeDays },
+  { days: 7, label: WALL_RU.polls.closesWeek },
+] as const;
+
+interface Draft {
+  question: string;
+  options: string[];
+  allowMultiple: boolean;
+  closesInDays: number | null;
+}
+
+const EMPTY: Draft = {
+  question: '',
+  options: ['', ''],
+  allowMultiple: false,
+  closesInDays: null,
+};
+
+export function PollComposer(props: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const [draft, setDraft] = useState<Draft>(EMPTY);
+  const [closesSheet, setClosesSheet] = useState(false);
   const create = useCreatePoll();
 
-  const draft = {
-    question,
-    options: options.map((option) => option.trim()).filter((option) => option.length > 0),
-    allowMultiple,
-    closesAt: toIsoOrNull(closesAtLocal),
-  };
-  const parsed = createPollSchema.safeParse(draft);
+  useEffect(() => {
+    if (props.open) return;
+    setClosesSheet(false);
+  }, [props.open]);
 
-  const reset = (): void => {
-    setQuestion('');
-    setOptions(['', '']);
-    setAllowMultiple(false);
-    setClosesAtLocal('');
+  const payload = {
+    question: draft.question.trim(),
+    options: draft.options.map((option) => option.trim()).filter((option) => option.length > 0),
+    allowMultiple: draft.allowMultiple,
+    closesAt: draft.closesInDays === null ? null : isoInDays(draft.closesInDays),
+  };
+  const parsed = createPollSchema.safeParse(payload);
+
+  const patch = (next: Partial<Draft>): void => {
+    setDraft((current) => ({ ...current, ...next }));
   };
 
   const submit = (): void => {
     if (!parsed.success) return;
     create.mutate(parsed.data, {
       onSuccess: () => {
-        reset();
-        setOpen(false);
+        setDraft(EMPTY);
+        props.onOpenChange(false);
       },
     });
   };
 
+  const closesLabel = (
+    CLOSES_CHOICES.find((choice) => choice.days === draft.closesInDays) ?? CLOSES_CHOICES[0]
+  ).label;
+
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button type="button" className="min-h-11">
-          <Vote className="size-4" aria-hidden />
-          {WALL_RU.polls.create}
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{WALL_RU.polls.createTitle}</DialogTitle>
-          <DialogDescription>{WALL_RU.polls.subtitle}</DialogDescription>
-        </DialogHeader>
+    <>
+      <FormSheet<Draft>
+        open={props.open}
+        onOpenChange={props.onOpenChange}
+        title={WALL_RU.polls.createTitle}
+        description={WALL_RU.polls.subtitle}
+        submitLabel={WALL_RU.polls.publish}
+        onSubmit={submit}
+        submitDisabled={!parsed.success}
+        submitting={create.isPending}
+        dirty={draft.question.trim().length > 0 || payload.options.length > 0}
+        draft={{
+          key: 'family:wall-poll-draft',
+          read: () => draft,
+          restore: setDraft,
+          enabled: !create.isPending,
+        }}
+      >
+        <SectionStack className="gap-6 pt-2">
+          <Section surface="card">
+            <div className="w-full max-w-row-measure px-4 py-3">
+              <Textarea
+                autoFocus
+                rows={2}
+                maxLength={300}
+                aria-label={WALL_RU.polls.question}
+                placeholder={WALL_RU.polls.questionPlaceholder}
+                value={draft.question}
+                onChange={(event) => {
+                  patch({ question: event.target.value });
+                }}
+                className="min-h-16 resize-none border-0 bg-transparent px-0 text-[17px] leading-6 shadow-none focus-visible:ring-0 md:text-[17px]"
+              />
+            </div>
+          </Section>
 
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="poll-question">{WALL_RU.polls.question}</Label>
-            <Input
-              id="poll-question"
-              value={question}
-              maxLength={300}
-              placeholder={WALL_RU.polls.questionPlaceholder}
-              onChange={(event) => {
-                setQuestion(event.target.value);
-              }}
-              className="text-base"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>{WALL_RU.polls.options}</Label>
-            {options.map((option, index) => (
-              <div key={index} className="flex items-center gap-2">
+          <Section label={WALL_RU.polls.options} surface="card">
+            {draft.options.map((option, index) => (
+              <div
+                // Position is the identity here: the rows have no id, and a
+                // value-based key would remount the field being typed into.
+                key={index}
+                className="flex w-full max-w-row-measure items-center gap-2 px-4 py-2"
+              >
                 <Input
                   value={option}
                   maxLength={160}
@@ -103,13 +142,15 @@ export function PollComposer() {
                   aria-label={WALL_RU.polls.optionPlaceholder(index + 1)}
                   onChange={(event) => {
                     const next = event.target.value;
-                    setOptions((current) =>
-                      current.map((item, position) => (position === index ? next : item)),
-                    );
+                    patch({
+                      options: draft.options.map((item, position) =>
+                        position === index ? next : item,
+                      ),
+                    });
                   }}
-                  className="text-base"
+                  className="h-11 border-0 bg-transparent px-0 text-[17px] shadow-none focus-visible:ring-0 md:text-[17px]"
                 />
-                {options.length > 2 ? (
+                {draft.options.length > MIN_OPTIONS ? (
                   <Button
                     type="button"
                     variant="ghost"
@@ -117,9 +158,9 @@ export function PollComposer() {
                     className="size-11 shrink-0 text-muted-foreground"
                     aria-label={WALL_RU.polls.removeOption}
                     onClick={() => {
-                      setOptions((current) =>
-                        current.filter((_item, position) => position !== index),
-                      );
+                      patch({
+                        options: draft.options.filter((_item, position) => position !== index),
+                      });
                     }}
                   >
                     <X className="size-4" aria-hidden />
@@ -127,79 +168,59 @@ export function PollComposer() {
                 ) : null}
               </div>
             ))}
-            {options.length < MAX_OPTIONS ? (
-              <Button
-                type="button"
-                variant="ghost"
-                className="min-h-11 px-2"
+
+            {draft.options.length < MAX_OPTIONS ? (
+              <ValueRow
+                icon={<Plus />}
+                label={WALL_RU.polls.addOption}
                 onClick={() => {
-                  setOptions((current) => [...current, '']);
+                  patch({ options: [...draft.options, ''] });
                 }}
-              >
-                <Plus className="size-4" aria-hidden />
-                {WALL_RU.polls.addOption}
-              </Button>
+              />
             ) : null}
-          </div>
+          </Section>
 
-          <div className="flex items-center justify-between gap-3">
-            <Label htmlFor="poll-multiple" className="cursor-pointer">
-              {WALL_RU.polls.allowMultiple}
-            </Label>
-            <Switch
-              id="poll-multiple"
-              aria-label={WALL_RU.polls.allowMultiple}
-              checked={allowMultiple}
-              onCheckedChange={setAllowMultiple}
+          <Section surface="card">
+            <ValueRow
+              icon={<Users />}
+              label={WALL_RU.polls.allowMultiple}
+              trailing={
+                <Switch
+                  aria-label={WALL_RU.polls.allowMultiple}
+                  checked={draft.allowMultiple}
+                  onCheckedChange={(checked) => {
+                    patch({ allowMultiple: checked });
+                  }}
+                />
+              }
             />
-          </div>
-
-          <div className="space-y-2">
-            <DateTimeField
-              idPrefix="poll-closes"
-              dateLabel={WALL_RU.polls.closesAt}
-              value={closesAtLocal}
-              clearable
-              onChange={setClosesAtLocal}
-            />
-            <p className="text-xs text-muted-foreground">{WALL_RU.polls.closesAtHint}</p>
-          </div>
-
-          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <Button
-              type="button"
-              variant="ghost"
-              className="min-h-11"
+            <ValueRow
+              icon={<Clock />}
+              label={WALL_RU.polls.closes}
+              value={closesLabel}
               onClick={() => {
-                setOpen(false);
+                setClosesSheet(true);
               }}
-            >
-              {COMMON.cancel}
-            </Button>
-            <Button
-              type="button"
-              className="min-h-11"
-              disabled={!parsed.success || create.isPending}
-              onClick={submit}
-            >
-              {create.isPending ? <InlineSpinner className="mr-2" /> : null}
-              {WALL_RU.polls.publish}
-            </Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
+            />
+          </Section>
+        </SectionStack>
+      </FormSheet>
 
-/**
- * `datetime-local` yields a wall-clock string with no offset. The deadline is a
- * real instant, so it is resolved against the device clock here; a family whose
- * members sit in different zones will see it rendered in the family timezone by
- * `formatDateTime`, which is the behaviour the format helpers guarantee.
- */
-function toIsoOrNull(local: string): string | null {
-  if (local.length === 0) return null;
-  const date = new Date(local);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+      <PickerSheet open={closesSheet} onOpenChange={setClosesSheet} title={WALL_RU.polls.closes}>
+        <OptionList label={WALL_RU.polls.closes}>
+          {CLOSES_CHOICES.map((choice) => (
+            <OptionRow
+              key={choice.label}
+              label={choice.label}
+              selected={draft.closesInDays === choice.days}
+              onSelect={() => {
+                patch({ closesInDays: choice.days });
+                setClosesSheet(false);
+              }}
+            />
+          ))}
+        </OptionList>
+      </PickerSheet>
+    </>
+  );
 }

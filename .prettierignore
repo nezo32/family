@@ -6,3 +6,13 @@ pnpm-lock.yaml
 backend/drizzle
 frontend/src/shared/ui
 infra/data
+
+# Local test artefacts. These are gitignored, so a CI checkout never has them —
+# but `prettier --check "**/*"` walks the working tree, not the index, so
+# without this the local run reports several hundred Playwright session files
+# and the real deviations are invisible in the noise. `format:check` has to
+# mean the same thing here as it does in CI.
+frontend/e2e/.auth
+playwright-report
+test-results
+shots

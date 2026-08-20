@@ -1,10 +1,6 @@
 import { useState } from 'react';
 import { Check, ListTodo } from 'lucide-react';
-import {
-  ROLE_DESCRIPTIONS_RU,
-  ROLE_LABELS_RU,
-  type Role,
-} from '@family/shared';
+import { ROLE_DESCRIPTIONS_RU, ROLE_LABELS_RU, type Role } from '@family/shared';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/shared/ui/sheet';
 import { Button } from '@/shared/ui/button';
 import { Separator } from '@/shared/ui/separator';

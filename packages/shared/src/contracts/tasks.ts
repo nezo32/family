@@ -210,7 +210,11 @@ export const calendarRangeBaseSchema = z.object({
  */
 export const calendarRangeCheck = (v: { from: string; to: string }, ctx: z.RefinementCtx): void => {
   if (v.from > v.to) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['to'], message: 'from должно быть не позже to' });
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['to'],
+      message: 'from должно быть не позже to',
+    });
     return;
   }
   const days = (Date.parse(`${v.to}T00:00:00Z`) - Date.parse(`${v.from}T00:00:00Z`)) / 86_400_000;
@@ -235,9 +239,19 @@ const taskSeriesFields = {
   notes: z.string().max(4000).nullish(),
   visibility: visibilitySchema.default('household'),
   /** Minutes from start to deadline; added in wall-clock terms. */
-  dueOffsetMinutes: z.number().int().min(0).max(60 * 24 * 30).default(0),
+  dueOffsetMinutes: z
+    .number()
+    .int()
+    .min(0)
+    .max(60 * 24 * 30)
+    .default(0),
   /** Lateness tolerated before a chore reads as overdue. */
-  graceMinutes: z.number().int().min(0).max(60 * 24 * 7).default(0),
+  graceMinutes: z
+    .number()
+    .int()
+    .min(0)
+    .max(60 * 24 * 7)
+    .default(0),
   rotationId: idSchema.nullish(),
   defaultAssigneeId: idSchema.nullish(),
   category: z.string().max(64).nullish(),
@@ -263,8 +277,18 @@ export const taskSeriesUpdateSchema = z
     title: nonEmptyString(200).optional(),
     notes: z.string().max(4000).nullish(),
     visibility: visibilitySchema.optional(),
-    dueOffsetMinutes: z.number().int().min(0).max(60 * 24 * 30).optional(),
-    graceMinutes: z.number().int().min(0).max(60 * 24 * 7).optional(),
+    dueOffsetMinutes: z
+      .number()
+      .int()
+      .min(0)
+      .max(60 * 24 * 30)
+      .optional(),
+    graceMinutes: z
+      .number()
+      .int()
+      .min(0)
+      .max(60 * 24 * 7)
+      .optional(),
     rotationId: idSchema.nullish(),
     defaultAssigneeId: idSchema.nullish(),
     category: z.string().max(64).nullish(),

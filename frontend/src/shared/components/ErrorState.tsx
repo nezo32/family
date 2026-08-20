@@ -49,7 +49,9 @@ export function ErrorState(props: {
         <p className="mx-auto max-w-sm text-sm text-balance text-muted-foreground">{description}</p>
       </div>
       {props.onRetry ? (
-        <Button variant="outline" onClick={props.onRetry}>
+        // h-11: §F1's 44px minimum applies to the retry button too — measured
+        // at 105 × 36 on the wall's error state before this.
+        <Button variant="outline" className="h-11" onClick={props.onRetry}>
           {props.retryLabel ?? COMMON.retry}
         </Button>
       ) : null}

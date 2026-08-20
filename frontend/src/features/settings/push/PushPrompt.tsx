@@ -1,5 +1,7 @@
 import { useCallback, useState } from 'react';
 import { BellOff, BellRing, Smartphone, TriangleAlert } from 'lucide-react';
+import type { EnableResult } from './push';
+import { isEnableFailure } from './enable-report';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,6 +22,34 @@ import { usePush } from './use-push';
 const T = SETTINGS_RU.push;
 
 /**
+ * The same explanation, as something that stays on screen.
+ *
+ * A toast is the wrong container for «откройте Настройки → Уведомления →
+ * Семья»: it is four steps long and it disappears while the user is still
+ * reading it. The verbatim error rides along underneath in small type — it is
+ * meaningless to the reader and decisive for whoever they forward it to.
+ */
+export function PushFailureCard(props: { result: EnableResult }) {
+  const { outcome, error } = props.result;
+  if (!isEnableFailure(outcome)) return null;
+
+  return (
+    <Alert variant="destructive" data-testid="push-failure" data-outcome={outcome}>
+      <TriangleAlert aria-hidden />
+      <AlertTitle>{T.failureTitle[outcome]}</AlertTitle>
+      <AlertDescription className="space-y-2">
+        <p>{T.failureHint[outcome]}</p>
+        {error ? (
+          <p className="font-mono text-xs break-all opacity-80">
+            {error.name}: {error.message}
+          </p>
+        ) : null}
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+/**
  * The permission funnel.
  *
  * `docs/research/ios-pwa-push.md` §13 is the specification, and the single rule
@@ -36,7 +66,7 @@ const T = SETTINGS_RU.push;
 export function PushPrompt(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Called from the click handler; must reach `requestPermission()` with no await. */
+  /** Called from the click handler; must reach `subscribe()` with no await. */
   onAccept: () => void;
 }) {
   return (
@@ -55,9 +85,10 @@ export function PushPrompt(props: {
         <AlertDialogFooter>
           <AlertDialogCancel>{T.promptDecline}</AlertDialogCancel>
           {/*
-            No `await` may run between this tap and `Notification.requestPermission()`.
-            `onAccept` calls `enable()` synchronously; the dialog closes itself
-            through Radix afterwards.
+            This tap is the one that carries the transient activation into
+            `pushManager.subscribe()`, so nothing may await in between and
+            nothing else may consume it. `onAccept` calls `enable()`
+            synchronously; the dialog closes itself through Radix afterwards.
           */}
           <AlertDialogAction
             onClick={() => {
@@ -164,27 +195,25 @@ export function PushReEnableCard(props: { onEnable: () => void; busy: boolean })
 export function PushSection() {
   const push = usePush();
   const [promptOpen, setPromptOpen] = useState(false);
+  const [failure, setFailure] = useState<EnableResult | null>(null);
 
   const runEnable = useCallback(() => {
-    // Called straight from a click handler. `enable()` is not `async`: it fires
-    // `Notification.requestPermission()` before it returns its promise.
+    // Called straight from a click handler. `enable()` is not `async`: it
+    // reaches `pushManager.subscribe()` — the one call permitted to consume
+    // the tap's transient activation — before it returns its promise.
     void push.enable().then((result) => {
-      switch (result.outcome) {
-        case 'enabled':
-          notify.success(T.enabled);
-          break;
-        case 'denied':
-          // The one-shot prompt is spent. The denied card takes over from here.
-          break;
-        case 'dismissed':
-          break;
-        case 'needs-install':
-        case 'unsupported':
-        case 'misconfigured':
-        case 'failed':
-          notify.error(new Error('push'), T.enableFailed);
-          break;
+      if (result.outcome === 'enabled') {
+        setFailure(null);
+        notify.success(T.enabled);
+        return;
       }
+      if (result.outcome === 'dismissed') {
+        // Prompt swiped away without an answer. Nothing spent, nothing to say.
+        setFailure(null);
+        return;
+      }
+      // `denied` already has a card of its own below, with the reset steps.
+      setFailure(result.outcome === 'denied' ? null : result);
     });
   }, [push]);
 
@@ -214,6 +243,12 @@ export function PushSection() {
           <PushDeniedCard onRecheck={push.refresh} />
         ) : null}
 
+        {/* Whatever went wrong last, named — and still on screen while the
+            user reads the steps it points at. `blocked-in-settings` in
+            particular has nothing else to show for it: iOS reports the
+            permission as «ещё не спрашивали» throughout. */}
+        {failure ? <PushFailureCard result={failure} /> : null}
+
         {push.needsReEnable ? <PushReEnableCard onEnable={runEnable} busy={push.busy} /> : null}
 
         {push.availability === 'available' && push.permission !== 'denied' ? (
@@ -234,11 +269,18 @@ export function PushSection() {
             ) : (
               <Button
                 className="h-11"
-                disabled={push.busy}
+                // `ready` gates on an **active** service worker: `subscribe()`
+                // throws `InvalidStateError` against one that is still
+                // installing, and awaiting readiness inside the tap can blow
+                // the five-second activation window on a cold start.
+                disabled={push.busy || !push.ready}
                 onClick={() => {
-                  // The soft pre-prompt first — always. The OS prompt is
-                  // one-shot and must never be the user's first surprise.
-                  if (push.permission === 'granted') runEnable();
+                  // Straight to `subscribe()` once permission is granted, or
+                  // once we already know iOS is refusing to prompt — the soft
+                  // dialog would be a dead end there (research doc §17).
+                  // Otherwise the soft pre-prompt first, always: the OS prompt
+                  // is one-shot and must never be the user's first surprise.
+                  if (push.permission === 'granted' || push.blockedInSettings) runEnable();
                   else setPromptOpen(true);
                 }}
               >

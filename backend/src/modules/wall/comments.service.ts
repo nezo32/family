@@ -107,7 +107,11 @@ const postResolver: EntityAccessResolver = async (exec, entityId) => {
 
 /** Polls are family-wide by construction; existence is the whole check. */
 const pollResolver: EntityAccessResolver = async (exec, entityId) => {
-  const [row] = await exec.select({ id: polls.id }).from(polls).where(eq(polls.id, entityId)).limit(1);
+  const [row] = await exec
+    .select({ id: polls.id })
+    .from(polls)
+    .where(eq(polls.id, entityId))
+    .limit(1);
   return Boolean(row);
 };
 
@@ -161,9 +165,7 @@ const eventResolver: EntityAccessResolver = async (exec, entityId, auth) => {
     const [attendee] = await exec
       .select({ id: eventAttendees.id })
       .from(eventAttendees)
-      .where(
-        and(eq(eventAttendees.occurrenceId, entityId), eq(eventAttendees.userId, auth.userId)),
-      )
+      .where(and(eq(eventAttendees.occurrenceId, entityId), eq(eventAttendees.userId, auth.userId)))
       .limit(1);
     return Boolean(attendee);
   }

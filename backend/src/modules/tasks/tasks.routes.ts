@@ -192,8 +192,7 @@ const tasksRoutes: FastifyPluginAsync = async (instance: FastifyInstance) => {
         response: { 200: taskSeriesResponseSchema },
       },
     },
-    async (request) =>
-      service.updateSeries(actorOf(request.auth), request.params.id, request.body),
+    async (request) => service.updateSeries(actorOf(request.auth), request.params.id, request.body),
   );
 
   app.delete(

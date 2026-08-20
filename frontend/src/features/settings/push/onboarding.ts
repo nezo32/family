@@ -7,7 +7,7 @@
  * is permanently `'denied'` and the only way back is Настройки → Уведомления →
  * Семья, which no family member will find on their own.
  *
- * So nothing here ever reaches `Notification.requestPermission()`. This module
+ * So nothing here ever reaches `pushManager.subscribe()`. This module
  * only decides whether we may show *our* card — the retryable one — and the
  * card only opens *our* dialog, and only that dialog's button spends the one
  * irreversible tap.

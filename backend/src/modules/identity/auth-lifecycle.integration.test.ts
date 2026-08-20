@@ -200,7 +200,7 @@ describe.skipIf(!hasTestDb)('auth lifecycle (integration)', () => {
       expect(['teen', 'child']).toContain(row?.role);
 
       const winner = a.statusCode === 200 ? a : b;
-      expect((winner.json<{ role: string }>()).role).toBe(row?.role);
+      expect(winner.json<{ role: string }>().role).toBe(row?.role);
     });
 
     it('kills a suspended user: the access token stops working and every family is revoked', async () => {
@@ -291,7 +291,7 @@ describe.skipIf(!hasTestDb)('auth lifecycle (integration)', () => {
 
       for (const response of responses) {
         expectStatus(response, 200);
-        expect((response.json<{ accessToken: string }>()).accessToken).toBeTruthy();
+        expect(response.json<{ accessToken: string }>().accessToken).toBeTruthy();
       }
 
       // No fork: exactly one successor generation was minted, not five.
@@ -308,9 +308,9 @@ describe.skipIf(!hasTestDb)('auth lifecycle (integration)', () => {
       expect(head?.revokedAt).toBeNull();
 
       // Exactly one response carried a new cookie.
-      const withCookie = (
-        await Promise.all(responses.map((r) => refreshCookieOf(r)))
-      ).filter((c) => c && c.value.length > 0);
+      const withCookie = (await Promise.all(responses.map((r) => refreshCookieOf(r)))).filter(
+        (c) => c && c.value.length > 0,
+      );
       expect(withCookie).toHaveLength(1);
 
       // The winner's cookie still works afterwards.

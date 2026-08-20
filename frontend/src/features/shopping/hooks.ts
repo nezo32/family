@@ -500,9 +500,7 @@ export function useUpdateList(
       for (const { key, includeArchived } of listsQueries(qc)) {
         qc.setQueryData<ShoppingListResponse[]>(key, (lists) => {
           if (lists === undefined) return lists;
-          const next = lists.map((list) =>
-            list.id === listId ? mergeList(list, body) : list,
-          );
+          const next = lists.map((list) => (list.id === listId ? mergeList(list, body) : list));
           return includeArchived ? next : next.filter((list) => !list.isArchived);
         });
       }

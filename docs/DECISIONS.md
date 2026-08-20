@@ -10,7 +10,7 @@ This app serves **one family**. There is no `household_id` on any table and no
 birth date, timezone, rotation weight, permission overrides) live directly on
 `users`. Family-wide configuration lives in a **singleton** `family_settings` row.
 
-*Rationale:* multi-tenancy would put an extra predicate on every query and an
+_Rationale:_ multi-tenancy would put an extra predicate on every query and an
 extra join on every read for a capability that will never be used. A second
 family gets a second container.
 
@@ -64,9 +64,9 @@ Write a test for each.
 
 ### Providers
 
-| Provider | Flow |
-|---|---|
-| Google | OIDC authorization code + PKCE. `client_secret` is **still required** alongside PKCE for a Web client. Accept **both** `https://accounts.google.com` and `accounts.google.com` as `iss`. |
+| Provider | Flow                                                                                                                                                                                                                                                                                |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Google   | OIDC authorization code + PKCE. `client_secret` is **still required** alongside PKCE for a Web client. Accept **both** `https://accounts.google.com` and `accounts.google.com` as `iss`.                                                                                            |
 | Telegram | **OIDC at `https://oauth.telegram.org`** (the hash-based Login Widget is legacy/archived). Scopes `openid profile telegram:bot_access`. The bot-access scope is how we DM admins about pending signups. Legacy widget + Mini App `initData` verifiers are implemented as fallbacks. |
 
 **Sign in with Apple is deliberately not supported.** It requires a paid Apple
@@ -80,7 +80,7 @@ service, not Apple as an identity provider.)
 `state -> { nonce, code_verifier, intent, link_user_id, redirect_after }` lives in
 a **Postgres table with a 10-minute TTL, deleted on use**. Not in a cookie.
 
-*Why:* the callback often arrives **cross-site** (Telegram's widget and Mini App
+_Why:_ the callback often arrives **cross-site** (Telegram's widget and Mini App
 flows POST from another origin), and `SameSite=Lax` cookies are not sent on a
 cross-site POST — so a cookie-based state store fails in production only, for
 one provider only. The server-side store also fixes the same class of bug for
@@ -170,8 +170,8 @@ undo:
 
 The scheduling problem the score was solving is real, though — without some
 signal, "who gets the next chore" collapses to whoever sorts first, and the
-person who does the most work keeps being asked to do more. So the *mechanism*
-survived and its *currency* changed.
+person who does the most work keeps being asked to do more. So the _mechanism_
+survived and its _currency_ changed.
 
 `weighted_balance` by default: assign to the eligible member with the lowest
 `(completed + committed) / weight` debt over a 28-day window, tie-broken
@@ -265,7 +265,7 @@ escalation) -> `notification_deliveries` log. Channels: **Web Push (VAPID)** and
   `Notification.requestPermission()` works, and the call must come from a user
   gesture. Ask at a meaningful moment, never on first load.
 
-## D11 — Notifications must be *confirmed received*, not merely sent
+## D11 — Notifications must be _confirmed received_, not merely sent
 
 A `201` from a push service means "accepted for delivery" — nothing more. It does
 not mean the message reached the device, and it certainly does not mean a human
@@ -275,12 +275,12 @@ saw it. For a family app where a missed "дать лекарство в 20:00" o
 Every delivery therefore carries four distinct timestamps, and they must never
 be collapsed into one another:
 
-| Column | Meaning | Written by |
-|---|---|---|
-| `sentAt` | We handed it to the push service / Telegram and it accepted. | The dispatcher |
-| `deliveredAt` | It **arrived on the device**. | The service worker's `push` handler, via an ack call |
-| `interactedAt` | The user **tapped the notification**. | The service worker's `notificationclick` handler |
-| `acknowledgedAt` | The user explicitly **confirmed the underlying action** ("Подтвердить"). | The app, for `high`/`critical` intents only |
+| Column           | Meaning                                                                  | Written by                                           |
+| ---------------- | ------------------------------------------------------------------------ | ---------------------------------------------------- |
+| `sentAt`         | We handed it to the push service / Telegram and it accepted.             | The dispatcher                                       |
+| `deliveredAt`    | It **arrived on the device**.                                            | The service worker's `push` handler, via an ack call |
+| `interactedAt`   | The user **tapped the notification**.                                    | The service worker's `notificationclick` handler     |
+| `acknowledgedAt` | The user explicitly **confirmed the underlying action** ("Подтвердить"). | The app, for `high`/`critical` intents only          |
 
 `deliveryStatus` gains `delivered`, `interacted` and `acknowledged` alongside the
 existing values, and only ever moves forward.
@@ -373,7 +373,7 @@ give.
 
 The neighbouring escape hatches are closed too. `periodicSync` and Background
 Sync are unimplemented in WebKit (§7), so there is no way to wake and reconcile
-in the background either. And even where a push *is* legitimate, one shopping
+in the background either. And even where a push _is_ legitimate, one shopping
 tick would cost the family one lock-screen notification with no `tag` grouping
 (§3) — which is precisely the failure mode `docs/architecture/notifications.md`
 calls the thing that kills these apps.
@@ -386,10 +386,10 @@ It is not a data channel. **Do not propose silent push again.**
 `shared/api/query-client.ts` already sets `staleTime: 30s`,
 `refetchOnWindowFocus: true`, `refetchOnReconnect: true`, `refetchOnMount: true`
 and `gcTime: 30 min`, and the reasoning written into that file is right: on a
-phone, focus *is* the moment the data is stalest, and coming back from the app
+phone, focus _is_ the moment the data is stalest, and coming back from the app
 switcher to a cached render that revalidates behind it is the correct behaviour
 for most screens. Approving a member, adding an event, contributing to a goal,
-posting on the wall — all of these are seen by somebody who *opens* the app, and
+posting on the wall — all of these are seen by somebody who _opens_ the app, and
 opening the app is a focus event. None of those screens need anything more.
 
 It runs out in exactly one situation, and it is the situation named first:
@@ -397,7 +397,7 @@ It runs out in exactly one situation, and it is the situation named first:
 switches windows, so no focus event ever fires, and the second phone stays wrong
 for as long as it is held. That is the shopping list in a shop, and to a lesser
 degree the tasks screen on a Saturday clean-up. No amount of `staleTime` tuning
-reaches it, because staleness only causes a refetch when something *asks*, and a
+reaches it, because staleness only causes a refetch when something _asks_, and a
 screen that is already mounted and already fetched never asks again.
 
 So the gap is narrow and specific: a foregrounded client needs a way to learn
@@ -434,7 +434,7 @@ Why this shape and not a smaller or a bigger one:
   moved?" within a beat of becoming visible and invalidates only those domains —
   strictly better than the blanket refetch-everything that a very short
   `staleTime` would produce, and it needs no `Last-Event-ID`, no server-side
-  replay buffer and no catch-up protocol, because a counter *is* the catch-up.
+  replay buffer and no catch-up protocol, because a counter _is_ the catch-up.
 - **It is one request covering every screen at once**, including the
   notification bell and the Today dashboard, instead of one interval per query
   each pulling a full list payload. The response is roughly 120 bytes.
@@ -472,7 +472,7 @@ is either a server-side event buffer keyed by `Last-Event-ID` or a plain
 refetch — and if it is a plain refetch, the poll was already doing that. And all
 of it buys roughly 5 seconds → 0.5 seconds on **one** screen. Six idle
 connections would not trouble the VDI; the machinery around them is the cost.
-*Revisit if* a genuinely sub-second surface appears (shared presence, a live
+_Revisit if_ a genuinely sub-second surface appears (shared presence, a live
 timer), or the family grows past roughly fifteen people so the aggregate poll
 rate begins to matter.
 
@@ -482,7 +482,7 @@ have no use for — every write is already a REST mutation with optimistic
 rollback. For a one-way "domain X changed" signal it buys nothing over SSE, and
 SSE already lost.
 
-**Postgres `LISTEN/NOTIFY`.** The right fan-out primitive *if* there were a
+**Postgres `LISTEN/NOTIFY`.** The right fan-out primitive _if_ there were a
 transport worth feeding, and it would need a dedicated connection held outside
 the Drizzle pool. With no socket to feed it solves a problem we do not have.
 Redis pub/sub would be equally reasonable and equally unnecessary.
@@ -501,7 +501,7 @@ even when nothing moved.
 
 **A `/api/changes?since=<cursor>` change log.** A cursor implies a durable
 append-only log that must be written on every mutation, indexed, and trimmed
-forever. The client does not need to know *what* changed, only *whether* — and a
+forever. The client does not need to know _what_ changed, only _whether_ — and a
 counter answers that with no storage, no trimming and no per-handler writes.
 
 **CRDTs / local-first replication.** Already rejected in D9, and correctly: the
@@ -518,22 +518,22 @@ These drive the two interval constants and nothing else. Where the target is
 "focus", that is a deliberate statement that the screen does not deserve a
 timer.
 
-| Surface | Query key root | Target | Delivered by |
-|---|---|---|---|
-| Shopping list items | `['shopping','items',listId]` | **≤ 6 s**, both phones foreground | 5 s poll while a list page is mounted |
-| Shopping lists index | `['shopping']` | ≤ 20 s | 15 s poll |
-| Tasks / chores done state | `['tasks']` | ≤ 20 s | 15 s poll |
-| Today dashboard | `['dashboard']` | ≤ 20 s | 15 s poll, fanned in from five domains |
-| Calendar | `['calendar']` | ≤ 20 s | 15 s poll |
-| Goal balance | `['goals']` | ≤ 60 s required, ≤ 20 s delivered | 15 s poll |
-| Wall, kudos, polls | `['wall']` | ≤ 20 s | 15 s poll |
-| Roster, pending approvals | `['members']` | ≤ 20 s | 15 s poll |
-| Own effective permissions | `['me']` | affordances ≤ 20 s | 15 s poll, via `members` |
-| Notification bell unread | `['notifications']` | ≤ 20 s | 15 s poll + an explicit bump from the dispatcher |
-| Sign-in methods, push devices | `['settings']` | focus only | existing defaults — you change these on the device in your hand |
-| Anything at all while backgrounded | — | **no target**; correct within ~1 s of resume | focus refetch of `['changes']` |
+| Surface                            | Query key root                | Target                                       | Delivered by                                                    |
+| ---------------------------------- | ----------------------------- | -------------------------------------------- | --------------------------------------------------------------- |
+| Shopping list items                | `['shopping','items',listId]` | **≤ 6 s**, both phones foreground            | 5 s poll while a list page is mounted                           |
+| Shopping lists index               | `['shopping']`                | ≤ 20 s                                       | 15 s poll                                                       |
+| Tasks / chores done state          | `['tasks']`                   | ≤ 20 s                                       | 15 s poll                                                       |
+| Today dashboard                    | `['dashboard']`               | ≤ 20 s                                       | 15 s poll, fanned in from five domains                          |
+| Calendar                           | `['calendar']`                | ≤ 20 s                                       | 15 s poll                                                       |
+| Goal balance                       | `['goals']`                   | ≤ 60 s required, ≤ 20 s delivered            | 15 s poll                                                       |
+| Wall, kudos, polls                 | `['wall']`                    | ≤ 20 s                                       | 15 s poll                                                       |
+| Roster, pending approvals          | `['members']`                 | ≤ 20 s                                       | 15 s poll                                                       |
+| Own effective permissions          | `['me']`                      | affordances ≤ 20 s                           | 15 s poll, via `members`                                        |
+| Notification bell unread           | `['notifications']`           | ≤ 20 s                                       | 15 s poll + an explicit bump from the dispatcher                |
+| Sign-in methods, push devices      | `['settings']`                | focus only                                   | existing defaults — you change these on the device in your hand |
+| Anything at all while backgrounded | —                             | **no target**; correct within ~1 s of resume | focus refetch of `['changes']`                                  |
 
-Permission *enforcement* is untouched by any of this: `resolveAuth` re-reads the
+Permission _enforcement_ is untouched by any of this: `resolveAuth` re-reads the
 `users` row on every request, so a suspension or a role change binds
 immediately. The `['me']` invalidation above only repairs the client's affordance
 layer, which would otherwise lag by up to ten minutes.
@@ -543,7 +543,7 @@ layer, which would otherwise lag by up to ten minutes.
 Optimistic writes are everywhere in this app — `useOptimisticOccurrence` in
 tasks, the wall's comment and reaction patches, and the shopping outbox, which
 is not even a `useMutation`. An invalidation landing mid-flight refetches the
-server's *pre-mutation* state and flashes the user's tick back off before the
+server's _pre-mutation_ state and flashes the user's tick back off before the
 response arrives and turns it on again. On the shopping list, which is the one
 screen polling fastest, that flicker would be the most visible bug in the app.
 

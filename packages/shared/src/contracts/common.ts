@@ -36,11 +36,7 @@ export const timeZoneSchema = z
   .max(64, 'Не длиннее 64 символов');
 
 export const nonEmptyString = (max: number) =>
-  z
-    .string()
-    .trim()
-    .min(1, 'Поле не может быть пустым')
-    .max(max, `Не длиннее ${max} символов`);
+  z.string().trim().min(1, 'Поле не может быть пустым').max(max, `Не длиннее ${max} символов`);
 
 /** Money is stored as integer minor units (копейки) to avoid float drift. */
 export const minorUnitsSchema = z.number().int('Ожидается целое число копеек');

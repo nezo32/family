@@ -1034,13 +1034,18 @@ export async function insertEscalationPolicies(
   values: readonly NewEscalationPolicyRow[],
 ): Promise<EscalationPolicyRow[]> {
   if (values.length === 0) return [];
-  return x.insert(escalationPolicies).values([...values]).returning();
+  return x
+    .insert(escalationPolicies)
+    .values([...values])
+    .returning();
 }
 
 export async function updateEscalationPolicy(
   x: Executor,
   id: string,
-  patch: Partial<Pick<NewEscalationPolicyRow, 'afterMinutes' | 'escalateToRole' | 'escalateToUserId' | 'enabled'>>,
+  patch: Partial<
+    Pick<NewEscalationPolicyRow, 'afterMinutes' | 'escalateToRole' | 'escalateToUserId' | 'enabled'>
+  >,
 ): Promise<EscalationPolicyRow | null> {
   const rows = await x
     .update(escalationPolicies)

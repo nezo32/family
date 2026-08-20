@@ -129,6 +129,44 @@ jobs:
           --health-timeout 5s
           --health-retries 20
 
+      # Object storage, so the avatar suite runs instead of skipping itself.
+      #
+      # Without it `avatar.integration.test.ts` is gated off by
+      # `Boolean(process.env.TEST_S3_ENDPOINT)` and the job is green having run
+      # 1026 of 1040 tests, with `s3.adapter.ts` at 17% coverage,
+      # `storage.service.ts` at 10% and `storage.repository.ts` at 5% — on the
+      # code path that handles user-uploaded files. A suite that skips quietly
+      # is how three sections of this app once shipped broken behind a green
+      # tick, which is also why `verify-all.sh` has always supplied this.
+      #
+      # RustFS rather than MinIO because a GitHub `services:` entry can only
+      # pass env and docker-create options, never a `command:` — MinIO needs
+      # `server /data` and so cannot be one; RustFS takes everything from the
+      # environment. Same image as `infra/docker-compose.dev.yml`, and no
+      # volume: a service container's own filesystem is enough for one job, and
+      # the suite creates its own bucket.
+      rustfs:
+        image: rustfs/rustfs:1.0.0-rc.2
+        env:
+          # `RUSTFS_ACCESS_KEY`/`RUSTFS_SECRET_KEY`, not the `RUSTFS_ROOT_*`
+          # aliases — see infra/docker-compose.yml for why.
+          RUSTFS_ACCESS_KEY: family
+          RUSTFS_SECRET_KEY: familysecret
+          RUSTFS_ADDRESS: ':9000'
+          RUSTFS_CONSOLE_ENABLE: 'false'
+          RUSTFS_REGION: us-east-1
+          RUSTFS_OBS_LOG_DIRECTORY: ''
+          RUSTFS_OBS_LOGGER_LEVEL: warn
+          RUSTFS_CHECK_UPDATES: 'false'
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "curl -fsS -o /dev/null http://127.0.0.1:9000/health"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+          --health-start-period 15s
+
     env:
       NODE_ENV: test
       TZ: Europe/Moscow
@@ -148,6 +186,13 @@ jobs:
       COOKIE_SECRET: ci-cookie-secret-not-used-anywhere-else-0123456789abcdef
       ENCRYPTION_KEY: Y2ktZW5jcnlwdGlvbi1rZXktMzItYnl0ZXMtbG9uZyE=
       VAPID_SUBJECT: mailto:ci@example.com
+      # Gates `avatar.integration.test.ts` on, exactly as verify-all.sh does.
+      # `src/test/setup.ts` copies these into the S3_* the adapter reads, and
+      # the suite creates the bucket itself, so nothing has to provision one.
+      TEST_S3_ENDPOINT: http://127.0.0.1:9000
+      TEST_S3_ACCESS_KEY_ID: family
+      TEST_S3_SECRET_ACCESS_KEY: familysecret
+      TEST_S3_BUCKET: family-media-test
 
     steps:
       - uses: actions/checkout@v4
@@ -173,6 +218,14 @@ jobs:
             -v "$PWD/infra/postgres/init:/init:ro" \
             postgres:17.7-alpine \
             psql -h 127.0.0.1 -U family -d family_test -v ON_ERROR_STOP=1 -f /init/01-extensions.sql
+
+      # The service container is healthy or GitHub would not have started this
+      # job — but healthy inside its own network is not the same as reachable
+      # on the mapped port, and the difference is invisible: the avatar suite
+      # would simply gate itself off again and the job would go green having
+      # skipped it. Fail loudly here instead.
+      - name: Assert object storage is reachable
+        run: curl -fsS -o /dev/null "$TEST_S3_ENDPOINT"/health
 
       - name: Run migrations
         run: pnpm --filter @family/backend run db:migrate
@@ -252,13 +305,195 @@ jobs:
         # vite-plugin-pwa in injectManifest mode fails silently if src/sw.ts is
         # missing from the build — the PWA then ships with no push handler and
         # nobody notices until a notification does not arrive.
+        #
+        # The filename depends on the plugin's `filename` option, so accept
+        # either of the two it has ever produced. This used to be
+        # `ls a b`, which exits non-zero when *either* path is missing — so it
+        # demanded both and failed every healthy build, because
+        # `service-worker.js` has never existed here. The message then asserted
+        # the opposite of what the `ls -la` directly above it showed.
         run: |
           ls -la frontend/dist
           test -f frontend/dist/index.html
-          if ! ls frontend/dist/sw.js frontend/dist/service-worker.js >/dev/null 2>&1; then
-            echo "::error::No service worker in frontend/dist — vite-plugin-pwa injectManifest did not run"
+          if [ ! -f frontend/dist/sw.js ] && [ ! -f frontend/dist/service-worker.js ]; then
+            echo "::error::No service worker in frontend/dist — looked for sw.js and service-worker.js; vite-plugin-pwa injectManifest did not run"
             exit 1
           fi
+
+  # ───────────────────────────────────────────────────────────
+  # The Playwright suite — 95 tests over two browser projects against a real
+  # stack: real Postgres, real Redis, the production bundle served by `vite
+  # preview`, and the API talking to both.
+  #
+  # It used to run nowhere but a developer's machine, which meant 95 tests that
+  # could not stop a regression from merging. This job is a transcription of
+  # what `infra/scripts/verify-all.sh` already does locally; keep the two in
+  # step rather than letting a second orchestration grow here.
+  #
+  # ── Why `docker compose`, and not `services:` like the job above ──────────
+  #
+  # `frontend/e2e/helpers.ts` sweeps its own debris by shelling out:
+  #
+  #     docker exec family-dev-postgres-1 psql -U family -d family ...
+  #
+  # That container name is the one `infra/docker-compose.dev.yml` produces
+  # (project `family-dev`). A GitHub `services:` container is named by the
+  # runner and cannot be renamed, so the sweep would die on "no such container"
+  # — and the alternative, teaching `e2e/` to find the database some other way,
+  # means editing the suite to suit CI, which is how the local and CI gates
+  # drift apart in the first place. Bringing up the same compose file the
+  # developer uses costs one step and keeps the suite identical in both places.
+  # ───────────────────────────────────────────────────────────
+  e2e:
+    name: end-to-end (playwright)
+    runs-on: ubuntu-24.04
+    needs: setup
+    timeout-minutes: 30
+
+    env:
+      # NODE_ENV is deliberately UNSET here, and must stay that way.
+      #
+      # A job-level value reaches every step, including `vite build` — and a
+      # `NODE_ENV=development` build emits the React development bundle: 940 KB
+      # against 695 KB, measured. The suite would then be exercising a bundle
+      # no user ever receives, which is the one thing an end-to-end test must
+      # not do. The backend does not need it either: `core/config.ts` defaults
+      # NODE_ENV to `development`, which is what keeps RATE_LIMIT_FACTOR below
+      # from being forced back to 1.
+      TZ: Europe/Moscow
+      # The dev database, not a `_test` one: the seed below populates it and
+      # the specs drill into what the seed left.
+      DATABASE_URL: postgres://family:family@127.0.0.1:5432/family
+      # The dev stack runs Redis with `--requirepass family`, so unlike the
+      # backend-tests job this URL carries a password.
+      REDIS_URL: redis://:family@127.0.0.1:6379
+      BACKEND_PORT: '3102'
+      WEB_PORT: '5175'
+      # `localhost`, never `127.0.0.1`. The backend builds its CORS allow-list
+      # from APP_PUBLIC_URL and the two are different origins to a browser;
+      # mixing them answers every POST with 403 Origin not allowed.
+      #
+      # The port has to be spelled out — job-level `env:` cannot reference
+      # another entry in the same block — so it must be kept equal to WEB_PORT
+      # above. Everything else derives from the two variables.
+      APP_PUBLIC_URL: http://localhost:5175
+      # ~90 browser contexts sign in over a run, and the production limits
+      # (register 5/hour/IP, login 10/15min/IP, refresh 60/min/IP) are spent
+      # within minutes of starting. The symptom is a wall of 429 RATE_LIMITED
+      # from the fixtures rather than from anything a test asserts.
+      # `core/config.ts` forces this to 1 in production, so raising it here
+      # weakens nothing that ships.
+      RATE_LIMIT_FACTOR: '100'
+      JWT_ACCESS_SECRET: ci-access-secret-not-used-anywhere-else-0123456789abcdef
+      JWT_REFRESH_SECRET: ci-refresh-secret-not-used-anywhere-else-0123456789abcde
+      COOKIE_SECRET: ci-cookie-secret-not-used-anywhere-else-0123456789abcdef
+      ENCRYPTION_KEY: Y2ktZW5jcnlwdGlvbi1rZXktMzItYnl0ZXMtbG9uZyE=
+      VAPID_SUBJECT: mailto:ci@example.com
+      # Pins every worker of this run to one owner account, the way the
+      # config's own per-invocation mint would — but recognisably, so a row
+      # left behind by a crashed run traces back to the job that made it.
+      E2E_RUN_ID: gh-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: shared-dist
+          path: ${{ env.SHARED_DIST }}
+
+      # `--wait` blocks until both healthchecks pass, so there is no ad-hoc
+      # polling here. The compose file also mounts `infra/postgres/init`, which
+      # creates the extensions the migrations need — the backend-tests job has
+      # to do that by hand because a `services:` container gets no initdb mount.
+      - name: Start the dev stack (postgres + redis)
+        run: docker compose -f infra/docker-compose.dev.yml up -d --wait postgres redis
+
+      # The specs click from a list screen into a detail page, so the database
+      # has to hold at least one task, event, goal and shopping list. The seed
+      # writes *series* and then runs the real materializer, which is what turns
+      # them into the occurrences the screens actually render.
+      - name: Migrate and seed
+        run: |
+          pnpm --filter @family/backend run db:migrate
+          pnpm --filter @family/backend run db:seed
+
+      - name: Build the frontend
+        env:
+          # `/api` is what docker.yml defaults to, so this builds the bundle
+          # production gets. `shared/api/config.ts` strips a trailing `/api`
+          # from it, which resolves to "same origin" — the value the preview
+          # proxy needs — rather than to requests for `/api/api/...`.
+          VITE_API_URL: /api
+          VITE_VAPID_PUBLIC_KEY: ''
+          VITE_TELEGRAM_BOT_USERNAME: ''
+        run: pnpm --filter @family/frontend run build
+
+      # Both projects: desktop-chrome (chromium) and mobile-safari (webkit).
+      # `--with-deps` pulls the system libraries webkit needs on 24.04.
+      - name: Install Playwright browsers
+        run: pnpm --filter @family/frontend exec playwright install --with-deps chromium webkit
+
+      - name: Start the API and the preview server
+        run: |
+          cd backend
+          nohup npx tsx src/main.ts > "$RUNNER_TEMP/api.log" 2>&1 &
+          cd ../frontend
+          VITE_API_PROXY_TARGET="http://localhost:$BACKEND_PORT" \
+            nohup npx vite preview --port "$WEB_PORT" --strictPort > "$RUNNER_TEMP/web.log" 2>&1 &
+
+          api=""; web=""
+          for _ in $(seq 1 60); do
+            api=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$BACKEND_PORT/health" || true)
+            web=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$WEB_PORT/" || true)
+            [ "$api" = "200" ] && [ "$web" = "200" ] && break
+            sleep 1
+          done
+          echo "api=$api web=$web"
+          if [ "$api" != "200" ] || [ "$web" != "200" ]; then
+            echo "::error::The e2e stack did not come up"
+            echo "-- api --"; tail -50 "$RUNNER_TEMP/api.log"
+            echo "-- web --"; tail -50 "$RUNNER_TEMP/web.log"
+            exit 1
+          fi
+
+      # Both URLs point at the preview server: it proxies `/api` to the backend,
+      # so the browser and the fixtures share one origin and the refresh cookie
+      # survives the hop. Setting E2E_BASE_URL also switches off the config's
+      # own `webServer` block, which would otherwise start a second preview on
+      # 4173.
+      #
+      # No `--reporter` override: the config already selects the GitHub
+      # annotation reporter plus an HTML report when CI is set, and pins
+      # `workers: 1` and `retries: 2`.
+      - name: Run the suite
+        env:
+          E2E_BASE_URL: http://localhost:${{ env.WEB_PORT }}
+          E2E_API_URL: http://localhost:${{ env.WEB_PORT }}
+        run: pnpm --filter @family/frontend exec playwright test
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # A failing spec is usually a failing request, and the reason is in the
+      # API log rather than in the trace.
+      - name: Server logs
+        if: failure()
+        run: |
+          echo "-- api --"; tail -200 "$RUNNER_TEMP/api.log" || true
+          echo "-- web --"; tail -50 "$RUNNER_TEMP/web.log" || true
 
   # ───────────────────────────────────────────────────────────
   # Single required status check to protect the branch with.
@@ -266,7 +501,7 @@ jobs:
   ci:
     name: CI
     runs-on: ubuntu-24.04
-    needs: [lint, typecheck, test-backend, test-frontend, build-frontend]
+    needs: [lint, typecheck, test-backend, test-frontend, build-frontend, e2e]
     if: always()
     steps:
       - name: Fail if any job failed or was cancelled

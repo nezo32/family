@@ -2,10 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { BellRing, X } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
 import { cn } from '@/shared/lib/utils';
-import { notify } from '@/shared/lib/toast';
 import { engagementCount, shouldOfferInstall } from '@/features/auth/components/install';
 import { SETTINGS_RU } from '../locale';
 import { PushPrompt } from './PushPrompt';
+import { reportEnableOutcome } from './enable-report';
 import { usePush } from './use-push';
 import {
   PUSH_PROMPT_ENGAGEMENT_THRESHOLD,
@@ -39,8 +39,9 @@ const SETTLE_MS = 2500;
  *
  * The card spends nothing. It is a nudge that can be scrolled past or dismissed
  * with no consequence. Only its button opens `PushPrompt`, and only
- * `PushPrompt`'s «Разрешить» reaches `Notification.requestPermission()` — the
- * tap that can be taken once, ever (`docs/research/ios-pwa-push.md` §13).
+ * `PushPrompt`'s «Разрешить» reaches `pushManager.subscribe()` — the tap that
+ * raises the OS prompt, which can be answered once, ever
+ * (`docs/research/ios-pwa-push.md` §17).
  *
  * ## Why it stands down for the install card
  *
@@ -97,32 +98,20 @@ function PushOfferCard({ className, onDone }: { className?: string; onDone: () =
   }, [onDone]);
 
   const accept = useCallback(() => {
-    // Straight from the click handler: `enable()` is not `async` and fires
-    // `Notification.requestPermission()` before it returns its promise. The
-    // VAPID key is primed at boot by `primeVapidKey()` in `main.tsx` precisely
-    // so nothing has to be fetched here — a round trip would spend the
-    // user-activation token and Safari would then refuse to subscribe.
+    // Straight from the click handler: `enable()` is not `async` and reaches
+    // `pushManager.subscribe()` before it returns its promise. The VAPID key is
+    // primed at boot by `primeVapidKey()` in `main.tsx` and the service worker
+    // is primed on mount, precisely so nothing has to be fetched or awaited
+    // here — the tap carries only five seconds of transient activation.
     void push.enable().then((result) => {
-      switch (result.outcome) {
-        case 'enabled':
-          notify.success(T.enabled);
-          onDone();
-          break;
-        case 'denied':
-          // The one-shot prompt is spent. `/settings/notifications` holds the
-          // recovery steps; there is nothing useful left for this card to say.
-          onDone();
-          break;
-        case 'dismissed':
-          break;
-        case 'needs-install':
-        case 'unsupported':
-        case 'misconfigured':
-        case 'failed':
-          notify.error(new Error('push'), T.enableFailed);
-          onDone();
-          break;
-      }
+      // One message per outcome, naming the cause and the remedy — including
+      // `denied`, which on iOS resolves instantly without ever showing the OS
+      // prompt and so otherwise looks like the tap did nothing at all. The
+      // detail and the reset steps live on `/settings/notifications`.
+      reportEnableOutcome(result);
+      // `dismissed` leaves the card up: the user swiped the OS prompt away
+      // without answering, so the offer is still worth making.
+      if (result.outcome !== 'dismissed') onDone();
     });
   }, [push, onDone]);
 
@@ -163,7 +152,10 @@ function PushOfferCard({ className, onDone }: { className?: string; onDone: () =
             // width from `sm` up, so it does not become an 880px slab and the
             // loudest object on a desktop home screen.
             className="h-11 flex-1 sm:flex-none sm:px-8"
-            disabled={push.busy}
+            // `ready` means the service worker is active and a key is loaded.
+            // Offering the tap before that earns an `InvalidStateError` and
+            // spends the user's patience on our race condition.
+            disabled={push.busy || !push.ready}
             onClick={() => {
               // The soft pre-prompt first — always. The OS prompt is one-shot
               // and must never be the user's first surprise.

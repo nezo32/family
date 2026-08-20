@@ -49,7 +49,8 @@ export function useTestDatabaseUrl(): void {
    * rejects with `NOAUTH`. Override it here with the dev credentials unless the
    * runner names one explicitly through `TEST_REDIS_URL`.
    */
-  process.env.REDIS_URL = process.env.TEST_REDIS_URL ?? process.env.REDIS_URL ?? 'redis://:family@127.0.0.1:6379/1';
+  process.env.REDIS_URL =
+    process.env.TEST_REDIS_URL ?? process.env.REDIS_URL ?? 'redis://:family@127.0.0.1:6379/1';
 }
 
 useTestDatabaseUrl();

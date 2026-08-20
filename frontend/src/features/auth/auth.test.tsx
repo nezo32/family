@@ -209,7 +209,9 @@ describe('LoginPage \u2014 a provider that failed before the user got there', ()
     expect(
       screen.getByText(AUTH_RU.errors.providerUnavailableTitle('Telegram')),
     ).toBeInTheDocument();
-    expect(screen.getByText(AUTH_RU.errors.providerUnavailableText('Telegram'))).toBeInTheDocument();
+    expect(
+      screen.getByText(AUTH_RU.errors.providerUnavailableText('Telegram')),
+    ).toBeInTheDocument();
     // «Попробуйте через минуту» would send the user into a retry loop that
     // cannot succeed - only the family admin can fix a bot domain.
     expect(screen.queryByText(ERROR_MESSAGES_RU.SERVICE_UNAVAILABLE)).not.toBeInTheDocument();

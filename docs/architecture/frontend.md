@@ -11,18 +11,18 @@ top** of it and should not need to change any of it.
 
 ## 1. Stack
 
-| Concern | Choice | Notes |
-|---|---|---|
-| Build | Vite 6 | `vite.config.ts`, `@` → `src`, `/api` proxied to `localhost:3000` in dev |
-| UI | React 19 + TypeScript (strict, `noUncheckedIndexedAccess`, `verbatimModuleSyntax`) | |
-| Styling | Tailwind v4, **CSS-first** | all theming in `src/index.css` — there is **no `tailwind.config.js`** and there must not be one |
-| Components | shadcn/ui "new-york" | vendored into `src/shared/ui/` |
-| Server state | TanStack Query v5 | the only place server data lives |
-| Client state | Zustand | thin, for genuinely local UI state |
-| Routing | React Router v7 (**data router**) | `createBrowserRouter` |
-| Forms | react-hook-form + `zodResolver` | schemas come from `@family/shared` |
-| PWA | `vite-plugin-pwa`, `strategies: 'injectManifest'` | custom SW at `src/sw.ts` |
-| Tests | Vitest + Testing Library | `src/test/setup.ts` |
+| Concern      | Choice                                                                             | Notes                                                                                           |
+| ------------ | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Build        | Vite 6                                                                             | `vite.config.ts`, `@` → `src`, `/api` proxied to `localhost:3000` in dev                        |
+| UI           | React 19 + TypeScript (strict, `noUncheckedIndexedAccess`, `verbatimModuleSyntax`) |                                                                                                 |
+| Styling      | Tailwind v4, **CSS-first**                                                         | all theming in `src/index.css` — there is **no `tailwind.config.js`** and there must not be one |
+| Components   | shadcn/ui "new-york"                                                               | vendored into `src/shared/ui/`                                                                  |
+| Server state | TanStack Query v5                                                                  | the only place server data lives                                                                |
+| Client state | Zustand                                                                            | thin, for genuinely local UI state                                                              |
+| Routing      | React Router v7 (**data router**)                                                  | `createBrowserRouter`                                                                           |
+| Forms        | react-hook-form + `zodResolver`                                                    | schemas come from `@family/shared`                                                              |
+| PWA          | `vite-plugin-pwa`, `strategies: 'injectManifest'`                                  | custom SW at `src/sw.ts`                                                                        |
+| Tests        | Vitest + Testing Library                                                           | `src/test/setup.ts`                                                                             |
 
 **Primary target is an installed iOS Home-Screen PWA.** Desktop is first-class,
 but when the two conflict, the phone wins.
@@ -89,25 +89,25 @@ mirrored in the header comment of `src/app/router.tsx` and in the `ROUTES`
 constant in `src/shared/lib/routes.ts`. **Never hardcode a path string** — import
 `ROUTES`.
 
-| Path | Nav label (RU) | Page module | Guard |
-|---|---|---|---|
-| `/` | Сегодня | `features/today/pages/TodayPage.tsx` | auth |
-| `/tasks` | Задачи | `features/tasks/pages/TasksPage.tsx` | auth + `task:read` |
-| `/calendar` | Календарь | `features/calendar/pages/CalendarPage.tsx` | auth + `event:read` |
-| `/goals` | Копилки | `features/goals/pages/GoalsPage.tsx` | auth + `goal:read` |
-| `/shopping` | Покупки | `features/shopping/pages/ShoppingPage.tsx` | auth + `shopping:read` |
-| `/wall` | Стена | `features/wall/pages/WallPage.tsx` | auth |
-| `/family` | Семья | `features/family/pages/FamilyPage.tsx` | auth + `member:read` |
-| `/settings` | Настройки | `features/settings/pages/SettingsPage.tsx` | auth |
-| `/settings/profile` | Профиль | `features/settings/pages/ProfilePage.tsx` | auth |
-| `/settings/notifications` | Уведомления | `features/settings/pages/NotificationsPage.tsx` | auth + `notification:manage:own` |
-| `/settings/accounts` | Способы входа | `features/settings/pages/AccountsPage.tsx` | auth + `identity:manage:own` |
-| `/admin/members` | Участники | `features/admin/pages/MembersPage.tsx` | auth + `member:approve` |
-| `/login` | — | `features/auth/pages/LoginPage.tsx` | public, redirects if signed in |
-| `/auth/pending` | — | `features/auth/pages/AccountStatusPages.tsx` → `PendingApprovalPage` | **public** |
-| `/auth/rejected` | — | `features/auth/pages/AccountStatusPages.tsx` → `RejectedPage` | **public** |
-| `/auth/suspended` | — | `features/auth/pages/AccountStatusPages.tsx` → `SuspendedPage` | **public** |
-| anything else | — | `app/ErrorBoundary.tsx` → `NotFound` | — |
+| Path                      | Nav label (RU) | Page module                                                          | Guard                            |
+| ------------------------- | -------------- | -------------------------------------------------------------------- | -------------------------------- |
+| `/`                       | Сегодня        | `features/today/pages/TodayPage.tsx`                                 | auth                             |
+| `/tasks`                  | Задачи         | `features/tasks/pages/TasksPage.tsx`                                 | auth + `task:read`               |
+| `/calendar`               | Календарь      | `features/calendar/pages/CalendarPage.tsx`                           | auth + `event:read`              |
+| `/goals`                  | Копилки        | `features/goals/pages/GoalsPage.tsx`                                 | auth + `goal:read`               |
+| `/shopping`               | Покупки        | `features/shopping/pages/ShoppingPage.tsx`                           | auth + `shopping:read`           |
+| `/wall`                   | Стена          | `features/wall/pages/WallPage.tsx`                                   | auth                             |
+| `/family`                 | Семья          | `features/family/pages/FamilyPage.tsx`                               | auth + `member:read`             |
+| `/settings`               | Настройки      | `features/settings/pages/SettingsPage.tsx`                           | auth                             |
+| `/settings/profile`       | Профиль        | `features/settings/pages/ProfilePage.tsx`                            | auth                             |
+| `/settings/notifications` | Уведомления    | `features/settings/pages/NotificationsPage.tsx`                      | auth + `notification:manage:own` |
+| `/settings/accounts`      | Способы входа  | `features/settings/pages/AccountsPage.tsx`                           | auth + `identity:manage:own`     |
+| `/admin/members`          | Участники      | `features/admin/pages/MembersPage.tsx`                               | auth + `member:approve`          |
+| `/login`                  | —              | `features/auth/pages/LoginPage.tsx`                                  | public, redirects if signed in   |
+| `/auth/pending`           | —              | `features/auth/pages/AccountStatusPages.tsx` → `PendingApprovalPage` | **public**                       |
+| `/auth/rejected`          | —              | `features/auth/pages/AccountStatusPages.tsx` → `RejectedPage`        | **public**                       |
+| `/auth/suspended`         | —              | `features/auth/pages/AccountStatusPages.tsx` → `SuspendedPage`       | **public**                       |
+| anything else             | —              | `app/ErrorBoundary.tsx` → `NotFound`                                 | —                                |
 
 `/auth/*` **must** render with no session at all: a `pending_approval` user is
 never issued one (D3).
@@ -254,13 +254,13 @@ cases, not framework behaviour.
 
 ### Where the tokens live
 
-| Token | Lifetime | Storage | Read by JS? |
-|---|---|---|---|
-| Access (HS256 JWT) | 10 min | **module-scope variable** in `shared/api/token-store.ts` | yes |
-| Refresh (opaque, 32 B) | 30 d | `__Host-rt; HttpOnly; Secure; SameSite=Lax; Path=/` | **no** |
+| Token                  | Lifetime | Storage                                                  | Read by JS? |
+| ---------------------- | -------- | -------------------------------------------------------- | ----------- |
+| Access (HS256 JWT)     | 10 min   | **module-scope variable** in `shared/api/token-store.ts` | yes         |
+| Refresh (opaque, 32 B) | 30 d     | `__Host-rt; HttpOnly; Secure; SameSite=Lax; Path=/`      | **no**      |
 
 D3, and the reason is worth repeating: `localStorage` is readable by any XSS
-payload *and* is subject to iOS's 7-day script-writable storage cap, which would
+payload _and_ is subject to iOS's 7-day script-writable storage cap, which would
 log an installed PWA out after a week away. A server-set `HttpOnly` cookie is
 exempt from that cap. Consequence: **a page reload starts with no access token**,
 the first request 401s, and the refresh below fixes it transparently.
@@ -320,11 +320,11 @@ client never re-derives it.
 ```tsx
 const { can, scopeFor, canAny, isReady } = useCan();
 
-can('task:create')            // unscoped permission, exact match
-can('task:update', task)      // `task:update:any` → true
-                              // `task:update:own` → true iff task is yours
-can('task:update')            // `…:own` with no row → true (affordance)
-scopeFor('task:read')         // 'any' | 'own' | null → narrow your query
+can('task:create'); // unscoped permission, exact match
+can('task:update', task); // `task:update:any` → true
+// `task:update:own` → true iff task is yours
+can('task:update'); // `…:own` with no row → true (affordance)
+scopeFor('task:read'); // 'any' | 'own' | null → narrow your query
 ```
 
 Ownership is tested against `ownerId | createdById | authorId | userId | assigneeId`
@@ -366,19 +366,19 @@ screen, often late in the evening. So:
 
 Colours are OKLCH so the lightness steps are perceptually even.
 
-| Token | Light | Dark | Use |
-|---|---|---|---|
-| `--background` / `--foreground` | `oklch(.99 .0065 84)` / `oklch(.2585 .0195 55)` | `oklch(.1985 .0115 56)` / `oklch(.9485 .0105 84)` | page |
-| `--card`, `--popover` | white | `oklch(.2415 .0135 56)` | raised surfaces |
-| `--primary` | `oklch(.6135 .1495 42)` | `oklch(.7085 .1385 46)` | clay — CTAs, active nav |
-| `--secondary` | `oklch(.945 .0185 82)` | `oklch(.2885 .0165 60)` | warm sand |
-| `--muted` / `--muted-foreground` | | | secondary text, chips |
-| `--accent` | `oklch(.9265 .0405 150)` | `oklch(.3285 .0385 155)` | sage — hover, "done" |
-| `--destructive` | `oklch(.5785 .1985 27.5)` | `oklch(.6485 .1885 26)` | delete |
-| `--success` / `--warning` | | | status badges |
-| `--border`, `--input`, `--ring` | | | |
-| `--chart-1…5` | clay, sage, honey, plum, sky | | recharts |
-| `--sidebar*` | | | desktop rail |
+| Token                            | Light                                           | Dark                                              | Use                     |
+| -------------------------------- | ----------------------------------------------- | ------------------------------------------------- | ----------------------- |
+| `--background` / `--foreground`  | `oklch(.99 .0065 84)` / `oklch(.2585 .0195 55)` | `oklch(.1985 .0115 56)` / `oklch(.9485 .0105 84)` | page                    |
+| `--card`, `--popover`            | white                                           | `oklch(.2415 .0135 56)`                           | raised surfaces         |
+| `--primary`                      | `oklch(.6135 .1495 42)`                         | `oklch(.7085 .1385 46)`                           | clay — CTAs, active nav |
+| `--secondary`                    | `oklch(.945 .0185 82)`                          | `oklch(.2885 .0165 60)`                           | warm sand               |
+| `--muted` / `--muted-foreground` |                                                 |                                                   | secondary text, chips   |
+| `--accent`                       | `oklch(.9265 .0405 150)`                        | `oklch(.3285 .0385 155)`                          | sage — hover, "done"    |
+| `--destructive`                  | `oklch(.5785 .1985 27.5)`                       | `oklch(.6485 .1885 26)`                           | delete                  |
+| `--success` / `--warning`        |                                                 |                                                   | status badges           |
+| `--border`, `--input`, `--ring`  |                                                 |                                                   |                         |
+| `--chart-1…5`                    | clay, sage, honey, plum, sky                    |                                                   | recharts                |
+| `--sidebar*`                     |                                                 |                                                   | desktop rail            |
 
 `--radius: 0.75rem` (friendly, not sharp) with `--radius-sm/md/lg/xl/2xl` derived.
 
@@ -388,14 +388,14 @@ Also exported as Tailwind spacing tokens: `--spacing-safe-t/r/b/l`
 
 ### PWA hardening in `@layer base`
 
-| Rule | Why |
-|---|---|
-| `-webkit-text-size-adjust: 100%` | iOS inflates text in landscape otherwise |
-| `-webkit-tap-highlight-color: transparent` | kills the grey flash on every tap |
-| `overscroll-behavior-y: none` on `html`/`body` | no rubber-band revealing browser chrome |
-| `min-height: 100dvh` (never `100vh`) | `vh` includes the collapsed iOS URL bar → layout jump |
+| Rule                                                                                  | Why                                                                 |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `-webkit-text-size-adjust: 100%`                                                      | iOS inflates text in landscape otherwise                            |
+| `-webkit-tap-highlight-color: transparent`                                            | kills the grey flash on every tap                                   |
+| `overscroll-behavior-y: none` on `html`/`body`                                        | no rubber-band revealing browser chrome                             |
+| `min-height: 100dvh` (never `100vh`)                                                  | `vh` includes the collapsed iOS URL bar → layout jump               |
 | `@media (pointer: coarse) { input, select, textarea { font-size: 16px !important } }` | **iOS zooms the viewport on focus below 16px and never zooms back** |
-| `prefers-reduced-motion` reset | accessibility |
+| `prefers-reduced-motion` reset                                                        | accessibility                                                       |
 
 Utilities: `.pt-safe .pb-safe .pl-safe .pr-safe .px-safe .mb-safe`,
 `.h-dvh .min-h-dvh`, `.h-app-content`, `.no-callout`, plus `[data-scroll-pane]`
@@ -477,11 +477,11 @@ see `public/icons/README.md` for what still needs a designer.
 
 Typed in `src/vite-env.d.ts`:
 
-| Variable | Meaning |
-|---|---|
-| `VITE_API_URL` | API origin. **Empty in dev and prod** (same origin, which is what makes the `__Host-rt` cookie work). Set only for a split-origin deployment, which also needs backend CORS. |
-| `VITE_VAPID_PUBLIC_KEY` | VAPID application server key for Web Push subscribe. |
-| `VITE_TELEGRAM_BOT_USERNAME` | Bot username without `@`, for the Telegram login widget. |
+| Variable                     | Meaning                                                                                                                                                                      |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VITE_API_URL`               | API origin. **Empty in dev and prod** (same origin, which is what makes the `__Host-rt` cookie work). Set only for a split-origin deployment, which also needs backend CORS. |
+| `VITE_VAPID_PUBLIC_KEY`      | VAPID application server key for Web Push subscribe.                                                                                                                         |
+| `VITE_TELEGRAM_BOT_USERNAME` | Bot username without `@`, for the Telegram login widget.                                                                                                                     |
 
 ---
 

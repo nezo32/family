@@ -15,7 +15,11 @@ import {
 
 import { createdAt, primaryId, timestamps } from '../../db/base.js';
 import { users } from '../identity/users.schema.js';
-import { occurrenceStatus, recurrenceColumns, visibility } from '../scheduling/recurrence.schema.js';
+import {
+  occurrenceStatus,
+  recurrenceColumns,
+  visibility,
+} from '../scheduling/recurrence.schema.js';
 
 /**
  * Tasks & chores — the rule (`task_series`) and its materialized instances
@@ -194,7 +198,9 @@ export const taskOccurrences = pgTable(
       .where(sql`${t.status} = 'scheduled'`),
 
     /** The overdue sweep and the red-badge count. Overdue is derived, never stored. */
-    index('task_occurrences_overdue_idx').on(t.dueAt).where(sql`${t.status} = 'scheduled'`),
+    index('task_occurrences_overdue_idx')
+      .on(t.dueAt)
+      .where(sql`${t.status} = 'scheduled'`),
 
     /** Series detail view and the horizon trim. */
     index('task_occurrences_series_starts_idx').on(t.seriesId, t.startsAt),

@@ -49,14 +49,14 @@ Everything needed to run the Family App locally and on the self-hosted VDI.
 Postgres and Redis publish **no host ports in production**. If you can reach
 port 5432 from outside the VDI, something is wrong.
 
-| File                              | Purpose                                                 |
-| --------------------------------- | ------------------------------------------------------- |
-| `docker-compose.yml`              | production stack                                        |
-| `docker-compose.dev.yml`          | postgres + redis only, ports published to the host      |
-| `caddy/Caddyfile`                 | edge reverse proxy, TLS, security headers, cache policy |
-| `postgres/init/01-extensions.sql` | first-boot extensions + session defaults                |
-| `scripts/backup.sh`               | nightly `pg_dump`, gzip, sha256, rotation               |
-| `scripts/restore-check.sh`        | replays the newest dump into a throwaway container      |
+| File                              | Purpose                                                     |
+| --------------------------------- | ----------------------------------------------------------- |
+| `docker-compose.yml`              | production stack                                            |
+| `docker-compose.dev.yml`          | postgres + redis only, ports published to the host          |
+| `caddy/Caddyfile`                 | edge reverse proxy, TLS, security headers, cache policy     |
+| `postgres/init/01-extensions.sql` | first-boot extensions + session defaults                    |
+| `scripts/backup.sh`               | nightly `pg_dump`, gzip, sha256, rotation                   |
+| `scripts/restore-check.sh`        | replays the newest dump into a throwaway container          |
 | `backup-pull/`                    | **separate project** — pulls backups down to the owner's PC |
 
 ---
@@ -188,7 +188,6 @@ re-subscribe. Generate once, back them up, do not rotate casually.
 The client secret is still required alongside PKCE for a Web client — this is
 not optional for Google, whatever the PKCE spec implies.
 
-
 ### Telegram
 
 1. Talk to [@BotFather](https://t.me/BotFather) → `/newbot`.
@@ -286,18 +285,18 @@ That is the entire installation. Docker Desktop starts the container with the
 PC; the container schedules itself. No host cron, no Windows scheduled task, no
 PowerShell — that path is gone.
 
-| File | Purpose |
-| --- | --- |
-| `backup-pull/docker-compose.yml` | the service; every knob and why it is set |
-| `backup-pull/entrypoint.sh` | validate the key, write the crontab, run one check, `exec crond` |
-| `backup-pull/pull.sh` | one run: is it due, fetch, verify, overwrite the slot |
-| `backup-pull/.env.example` | the optional overrides |
+| File                             | Purpose                                                          |
+| -------------------------------- | ---------------------------------------------------------------- |
+| `backup-pull/docker-compose.yml` | the service; every knob and why it is set                        |
+| `backup-pull/entrypoint.sh`      | validate the key, write the crontab, run one check, `exec crond` |
+| `backup-pull/pull.sh`            | one run: is it due, fetch, verify, overwrite the slot            |
+| `backup-pull/.env.example`       | the optional overrides                                           |
 
 **How it schedules.** A stock `instrumentisto/rsync-ssh:alpine` (25 MB —
 Alpine plus `ssh`, `scp`, `rsync`, `sha256sum`, `crond`, `tzdata`; nothing to
 build) runs busybox `crond` with one hourly entry. The hour is not the schedule.
 Each tick asks whether it has been ≥ `MIN_INTERVAL_HOURS` (20) since the last
-*successful* backup, and takes one if so and it is past `PREFERRED_HOUR` (14) —
+_successful_ backup, and takes one if so and it is past `PREFERRED_HOUR` (14) —
 or unconditionally past `MAX_INTERVAL_HOURS` (26), which is the "the PC was
 off" case. Container start runs the check too, so waking the machine does not
 mean waiting an hour. All the state is files on the bind mount, so `stop`/

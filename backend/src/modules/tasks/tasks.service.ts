@@ -1034,8 +1034,12 @@ export class TasksService {
       const current = await this.loadWritableOccurrence(tx, actor, id, 'update');
 
       const patch: repo.OccurrenceOverridePatch = {
-        ...(input.titleOverride === undefined ? {} : { titleOverride: input.titleOverride ?? null }),
-        ...(input.notesOverride === undefined ? {} : { notesOverride: input.notesOverride ?? null }),
+        ...(input.titleOverride === undefined
+          ? {}
+          : { titleOverride: input.titleOverride ?? null }),
+        ...(input.notesOverride === undefined
+          ? {}
+          : { notesOverride: input.notesOverride ?? null }),
         ...(input.startsLocal === undefined
           ? {}
           : planOccurrenceMove(input.startsLocal, {

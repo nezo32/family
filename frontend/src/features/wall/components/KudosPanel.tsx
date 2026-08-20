@@ -1,276 +1,133 @@
-import { useState } from 'react';
-import { Heart } from 'lucide-react';
-import { Can, useCan } from '@/shared/auth';
-import { EmptyState, InlineSpinner, UserAvatar } from '@/shared/components';
+import { Section } from '@/shared/ui/section';
 import { Button } from '@/shared/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/shared/ui/dialog';
-import { Label } from '@/shared/ui/label';
-import { Textarea } from '@/shared/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
 import { Skeleton } from '@/shared/ui/skeleton';
+import { MemberDisc } from '@/shared/ui/member-disc';
 import { cn } from '@/shared/lib/utils';
-import { COMMON, relativeTime } from '@/shared/lib/i18n';
-import { useGiveKudos, useKudosTotals, useRecentKudos, useRoster } from '../hooks';
-import { KUDOS_EMOJI, WALL_RU } from '../locale';
+import { COMMON } from '@/shared/lib/i18n';
+import { errorMessageRu } from '@/shared/api/errors-ru';
+import { useKudosTotals } from '../hooks';
+import { WALL_RU } from '../locale';
+import { BoardComposeInvite } from './BoardCompose';
 
 /**
- * «Спасибо» — the warm corner of the app.
+ * «Спасибо» — the warm corner of the board.
  *
- * The one design rule here is negative: **nothing may read as a ranking.**
- * Totals are listed alphabetically, never sorted by count; there is no place,
- * no medal, no "лидер недели"; a member with zero appears in the same list with
- * the same weight as everyone else. A sibling leaderboard would turn the one
- * screen that exists to make people feel good into another scoreboard (D5 says
- * the same thing about chore load, for the same reason).
+ * ## The one design rule here is negative: nothing may read as a ranking
+ *
+ * Rows are alphabetical, never sorted by count. There is no place, no medal, no
+ * «лидер недели». A member who has been thanked nothing appears in the same
+ * list, at the same weight, as everyone else. The chip says **whether** somebody
+ * was thanked this month and nothing more — «7 спасибо» beside a name is a
+ * scoreboard whatever the heading says, and the family member reading the
+ * smaller number learns exactly the wrong thing (D5).
+ *
+ * That rule holds out loud as well as on screen. The chip's visible text *is*
+ * its accessible name, and `received` is never written into a `title`, an
+ * `aria-label` or a tooltip anywhere in this file — a weekly-load bar on Семья
+ * was once found reading «40 % (своя доля 33 %)» to a screen reader while
+ * showing no numbers at all, which handed a blind family member the exact
+ * scoreboard the sighted design refused to draw.
+ *
+ * ## Why this component owns nothing
+ *
+ * It used to carry the «Сказать спасибо» dialog in its own header, which made
+ * it stateful, which is why Стена could not simply render it wherever the
+ * layout wanted it. The composer now lives once, at the page level, behind the
+ * board's one door (`BoardCompose`); this panel is a pure function of server
+ * state and can therefore sit in the side column on a wide screen and at the
+ * foot of the board on a phone, as one instance, with no media query and no
+ * `useTwoColumn`.
  */
 export function KudosPanel() {
-  const roster = useRoster();
   const totals = useKudosTotals();
-  const recent = useRecentKudos();
 
   const rows = [...(totals.data?.items ?? [])].sort((left, right) =>
     left.displayName.localeCompare(right.displayName, 'ru'),
   );
+  const nobodyThankedYet = rows.length > 0 && rows.every((row) => row.received === 0);
 
-  return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <h2 className="text-base font-semibold text-foreground">{WALL_RU.kudos.totalsTitle}</h2>
-          <p className="text-sm text-muted-foreground">{WALL_RU.kudos.subtitle}</p>
-        </div>
-        <Can perm="kudos:give">
-          <GiveKudosDialog />
-        </Can>
-      </div>
-
-      {totals.isPending ? (
-        <div className="space-y-2" aria-hidden>
-          <Skeleton className="h-14 w-full rounded-xl" />
-          <Skeleton className="h-14 w-full rounded-xl" />
-        </div>
-      ) : rows.length === 0 ? (
-        <EmptyState
-          icon={Heart}
-          title={WALL_RU.kudos.empty}
-          description={WALL_RU.kudos.emptyDescription}
-          compact
-          /*
-            `null` on purpose. §E wants every empty state to invite, and this
-            one does — but the invitation is `GiveKudosDialog`, which this panel
-            already renders in its own header ~60px above. A second «Сказать
-            спасибо» here would be the same button twice, and two `Dialog`
-            instances for one flow. The panel's shape is the thing to fix, not
-            this prop; see the report.
-          */
-          action={null}
-        />
-      ) : (
-        <>
-          <ul className="space-y-2">
-            {rows.map((row) => (
-              <li
-                key={row.userId}
-                className="flex min-h-14 items-center gap-3 rounded-xl border border-border bg-card px-4 py-1.5"
-              >
-                <UserAvatar
-                  user={{
-                    id: row.userId,
-                    displayName: row.displayName,
-                    avatarUrl: roster.byId.get(row.userId)?.avatarUrl ?? null,
-                  }}
-                  size="sm"
-                />
-                <span className="min-w-0 flex-1 truncate text-[17px] leading-6 font-medium text-foreground">
-                  {row.displayName}
-                </span>
-                {/*
-                  D5, and the hard rule of this whole screen: **no growing
-                  per-person total.** This used to print «7 спасибо» beside every
-                  name — alphabetical order does not stop seven next to two from
-                  being a scoreboard, and a family member reading the smaller
-                  number learns exactly the wrong thing. The chip says whether
-                  somebody was thanked this month; the stream below says by whom
-                  and what for, which is the part that is actually warm.
-                */}
-                <span
-                  className={cn(
-                    'shrink-0 rounded-full px-3 py-1 text-[13px] leading-[18px] font-medium',
-                    row.received > 0
-                      ? 'bg-surface-calm text-surface-calm-foreground'
-                      : 'bg-muted text-muted-foreground',
-                  )}
-                >
-                  {row.received > 0 ? WALL_RU.kudos.receivedSome : WALL_RU.kudos.receivedNone}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <p className="text-xs text-muted-foreground">{WALL_RU.kudos.totalsHint}</p>
-        </>
-      )}
-
-      <section className="space-y-2">
-        <h3 className="text-sm font-medium text-foreground">{WALL_RU.kudos.recentTitle}</h3>
-        <ul className="space-y-2">
-          {(recent.data?.items ?? []).map((item) => (
-            <li key={item.id} className="flex items-start gap-2.5 px-1 py-1.5">
-              <span aria-hidden className="text-lg leading-none">
-                {item.emoji}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="wrap-break-word text-sm text-foreground">
-                  {roster.nameOf(item.fromUserId)} → {roster.nameOf(item.toUserId)}
-                </p>
-                {item.message ? (
-                  <p className="wrap-break-word text-sm text-muted-foreground">{item.message}</p>
-                ) : null}
-                <time dateTime={item.createdAt} className="text-xs text-muted-foreground/80">
-                  {relativeTime(item.createdAt)}
-                </time>
-              </div>
-            </li>
-          ))}
-        </ul>
-      </section>
-    </div>
+  /*
+    «Сказать спасибо», not «Спасибо»: the section is already called Спасибо, and
+    a heading and its button reading the same word is chrome that repeats (§A3).
+  */
+  const invite = (
+    <BoardComposeInvite
+      kind="kudos"
+      label={WALL_RU.kudos.give}
+      variant="ghost"
+      className="h-11 px-2"
+    />
   );
-}
 
-function GiveKudosDialog() {
-  const [open, setOpen] = useState(false);
-  const [toUserId, setToUserId] = useState('');
-  const [emoji, setEmoji] = useState<string>(KUDOS_EMOJI[0]);
-  const [message, setMessage] = useState('');
-  const roster = useRoster();
-  const { userId } = useCan();
-  const give = useGiveKudos();
-
-  // You cannot thank yourself; the picker simply does not offer it.
-  const candidates = roster.members.filter((member) => member.id !== userId);
-
-  const submit = (): void => {
-    if (toUserId.length === 0) return;
-    const trimmed = message.trim();
-    give.mutate(
-      {
-        toUserId,
-        emoji,
-        message: trimmed.length > 0 ? trimmed : null,
-      },
-      {
-        onSuccess: () => {
-          setToUserId('');
-          setMessage('');
-          setEmoji(KUDOS_EMOJI[0]);
-          setOpen(false);
-        },
-      },
+  if (totals.isPending) {
+    return (
+      <Section label={WALL_RU.kudos.title} action={invite} surface="card">
+        {[0, 1, 2].map((index) => (
+          <div key={index} className="flex items-center gap-3 px-4 py-3" aria-hidden>
+            <Skeleton className="size-8 rounded-full" />
+            <Skeleton className="h-4 w-24" />
+          </div>
+        ))}
+      </Section>
     );
-  };
+  }
+
+  if (totals.isError) {
+    return (
+      <Section label={WALL_RU.kudos.title} action={invite} surface="card">
+        <div className="flex w-full max-w-row-measure flex-wrap items-center justify-between gap-2 px-4 py-3">
+          <p className="min-w-0 text-[15px] leading-[22px] text-muted-foreground">
+            {errorMessageRu(totals.error)}
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            className="min-h-11"
+            onClick={() => {
+              void totals.refetch();
+            }}
+          >
+            {COMMON.retry}
+          </Button>
+        </div>
+      </Section>
+    );
+  }
+
+  if (rows.length === 0) return null;
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        {/* `secondary`, not filled: Стена's one filled primary is «Написать»
-            in the app bar (§B4), and two clay buttons on one screen is the
-            "nothing was decided" look the direction is trying to remove. */}
-        <Button type="button" variant="secondary" className="min-h-11">
-          <Heart className="size-4" aria-hidden />
-          {WALL_RU.kudos.give}
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>{WALL_RU.kudos.giveTitle}</DialogTitle>
-          <DialogDescription>{WALL_RU.kudos.giveDescription}</DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="kudos-to">{WALL_RU.kudos.to}</Label>
-            <Select value={toUserId} onValueChange={setToUserId}>
-              <SelectTrigger id="kudos-to" className="min-h-11 w-full">
-                <SelectValue placeholder={WALL_RU.kudos.pickPerson} />
-              </SelectTrigger>
-              <SelectContent>
-                {candidates.map((member) => (
-                  <SelectItem key={member.id} value={member.id}>
-                    {member.displayName}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <Label>{WALL_RU.kudos.emoji}</Label>
-            <div className="flex flex-wrap gap-1.5" role="group" aria-label={WALL_RU.kudos.emoji}>
-              {KUDOS_EMOJI.map((candidate) => (
-                <button
-                  key={candidate}
-                  type="button"
-                  aria-label={candidate}
-                  aria-pressed={emoji === candidate}
-                  onClick={() => {
-                    setEmoji(candidate);
-                  }}
-                  className={cn(
-                    'flex size-11 items-center justify-center rounded-full border text-xl',
-                    emoji === candidate ? 'border-primary bg-primary/10' : 'border-border',
-                  )}
-                >
-                  <span aria-hidden>{candidate}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="kudos-message">{WALL_RU.kudos.message}</Label>
-            <Textarea
-              id="kudos-message"
-              value={message}
-              rows={3}
-              maxLength={280}
-              placeholder={WALL_RU.kudos.messagePlaceholder}
-              onChange={(event) => {
-                setMessage(event.target.value);
-              }}
-              className="text-base"
-            />
-          </div>
-
-          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <Button
-              type="button"
-              variant="ghost"
-              className="min-h-11"
-              onClick={() => {
-                setOpen(false);
-              }}
-            >
-              {COMMON.cancel}
-            </Button>
-            <Button
-              type="button"
-              className="min-h-11"
-              disabled={toUserId.length === 0 || give.isPending}
-              onClick={submit}
-            >
-              {give.isPending ? <InlineSpinner className="mr-2" /> : null}
-              {give.isPending ? WALL_RU.kudos.sending : WALL_RU.kudos.send}
-            </Button>
-          </div>
+    <Section
+      label={WALL_RU.kudos.title}
+      action={invite}
+      surface="card"
+      footnote={nobodyThankedYet ? WALL_RU.kudos.nobodyYet : WALL_RU.kudos.hint}
+    >
+      {rows.map((row) => (
+        <div
+          key={row.userId}
+          className="flex min-h-14 w-full max-w-row-measure items-center gap-3 px-4 py-2"
+        >
+          <MemberDisc id={row.userId} displayName={row.displayName} size="md" />
+          <span className="min-w-0 flex-1 truncate text-[17px] leading-6 font-medium">
+            {row.displayName}
+          </span>
+          {/*
+            Two words, never a number — and the same two words a screen reader
+            hears, because the text is the label.
+          */}
+          <span
+            className={cn(
+              'shrink-0 rounded-full px-3 py-1 text-[13px] leading-[18px] font-medium',
+              row.received > 0
+                ? 'bg-surface-calm text-surface-calm-foreground'
+                : 'bg-muted text-muted-foreground',
+            )}
+          >
+            {row.received > 0 ? WALL_RU.kudos.receivedSome : WALL_RU.kudos.receivedNone}
+          </span>
         </div>
-      </DialogContent>
-    </Dialog>
+      ))}
+    </Section>
   );
 }

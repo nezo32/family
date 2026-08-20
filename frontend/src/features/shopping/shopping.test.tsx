@@ -347,7 +347,6 @@ describe('quick-add parsing', () => {
   });
 });
 
-
 /* -------------------------------------------------------------------------- */
 /* List management                                                            */
 /* -------------------------------------------------------------------------- */
@@ -584,12 +583,11 @@ describe('renaming a list', () => {
     // Gone from the query the overview reads…
     expect(qc.getQueryData<ShoppingListResponse[]>(shoppingKeys.list(false))).toEqual([]);
     // …and still present, flagged, in the one `ListPage` reads.
-    expect(
-      qc.getQueryData<ShoppingListResponse[]>(shoppingKeys.list(true))?.[0]?.isArchived,
-    ).toBe(true);
+    expect(qc.getQueryData<ShoppingListResponse[]>(shoppingKeys.list(true))?.[0]?.isArchived).toBe(
+      true,
+    );
   });
 });
-
 
 /* -------------------------------------------------------------------------- */
 /* Editing one line                                                           */

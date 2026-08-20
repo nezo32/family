@@ -414,7 +414,6 @@ test.describe('long press on a task row', () => {
   });
 });
 
-
 /* -------------------------------------------------------------------------- */
 /* §G6 — pull to refresh                                                       */
 /* -------------------------------------------------------------------------- */
@@ -492,7 +491,9 @@ async function tallList(page: Page, stamp: string): Promise<void> {
   const overflow = await page.evaluate(
     () => document.documentElement.scrollHeight - window.innerHeight,
   );
-  expect(overflow, 'the page must be taller than the screen to prove anything').toBeGreaterThan(400);
+  expect(overflow, 'the page must be taller than the screen to prove anything').toBeGreaterThan(
+    400,
+  );
 }
 
 /**
@@ -559,9 +560,10 @@ test.describe('pull to refresh', () => {
     });
     await page.waitForTimeout(250);
     const before = await page.evaluate(() => window.scrollY);
-    expect(before, 'the page has to actually be scrolled for this to mean anything').toBeGreaterThan(
-      200,
-    );
+    expect(
+      before,
+      'the page has to actually be scrolled for this to mean anything',
+    ).toBeGreaterThan(200);
     await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => undefined);
 
     const reads = watchApiReads(page);

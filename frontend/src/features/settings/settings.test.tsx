@@ -83,6 +83,13 @@ function stubNotification(permission: NotificationPermission, request?: () => Pr
 
 function stubServiceWorker(subscription: unknown) {
   const registration = {
+    // `active` is load-bearing, not decoration: `enablePush()` refuses to call
+    // `subscribe()` without it, because WebKit throws `InvalidStateError`
+    // against a worker that is only installing.
+    active: {},
+    waiting: null,
+    installing: null,
+    scope: `${ORIGIN}/`,
     pushManager: {
       getSubscription: vi.fn(() => Promise.resolve(subscription)),
       subscribe: vi.fn(() => Promise.resolve(subscription)),
@@ -143,32 +150,72 @@ describe('push feature detection', () => {
 /* -------------------------------------------------------------------------- */
 
 describe('permission request', () => {
-  it('calls requestPermission synchronously, with no await before it', () => {
-    // WebKit's user-activation token does not survive an intervening `await`.
-    // If anything is awaited before `requestPermission()`, the call lands in a
-    // later microtask and Safari silently refuses both the prompt and
-    // `subscribe()`. Asserting *synchronously* after the call is what pins that.
+  it('reaches pushManager.subscribe() synchronously, and never calls requestPermission', () => {
+    // The platform requirement is *transient activation*: five seconds from the
+    // tap, and **consumed by the first caller**. `PushManager::subscribe` does
+    // the prompting itself, so `subscribe()` must be the call that spends it.
+    //
+    // `Notification.requestPermission()` consumes the activation
+    // unconditionally — before it even decides whether to prompt — so calling
+    // it first leaves `subscribe()` with nothing and produces
+    // `NotAllowedError: Push notification prompting can only be done from a
+    // user gesture.` for what is really a Settings problem. This module used to
+    // do exactly that; the assertion that it is *not* called is the point.
     vi.stubEnv('VITE_VAPID_PUBLIC_KEY', 'BJ_test_key');
-    const requestPermission = stubNotification('default', () => Promise.resolve('default'));
-    stubServiceWorker(fakeSubscription());
+    const requestPermission = stubNotification('default');
+    const registration = stubServiceWorker(fakeSubscription());
+    const subscribe = registration.pushManager.subscribe;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ id: 'sub-1' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+        ),
+      ),
+    );
 
     const promise = enablePush();
 
     // No `await` yet — this must already have happened.
-    expect(requestPermission).toHaveBeenCalledTimes(1);
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    expect(subscribe).toHaveBeenCalledWith(
+      expect.objectContaining({ userVisibleOnly: true }) as unknown as PushSubscriptionOptionsInit,
+    );
+    expect(requestPermission).not.toHaveBeenCalled();
 
     return promise.then((result) => {
-      // 'default' means the user dismissed rather than granted.
-      expect(result.outcome).toBe('dismissed');
+      expect(result.outcome).toBe('enabled');
     });
   });
 
-  it('never fires the one-shot OS prompt when push is unsupported', () => {
+  it('never touches the push APIs when push is unsupported', () => {
     Reflect.deleteProperty(window as unknown as Record<string, unknown>, 'Notification');
     Reflect.deleteProperty(window as unknown as Record<string, unknown>, 'PushManager');
 
     return enablePush().then((result) => {
       expect(['unsupported', 'needs-install']).toContain(result.outcome);
+    });
+  });
+
+  it('refuses to subscribe against a service worker that is not active yet', () => {
+    // `PushManager.cpp`: `InvalidStateError: Subscribing for push requires an
+    // active service worker`. The first launch after an install is exactly
+    // when a user goes looking for notifications, and exactly when the worker
+    // may still be installing.
+    vi.stubEnv('VITE_VAPID_PUBLIC_KEY', 'BJ_test_key');
+    stubNotification('default');
+    stubServiceWorker(fakeSubscription());
+    setPrimedRegistration({
+      active: null,
+      pushManager: { subscribe: vi.fn(), getSubscription: vi.fn() },
+    } as unknown as ServiceWorkerRegistration);
+
+    return enablePush().then((result) => {
+      expect(result.outcome).toBe('not-ready');
+      expect(result.error?.message).toContain('active service worker');
     });
   });
 });
@@ -610,7 +657,13 @@ describe('the notification offer in the app shell', () => {
   });
 
   it('reaches the OS prompt only through an explicit yes to our own dialog', async () => {
-    const requestPermission = stubNotification('default', () => Promise.resolve('granted'));
+    // The OS prompt is now raised by `pushManager.subscribe()` itself —
+    // `Notification.requestPermission()` is never called, because it would
+    // consume the tap's transient activation before subscribe could. So
+    // "spending the one-shot prompt" is measured on `subscribe`.
+    const requestPermission = stubNotification('default');
+    const registration = stubServiceWorker(fakeSubscription());
+    const subscribe = registration.pushManager.subscribe;
     recordEngagement();
     recordEngagement();
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
@@ -621,18 +674,19 @@ describe('the notification offer in the app shell', () => {
     const card = await screen.findByTestId('push-offer-card');
     expect(card).toBeInTheDocument();
     // Merely showing the card must not have spent the one-shot prompt.
-    expect(requestPermission).not.toHaveBeenCalled();
+    expect(subscribe).not.toHaveBeenCalled();
 
     // Tap 1: our card. Opens our dialog, and still spends nothing.
     await user.click(screen.getByRole('button', { name: SETTINGS_RU.push.offerAccept }));
     await screen.findByText(SETTINGS_RU.push.promptWarning);
-    expect(requestPermission).not.toHaveBeenCalled();
+    expect(subscribe).not.toHaveBeenCalled();
 
-    // Tap 2: «Разрешить» in our dialog. Only now, and synchronously.
+    // Tap 2: «Разрешить» in our dialog. Only now.
     await user.click(screen.getByRole('button', { name: SETTINGS_RU.push.promptAccept }));
     await waitFor(() => {
-      expect(requestPermission).toHaveBeenCalledTimes(1);
+      expect(subscribe).toHaveBeenCalledTimes(1);
     });
+    expect(requestPermission).not.toHaveBeenCalled();
   });
 });
 

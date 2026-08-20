@@ -1,4 +1,10 @@
-import type { SwapCreate, SwapListQuery, SwapRespond, SwapResponse, SwapStatus } from '@family/shared';
+import type {
+  SwapCreate,
+  SwapListQuery,
+  SwapRespond,
+  SwapResponse,
+  SwapStatus,
+} from '@family/shared';
 
 import type { Db, Executor } from '../../core/db.js';
 import { badRequest, conflict, forbidden, notFound } from '../../core/errors.js';
@@ -402,10 +408,7 @@ export class SwapsService {
  * The priority now comes from `NOTIFICATION_TYPE_DEFAULT_PRIORITY`, which is
  * `emitIntent`'s default, so there is nothing here to get out of step.
  */
-export async function emitChoreIntent(
-  ex: Executor,
-  intent: ChoreIntent,
-): Promise<IntentDispatch> {
+export async function emitChoreIntent(ex: Executor, intent: ChoreIntent): Promise<IntentDispatch> {
   const result = await emitIntent(ex, {
     type: intent.type,
     audience: intent.audience,

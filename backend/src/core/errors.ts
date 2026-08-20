@@ -48,8 +48,10 @@ export const badRequest = (message: string, details?: Record<string, string[]>) 
 export const unauthenticated = (message = 'Authentication required') =>
   new AppError('UNAUTHENTICATED', message);
 
-export const forbidden = (message = 'Insufficient permissions', context?: Record<string, unknown>) =>
-  new AppError('FORBIDDEN', message, context ? { context } : undefined);
+export const forbidden = (
+  message = 'Insufficient permissions',
+  context?: Record<string, unknown>,
+) => new AppError('FORBIDDEN', message, context ? { context } : undefined);
 
 /**
  * Use this — not `forbidden` — whenever the caller is outside the *read* scope

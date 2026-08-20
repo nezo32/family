@@ -587,7 +587,7 @@ describe('swipe «Прочитано» and its «Отменить» (§G4)', () 
     expect(dot()).toBeInTheDocument();
   });
 
-  it('speaks Russian when the undo fails, and never the server\'s message', async () => {
+  it("speaks Russian when the undo fails, and never the server's message", async () => {
     installFetch({ items: [notification()], unread: 1, unreadStatus: 404 });
     await openPanelOnAPhone();
 

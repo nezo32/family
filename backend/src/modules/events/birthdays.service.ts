@@ -273,10 +273,7 @@ export function birthdayFallsOn(birthDate: string | null, localDate: string): bo
   // 29 February in a common year: greet on the 28th, the last day of February.
   const isLeapDayBirth = birthMonth === '02' && birthDay === '29';
   return (
-    isLeapDayBirth &&
-    todayMonth === '02' &&
-    todayDay === '28' &&
-    !isLeapYear(Number(todayYear))
+    isLeapDayBirth && todayMonth === '02' && todayDay === '28' && !isLeapYear(Number(todayYear))
   );
 }
 

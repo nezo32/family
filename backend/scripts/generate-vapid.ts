@@ -14,7 +14,6 @@ const { publicKey, privateKey } = webpush.generateVAPIDKeys();
 
 const subject = process.env.VAPID_SUBJECT ?? 'mailto:admin@example.com';
 
-// eslint-disable-next-line no-console
 console.log(
   [
     '',

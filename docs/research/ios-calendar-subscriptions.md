@@ -47,7 +47,7 @@ the only client that matters can never reach, and re-sends the whole document on
 every single poll.
 
 Worse: with no `Last-Modified` to echo, iOS synthesises one from our **`Date`
-response header** and sends *that* back as `If-Modified-Since`. The client was
+response header** and sends _that_ back as `If-Modified-Since`. The client was
 inventing a validator because we had not given it one.
 
 **Required:** send both `ETag` and `Last-Modified`, and honour both requests.
@@ -58,11 +58,11 @@ ignored outright — not used as a tiebreak.
 
 The obvious implementation — `max(updatedAt)` over the events in the document —
 is **wrong and silently loses deletions**. Delete the most recently edited event
-and that maximum jumps *backwards*; the phone's `If-Modified-Since` is now newer
+and that maximum jumps _backwards_; the phone's `If-Modified-Since` is now newer
 than it; we answer 304; the deleted event stays on the phone forever. A
 content-derived timestamp is only safe for a document that never shrinks.
 
-Time the *change*, not the content: remember the last ETag seen for a feed and
+Time the _change_, not the content: remember the last ETag seen for a feed and
 the moment it was first seen, and mint a new timestamp — at least one second
 after the previous one, because HTTP dates have one-second resolution — whenever
 the ETag differs. Additions, edits and deletions all move it forward. See
@@ -73,7 +73,7 @@ the ETag differs. Additions, edits and deletions all move it forward. See
 iOS maps `REFRESH-INTERVAL;VALUE=DURATION` / `X-PUBLISHED-TTL` onto the
 subscription's **«Обновление» (Auto-Refresh)** setting at subscribe time. Its
 buckets are: every 5 min, 15 min, 30 min, hourly, daily, weekly, manually — so
-advertise a value that lands *on* a bucket rather than between two.
+advertise a value that lands _on_ a bucket rather than between two.
 
 **Changing the interval later does not retune an existing subscription.** The
 value was copied into the subscription record on the phone when it was created.
@@ -86,7 +86,7 @@ change Auto-Refresh by hand, or remove and re-add the subscription:
 
 Emit whole hours as `PT1H`, not `PT60M`. Both are legal and identical; the hour
 form is what Apple's own published feeds use and what pattern-matching clients
-recognise. Emit `REFRESH-INTERVAL` **and** `X-PUBLISHED-TTL` with the *same*
+recognise. Emit `REFRESH-INTERVAL` **and** `X-PUBLISHED-TTL` with the _same_
 value — Apple reads the former, Outlook and several others read only the latter,
 and a feed advertising two different periods gets whichever one was parsed.
 
@@ -114,7 +114,7 @@ Consequences to design around:
 ## 5. `webcal://` vs `https://`
 
 **HARD RULE — hand the user a `webcal://` link for the tap-to-subscribe path.**
-Tapping an `https://…​.ics` link in Safari on iOS *downloads the file once*: the
+Tapping an `https://…​.ics` link in Safari on iOS _downloads the file once_: the
 events appear, they never update, and it looks exactly like a broken
 subscription. `webcal://` opens Calendar's subscribe sheet instead.
 
@@ -122,7 +122,7 @@ Pasting an `https://` URL into **Настройки → … → Подписно
 that field creates a real subscription. So: `webcal://` for links, `https://`
 for copy-paste, and say which is which.
 
-## 6. Things that are *not* the problem (checked, cleared)
+## 6. Things that are _not_ the problem (checked, cleared)
 
 - `Cache-Control: private, max-age=0, must-revalidate` is correct. It forces
   every poll to revalidate rather than letting the phone's cache answer.

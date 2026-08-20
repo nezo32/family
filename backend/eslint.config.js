@@ -32,5 +32,23 @@ export default tseslint.config(
     files: ['**/*.test.ts', 'scripts/**/*.ts', 'src/db/seed.ts'],
     rules: { 'no-console': 'off', '@typescript-eslint/no-unsafe-assignment': 'off' },
   },
+  /**
+   * `eslint .` — what `pnpm lint` and CI run — lints this file too, and it is
+   * the only JS file in the package. The type-aware preset above asks the
+   * TypeScript project service for a program containing it and there is none:
+   * `tsconfig.json` does not set `allowJs`, so a `.js` path in `include` is
+   * dropped from the program silently. The result was a hard
+   * `Parsing error: ... was not found by the project service`.
+   *
+   * It hid because every local gate ran `npx eslint src` while CI ran
+   * `eslint .`. `infra/scripts/verify-ci.sh` now runs the CI command, so
+   * the two cannot diverge again.
+   *
+   * Type-aware rules on a flat config file buy nothing, so drop them for JS
+   * rather than widen the tsconfig to pull a build tool's config into the
+   * program. This block must stay AFTER the one that sets `projectService`:
+   * flat config is last-match-wins, and an earlier reset would be overwritten.
+   */
+  { files: ['**/*.js'], ...tseslint.configs.disableTypeChecked },
   prettier,
 );

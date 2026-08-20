@@ -18,8 +18,8 @@ COMPOSE_DEV  := docker compose -f infra/docker-compose.dev.yml --env-file .env
 PNPM         := pnpm
 
 .PHONY: help dev dev-up dev-down up down restart build logs ps migrate seed \
-        backup restore-check test lint fmt fmt-check typecheck psql redis-cli \
-        env-check clean nuke
+        backup restore-check test lint fmt fmt-check typecheck \
+        verify verify-ci psql redis-cli env-check clean nuke
 
 ## ── help ────────────────────────────────────────────────────────────────────
 help: ## Show this help
@@ -106,6 +106,12 @@ fmt: ## Prettier — write
 
 fmt-check: ## Prettier — check only (what CI runs)
 	$(PNPM) run format:check
+
+verify-ci: ## Every gate .github/workflows/ci.yml runs — locally, in minutes
+	bash infra/scripts/verify-ci.sh
+
+verify: ## verify-ci plus both docker image builds and the Playwright suite
+	bash infra/scripts/verify-all.sh
 
 ## ── housekeeping ────────────────────────────────────────────────────────────
 clean: ## Remove build output (keeps node_modules)

@@ -149,9 +149,9 @@ export function TaskForm(props: {
   });
   const [customReplaced, setCustomReplaced] = useState(false);
   const [showMore, setShowMore] = useState(false);
-  const [openSheet, setOpenSheet] = useState<'who' | 'due' | 'category' | 'notes' | 'who-sees' | null>(
-    null,
-  );
+  const [openSheet, setOpenSheet] = useState<
+    'who' | 'due' | 'category' | 'notes' | 'who-sees' | null
+  >(null);
 
   // Snapshot of what was loaded, so an untouched schedule is not resent (and a
   // resend would re-materialize every future occurrence for nothing).
@@ -225,8 +225,7 @@ export function TaskForm(props: {
   const scheduleLocked = props.scheduleLocked === true;
   // An imported rule is left alone until the user explicitly replaces it —
   // moving its anchor would rewrite a schedule nobody asked us to touch.
-  const anchorLocked =
-    scheduleLocked || (isCustomSchedule(series?.recurrence) && !customReplaced);
+  const anchorLocked = scheduleLocked || (isCustomSchedule(series?.recurrence) && !customReplaced);
 
   const submit = form.handleSubmit((fields) => {
     props.onSubmit({

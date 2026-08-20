@@ -3,25 +3,43 @@ import { Check, Lock } from 'lucide-react';
 import type { PollResponse } from '@family/shared';
 import { useCan } from '@/shared/auth';
 import { Button } from '@/shared/ui/button';
-import { Badge } from '@/shared/ui/badge';
 import { ConfirmDialog, InlineSpinner } from '@/shared/components';
+import { MemberDiscGroup } from '@/shared/ui/member-disc';
 import { cn } from '@/shared/lib/utils';
 import { formatDateTime } from '@/shared/lib/format';
-import { useClosePoll, useVotePoll, type Roster } from '../hooks';
+import { isAnsweredByMe, useClosePoll, useVotePoll, votersOf, type Roster } from '../hooks';
 import { WALL_RU } from '../locale';
 import { AuthorLine } from './AuthorLine';
 import { CommentThread } from './CommentThread';
 
 /**
- * One poll: the question, the options as proportional bars, and — while it is
- * open — a way to answer.
+ * One question the family is deciding together.
  *
- * **A closed poll renders the result, never a form.** Voting after the deadline
- * is refused server-side with a `409`; showing a dead radio button and then an
- * error toast would be a small betrayal every time. The card simply stops
- * offering the choice and shows what the family decided. If a vote does lose the
- * race with the deadline, `useVotePoll` swallows the conflict and re-renders the
- * closed card instead of raising an error.
+ * ## The result is hidden until you have answered
+ *
+ * This is the one behavioural change in the poll, and it is the important one.
+ * The card used to draw every option's share the moment it rendered, so the
+ * first thing a ten-year-old saw was «На дачу 67 %» — and then they voted for
+ * на дачу. A family is exactly the group in which that anchoring bites hardest,
+ * because the two loudest votes are usually the parents'. So the bars appear
+ * once you have answered, or once the poll is closed, and not before. Nothing
+ * is hidden that you are entitled to: you get the whole result the instant you
+ * have said your own piece.
+ *
+ * ## A closed poll renders the result, never a form
+ *
+ * Voting after the deadline is refused server-side with a `409`; showing a dead
+ * radio button and then an error toast would be a small betrayal every time.
+ * The card simply stops offering the choice. If a vote does lose the race with
+ * the deadline, `useVotePoll` swallows the conflict and re-renders the closed
+ * card instead of raising an error.
+ *
+ * ## Who has answered, as faces and not as a number
+ *
+ * «Проголосовали: 3» tells you nothing you can act on. Three member discs tell
+ * you the family is waiting on Папа, which is the sentence somebody actually
+ * says out loud. It is also not a tally against anybody's name: it is a set of
+ * people who have answered *this* question, and it resets with the question.
  */
 export function PollCard(props: { poll: PollResponse; roster: Roster }) {
   const { poll } = props;
@@ -36,11 +54,15 @@ export function PollCard(props: { poll: PollResponse; roster: Roster }) {
     setSelected(serverSelection.length > 0 ? serverSelection.split('|') : []);
   }, [serverSelection]);
 
+  const answered = isAnsweredByMe(poll);
   const mayVote = can('poll:vote') && !poll.isClosed;
   const mayClose =
     !poll.isClosed &&
     can('poll:close') &&
     (poll.createdById === userId || hasPermission('post:delete:any'));
+
+  /** Bars only once the reader has said their own piece. See the note above. */
+  const showResults = answered || poll.isClosed;
 
   const denominator = Math.max(1, poll.totalVoters);
   const shares = useMemo(
@@ -52,6 +74,15 @@ export function PollCard(props: { poll: PollResponse; roster: Roster }) {
         ]),
       ),
     [poll.options, denominator],
+  );
+
+  const voters = useMemo(
+    () =>
+      votersOf(poll).map((id) => ({
+        id,
+        displayName: props.roster.nameOf(id),
+      })),
+    [poll, props.roster],
   );
 
   const submit = (optionIds: readonly string[]): void => {
@@ -76,44 +107,48 @@ export function PollCard(props: { poll: PollResponse; roster: Roster }) {
   };
 
   return (
-    <article className="rounded-xl border border-border bg-card p-4 shadow-xs">
+    <article className="flex w-full max-w-row-measure flex-col gap-2 px-4 py-3">
       <AuthorLine
         roster={props.roster}
         authorId={poll.createdById}
         createdAt={poll.createdAt}
         trailing={
           poll.isClosed ? (
-            <Badge variant="secondary" className="gap-1">
-              <Lock className="size-3" aria-hidden />
-              {WALL_RU.polls.closed}
-            </Badge>
-          ) : (
-            <Badge variant="outline">{WALL_RU.polls.open}</Badge>
-          )
+            <span className="flex items-center gap-1 text-[13px] leading-[18px] font-medium opacity-70">
+              <Lock className="size-3.5" aria-hidden />
+              {WALL_RU.polls.closedBadge}
+            </span>
+          ) : answered ? (
+            <span className="text-[13px] leading-[18px] font-medium opacity-70">
+              {WALL_RU.polls.answered}
+            </span>
+          ) : null
         }
       />
 
-      <h3 className="mt-3 wrap-break-word text-base font-semibold text-foreground">
+      <h3 className="wrap-break-word font-display text-[17px] leading-6 font-semibold">
         {poll.question}
       </h3>
       {!poll.isClosed && poll.closesAt ? (
-        <p className="mt-1 text-xs text-muted-foreground">
+        <p className="text-[13px] leading-[18px] font-medium opacity-70">
           {WALL_RU.polls.closesIn(formatDateTime(poll.closesAt))}
         </p>
       ) : null}
 
-      <ul className="mt-3 space-y-2">
+      <ul className="flex flex-col gap-1.5">
         {poll.options.map((option) => {
           const isChosen = selected.includes(option.id);
           const share = shares.get(option.id) ?? 0;
           const label = (
             <>
-              <span className="min-w-0 flex-1 wrap-break-word text-sm text-foreground">
+              <span className="min-w-0 flex-1 wrap-break-word text-[15px] leading-[22px]">
                 {option.label}
               </span>
-              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                {WALL_RU.polls.resultShare(share)}
-              </span>
+              {showResults ? (
+                <span className="shrink-0 text-[13px] leading-[18px] font-medium tabular-nums opacity-70">
+                  {WALL_RU.polls.resultShare(share)}
+                </span>
+              ) : null}
             </>
           );
 
@@ -125,15 +160,18 @@ export function PollCard(props: { poll: PollResponse; roster: Roster }) {
                   isChosen ? 'border-primary/50' : 'border-border',
                 )}
               >
-                {/* Proportional bar, painted behind the label. */}
-                <div
-                  aria-hidden
-                  className={cn(
-                    'absolute inset-y-0 left-0 transition-[width] duration-300',
-                    isChosen ? 'bg-primary/20' : 'bg-muted',
-                  )}
-                  style={{ width: `${String(share)}%` }}
-                />
+                {/* Proportional bar, painted behind the label — only once the
+                    reader has answered, so it cannot anchor their answer. */}
+                {showResults ? (
+                  <div
+                    aria-hidden
+                    className={cn(
+                      'absolute inset-y-0 left-0 transition-[width] duration-300',
+                      isChosen ? 'bg-primary/20' : 'bg-muted',
+                    )}
+                    style={{ width: `${String(share)}%` }}
+                  />
+                ) : null}
                 {mayVote ? (
                   <button
                     type="button"
@@ -142,7 +180,7 @@ export function PollCard(props: { poll: PollResponse; roster: Roster }) {
                     onClick={() => {
                       pick(option.id);
                     }}
-                    className="relative flex min-h-11 w-full items-center gap-2 px-3 py-2 text-left"
+                    className="relative flex min-h-11 w-full touch-manipulation items-center gap-2.5 px-3 py-2 text-left"
                   >
                     <span
                       aria-hidden
@@ -159,11 +197,11 @@ export function PollCard(props: { poll: PollResponse; roster: Roster }) {
                     {label}
                   </button>
                 ) : (
-                  <div className="relative flex min-h-11 w-full items-center gap-2 px-3 py-2">
+                  <div className="relative flex min-h-11 w-full items-center gap-2.5 px-3 py-2">
                     {isChosen ? (
-                      <Badge variant="secondary" className="shrink-0">
+                      <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[13px] leading-[18px] font-medium">
                         {WALL_RU.polls.yourChoice}
-                      </Badge>
+                      </span>
                     ) : null}
                     {label}
                   </div>
@@ -174,46 +212,59 @@ export function PollCard(props: { poll: PollResponse; roster: Roster }) {
         })}
       </ul>
 
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">
-          {poll.totalVoters > 0
-            ? WALL_RU.polls.totalVoters(poll.totalVoters)
-            : WALL_RU.polls.noVotesYet}
-        </p>
-        <div className="flex flex-wrap items-center gap-2">
-          {mayVote && poll.allowMultiple ? (
-            <Button
-              type="button"
-              size="sm"
-              className="min-h-11"
-              disabled={selected.length === 0 || vote.isPending}
-              onClick={() => {
-                submit(selected);
-              }}
-            >
-              {vote.isPending ? <InlineSpinner className="mr-2" /> : null}
-              {vote.isPending ? WALL_RU.polls.voting : WALL_RU.polls.vote}
-            </Button>
-          ) : null}
-          {mayClose ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="min-h-11"
-              onClick={() => {
-                setConfirmingClose(true);
-              }}
-            >
-              {WALL_RU.polls.close}
-            </Button>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="mt-2">
-        <CommentThread target={{ entityType: 'poll', entityId: poll.id }} commentCount={0} />
-      </div>
+      {/*
+        One footer row, not two: who has answered, the controls, and the thread
+        toggle share the same 44px line. A poll is the loudest block on the
+        board, and two stacked rows of chrome under it is 88px of nothing.
+      */}
+      <CommentThread
+        target={{ entityType: 'poll', entityId: poll.id }}
+        commentCount={0}
+        actions={
+          <>
+            {voters.length > 0 ? (
+              <p className="flex min-w-0 items-center gap-2 pe-1 text-[13px] leading-[18px] font-medium opacity-70">
+                <span>{WALL_RU.polls.answeredBy}</span>
+                <MemberDiscGroup members={voters} />
+                <span className="sr-only">
+                  {voters.map((member) => member.displayName).join(', ')}
+                </span>
+              </p>
+            ) : (
+              <p className="pe-1 text-[13px] leading-[18px] font-medium opacity-70">
+                {WALL_RU.polls.noVotesYet}
+              </p>
+            )}
+            {mayVote && poll.allowMultiple ? (
+              <Button
+                type="button"
+                size="sm"
+                className="min-h-11"
+                disabled={selected.length === 0 || vote.isPending}
+                onClick={() => {
+                  submit(selected);
+                }}
+              >
+                {vote.isPending ? <InlineSpinner className="mr-2" /> : null}
+                {vote.isPending ? WALL_RU.polls.voting : WALL_RU.polls.vote}
+              </Button>
+            ) : null}
+            {mayClose ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="min-h-11 text-[13px] font-medium text-muted-foreground"
+                onClick={() => {
+                  setConfirmingClose(true);
+                }}
+              >
+                {WALL_RU.polls.close}
+              </Button>
+            ) : null}
+          </>
+        }
+      />
 
       <ConfirmDialog
         open={confirmingClose}

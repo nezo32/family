@@ -207,7 +207,8 @@ export async function updateAnnouncement(
     patch.pinnedUntil = input.pinnedUntil ? new Date(input.pinnedUntil) : null;
   }
 
-  const updated = Object.keys(patch).length > 0 ? await repo.updatePost(db, postId, patch) : existing;
+  const updated =
+    Object.keys(patch).length > 0 ? await repo.updatePost(db, postId, patch) : existing;
   if (!updated) throw notFound('Post');
   const [hydrated] = await hydratePosts(db, [updated], auth.userId);
   if (!hydrated) throw notFound('Post');
@@ -528,7 +529,7 @@ export function mergeStreams(a: MergeCandidate[], b: MergeCandidate[]): MergeCan
   const merged = [...a, ...b];
   merged.sort((x, y) => {
     const delta = y.createdAt.getTime() - x.createdAt.getTime();
-    return delta !== 0 ? delta : (y.id < x.id ? -1 : y.id > x.id ? 1 : 0);
+    return delta !== 0 ? delta : y.id < x.id ? -1 : y.id > x.id ? 1 : 0;
   });
   return merged;
 }
@@ -561,7 +562,12 @@ export async function getWallFeed(
   ]);
 
   const merged = mergeStreams(
-    postRows.map((post) => ({ id: post.id, createdAt: post.createdAt, kind: 'post' as const, post })),
+    postRows.map((post) => ({
+      id: post.id,
+      createdAt: post.createdAt,
+      kind: 'post' as const,
+      post,
+    })),
     activityRows.map((activity) => ({
       id: activity.id,
       createdAt: activity.createdAt,

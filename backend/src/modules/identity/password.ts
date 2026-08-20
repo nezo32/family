@@ -76,7 +76,10 @@ export async function hashPassword(plain: string): Promise<string> {
  * Never throws — a corrupt or truncated digest in the database is a `false`,
  * not a 500 that tells the caller the row exists.
  */
-export async function verifyPassword(stored: string | null | undefined, plain: string): Promise<boolean> {
+export async function verifyPassword(
+  stored: string | null | undefined,
+  plain: string,
+): Promise<boolean> {
   if (!stored) {
     await verify(await getDummyHash(), plain, ARGON2_OPTIONS).catch(() => false);
     return false;
@@ -105,8 +108,6 @@ export function needsRehash(stored: string): boolean {
   if (variant !== 'id') return true;
 
   return (
-    Number(memory) < MEMORY_COST ||
-    Number(time) < TIME_COST ||
-    Number(parallelism) !== PARALLELISM
+    Number(memory) < MEMORY_COST || Number(time) < TIME_COST || Number(parallelism) !== PARALLELISM
   );
 }

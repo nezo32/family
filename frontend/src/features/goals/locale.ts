@@ -230,5 +230,4 @@ export const activeCountLabel = (n: number): string =>
  * for a count of finished things and sidesteps needing a fourth adjective form
  * («готова / готовы / готовых») for a number nobody reads aloud.
  */
-export const reachedCountLabel = (n: number): string =>
-  `${GOALS_RU.reachedSuffix} ${String(n)}`;
+export const reachedCountLabel = (n: number): string => `${GOALS_RU.reachedSuffix} ${String(n)}`;

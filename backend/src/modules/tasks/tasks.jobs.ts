@@ -3,10 +3,7 @@ import { getDb } from '../../core/db.js';
 import { logger } from '../../core/logger.js';
 import { registerJobHandler } from '../../core/queue/workers.js';
 import { bumpRevisions } from '../../core/revisions.js';
-import {
-  emit,
-  type NotificationAudience,
-} from '../notifications/notifications.service.js';
+import { emit, type NotificationAudience } from '../notifications/notifications.service.js';
 import * as repo from './tasks.repository.js';
 import { TasksService } from './tasks.service.js';
 

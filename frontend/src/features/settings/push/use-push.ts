@@ -7,11 +7,14 @@ import {
   installReconcileLoop,
   isIos,
   isIosNonSafari,
+  isPushReady,
   isStandalone,
+  lastEnableOutcome,
   permissionState,
   primeRegistration,
   pushAvailability,
   vapidPublicKey,
+  type EnableOutcome,
   type EnableResult,
   type PushAvailability,
   type PushPermission,
@@ -23,9 +26,11 @@ import {
  *
  * It exists to keep two invariants out of component code:
  *
- * 1. **The registration is primed on mount**, so the click handler never has to
- *    `await navigator.serviceWorker.ready` and never spends the user-activation
- *    token before `Notification.requestPermission()`.
+ * 1. **The registration is primed on mount and the control waits for it.** The
+ *    click handler must never `await navigator.serviceWorker.ready` — on a cold
+ *    start that await can outlast WebKit's five-second transient-activation
+ *    window — and `subscribe()` throws `InvalidStateError` if the worker is not
+ *    yet active. `ready` is the gate; the button stays disabled until it holds.
  * 2. **The reconcile loop runs for as long as any push UI is mounted.** iOS
  *    never fires `pushsubscriptionchange`, so re-POSTing `getSubscription()` on
  *    every `visibilitychange -> visible` is the only repair path there is.
@@ -40,6 +45,22 @@ export interface PushState {
   iosNonSafari: boolean;
   /** The build shipped without `VITE_VAPID_PUBLIC_KEY`; subscribing can't work. */
   misconfigured: boolean;
+  /**
+   * A tap could actually succeed right now: the service worker is **active**
+   * and a key is available. Gate the enable control on this — `subscribe()`
+   * throws `InvalidStateError` against a merely-installing worker, and awaiting
+   * readiness inside the tap risks the five-second activation window.
+   */
+  ready: boolean;
+  /** How the last enable attempt ended, this session. `null` before the first. */
+  lastOutcome: EnableOutcome | null;
+  /**
+   * iOS accepted the tap, never showed a prompt, and still reports
+   * `permission: 'default'` — WebKit bug 320551. The user has notifications
+   * switched off for this app in iOS Settings and only Settings can undo it.
+   * Do **not** re-offer the soft pre-prompt in this state; it loops forever.
+   */
+  blockedInSettings: boolean;
   /** Outcome of the last reconcile pass. `null` until the first one lands. */
   reconcile: ReconcileOutcome | null;
   /**
@@ -55,8 +76,9 @@ export interface PushState {
 
 export interface UsePushResult extends PushState {
   /**
-   * Turn push on. **Call this directly from `onClick`** — it is not `async` and
-   * it fires `Notification.requestPermission()` synchronously.
+   * Turn push on. **Call this directly from `onClick`** — it is not `async`
+   * and it reaches `pushManager.subscribe()`, the one call allowed to consume
+   * the tap's transient activation, before it returns.
    */
   enable: () => Promise<EnableResult>;
   disable: () => Promise<boolean>;
@@ -69,6 +91,8 @@ export function usePush(): UsePushResult {
   const [permission, setPermission] = useState<PushPermission>(() => permissionState());
   const [reconcile, setReconcile] = useState<ReconcileOutcome | null>(null);
   const [busy, setBusy] = useState(false);
+  const [ready, setReady] = useState(() => isPushReady());
+  const [lastOutcome, setLastOutcome] = useState<EnableOutcome | null>(() => lastEnableOutcome());
   const mounted = useRef(true);
 
   const availability = useMemo(() => pushAvailability(), []);
@@ -83,10 +107,19 @@ export function usePush(): UsePushResult {
     };
   }, []);
 
-  // Prime the SW registration well before any button is pressed. Awaiting
-  // `serviceWorker.ready` inside the click handler would cost us the gesture.
+  // Prime the SW registration well before any button is pressed.
+  //
+  // Two separate reasons, and both are load-bearing. `subscribe()` throws
+  // `InvalidStateError: Subscribing for push requires an active service worker`
+  // if the worker is only installing — the state on the very first launch after
+  // an install, which is exactly when somebody first looks for notifications.
+  // And awaiting `serviceWorker.ready` *inside* the tap can outlast WebKit's
+  // five-second transient-activation window on a cold start. So we resolve it
+  // here and keep the button disabled until it lands.
   useEffect(() => {
-    void primeRegistration();
+    void primeRegistration().then(() => {
+      if (mounted.current) setReady(isPushReady());
+    });
   }, []);
 
   // The foreground repair loop (research doc §2). Also refreshes `lastSeenAt`
@@ -104,16 +137,20 @@ export function usePush(): UsePushResult {
 
   const refresh = useCallback(() => {
     setPermission(permissionState());
+    setReady(isPushReady());
+    setLastOutcome(lastEnableOutcome());
   }, []);
 
   const enable = useCallback((): Promise<EnableResult> => {
     setBusy(true);
-    // No await before this call — `enablePush` is synchronous up to and
-    // including `Notification.requestPermission()`.
+    // **No await before this call.** `enablePush` runs synchronously up to and
+    // including `pushManager.subscribe()`, which is the one call allowed to
+    // consume the tap's transient activation.
     return enablePush()
       .then((result) => {
         if (mounted.current) {
           setPermission(permissionState());
+          setLastOutcome(result.outcome);
           if (result.outcome === 'enabled') setReconcile('reposted');
         }
         void queryClient.invalidateQueries({ queryKey: settingsKeys.notifications() });
@@ -146,6 +183,11 @@ export function usePush(): UsePushResult {
     ios,
     iosNonSafari,
     misconfigured: availability === 'available' && vapidPublicKey().length === 0,
+    ready,
+    lastOutcome,
+    // iOS reports `permission: 'default'` in this state, so nothing else on the
+    // device gives it away — only the outcome of a real attempt does.
+    blockedInSettings: lastOutcome === 'blocked-in-settings',
     reconcile,
     // `missing` is only meaningful while permission is still granted: the
     // browser agreed to notify us and then quietly dropped the subscription.

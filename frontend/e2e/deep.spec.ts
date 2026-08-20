@@ -138,16 +138,17 @@ test.describe('a form actually writes', () => {
     const title = `E2E дело ${stamp}`;
 
     await page.goto('/tasks');
-    const trigger = page
-      .getByRole('button', { name: /Новое дело|Новая задача|Добавить/i })
-      .first();
+    const trigger = page.getByRole('button', { name: /Новое дело|Новая задача|Добавить/i }).first();
     await expect(trigger).toBeVisible({ timeout: 15_000 });
     await trigger.click();
 
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
 
-    await dialog.getByLabel(/Название|Что нужно сделать/i).first().fill(title);
+    await dialog
+      .getByLabel(/Название|Что нужно сделать/i)
+      .first()
+      .fill(title);
 
     const submit = dialog.getByRole('button', { name: /Создать|Сохранить/i }).first();
     await expect(submit, 'the submit control must be reachable without hunting').toBeVisible();
@@ -173,9 +174,7 @@ test.describe('dialogs dismiss both ways', () => {
   test('Escape and the close control both shut the create dialog', async ({ page }) => {
     await page.goto('/tasks');
 
-    const trigger = page
-      .getByRole('button', { name: /Новое дело|Новая задача|Добавить/i })
-      .first();
+    const trigger = page.getByRole('button', { name: /Новое дело|Новая задача|Добавить/i }).first();
     await trigger.click();
 
     const dialog = page.getByRole('dialog');

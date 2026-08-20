@@ -269,12 +269,7 @@ describe('recurrence builder', () => {
 function ScheduleHarness(props: { view: RecurrenceView }) {
   const [value, setValue] = useState<ScheduleValue>(ONCE);
   return (
-    <ScheduleRepeatRow
-      dtstartLocal={DTSTART}
-      value={value}
-      onChange={setValue}
-      view={props.view}
-    />
+    <ScheduleRepeatRow dtstartLocal={DTSTART} value={value} onChange={setValue} view={props.view} />
   );
 }
 

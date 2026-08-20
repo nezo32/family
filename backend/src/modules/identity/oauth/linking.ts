@@ -100,10 +100,7 @@ export interface LinkDecisionInput {
   intent: OAuthIntent;
   /** `oauth_transactions.link_user_id` — the session that started a link flow. */
   sessionUserId: string | null;
-  profile: Pick<
-    OAuthProfile,
-    'provider' | 'providerUserId' | 'email' | 'emailVerified'
-  >;
+  profile: Pick<OAuthProfile, 'provider' | 'providerUserId' | 'email' | 'emailVerified'>;
   /** The row for `(provider, provider_user_id)`, if any. */
   existingIdentity: { id: string; userId: string } | null;
   /** The session user's existing identity for this same provider, if any. */
@@ -289,7 +286,10 @@ export async function resolveOAuthIdentity(
       .select({ id: userIdentities.id })
       .from(userIdentities)
       .where(
-        and(eq(userIdentities.userId, sessionUserId), eq(userIdentities.provider, profile.provider)),
+        and(
+          eq(userIdentities.userId, sessionUserId),
+          eq(userIdentities.provider, profile.provider),
+        ),
       )
       .limit(1);
     sessionUserProviderIdentity = row ?? null;
@@ -420,9 +420,10 @@ export async function resolveOAuthIdentity(
    * The bootstrap owner (`decision.asOwner`) is already `active` and needs no
    * approval, so it emits nothing.
    */
-  const dispatchNotifications = created.status === 'active'
-    ? noDispatch
-    : await emitOAuthPendingApproval(db, created, profile.provider);
+  const dispatchNotifications =
+    created.status === 'active'
+      ? noDispatch
+      : await emitOAuthPendingApproval(db, created, profile.provider);
 
   return {
     outcome: 'created',

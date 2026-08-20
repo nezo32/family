@@ -185,11 +185,7 @@ export default function ProfilePage() {
               crop, remove, its own error and progress states) lives in
               `AvatarField`.
             */}
-            <AvatarField
-              userId={self.id}
-              displayName={currentName}
-              avatarUrl={self.avatarUrl}
-            />
+            <AvatarField userId={self.id} displayName={currentName} avatarUrl={self.avatarUrl} />
 
             <div className="grid gap-5 sm:grid-cols-2">
               <div className="space-y-1.5">

@@ -2,11 +2,11 @@
 
 ## 0. Repositories
 
-| Repo | Path | Contents |
-|---|---|---|
-| superrepo | `/` | infra, docker compose, deploy workflows, global docs, ADRs |
-| backend | `/backend` | Fastify 5 + Drizzle + Postgres API (own git repo) |
-| frontend | `/frontend` | React 19 PWA (own git repo) |
+| Repo      | Path        | Contents                                                   |
+| --------- | ----------- | ---------------------------------------------------------- |
+| superrepo | `/`         | infra, docker compose, deploy workflows, global docs, ADRs |
+| backend   | `/backend`  | Fastify 5 + Drizzle + Postgres API (own git repo)          |
+| frontend  | `/frontend` | React 19 PWA (own git repo)                                |
 
 The superrepo `.gitignore`s `/backend` and `/frontend` so each module is an
 independent repository with its own CI.
@@ -14,6 +14,7 @@ independent repository with its own CI.
 ## 1. Pinned stack (decided by lead — do not re-litigate)
 
 **Backend**
+
 - Node 24 LTS, TypeScript (ESM, `strict` + `noUncheckedIndexedAccess`)
 - Fastify 5, plugin-per-concern, `fastify-plugin` for decorators
 - Zod schemas as the single source of truth for request/response + OpenAPI
@@ -25,6 +26,7 @@ independent repository with its own CI.
 - pino structured logging, `/health` + `/ready` probes
 
 **Frontend**
+
 - Vite 6 + React 19 + TypeScript
 - Tailwind v4 + shadcn/ui (Radix primitives), lucide icons
 - TanStack Query (server state) + Zustand (thin client state)
@@ -33,6 +35,7 @@ independent repository with its own CI.
 - **All user-facing text in Russian**
 
 **Infra**
+
 - Docker + docker compose (postgres, redis, backend, frontend/caddy)
 - GitHub Actions CI in each repo; deploy workflow in the superrepo
 - Caddy as reverse proxy + automatic TLS
@@ -74,6 +77,7 @@ plan → research → architecture → devops → development → test → revie
 ## 4. Feature scope
 
 Confirmed by the product owner:
+
 1. Task scheduling (recurring chores + one-off)
 2. Events calendar (appointments, celebrations, birthdays)
 3. Moneybox / savings goals with milestones

@@ -25,7 +25,7 @@ Two agents were working while this was written, and their work has landed:
   `field-shell.tsx`** now exist and replace the raw `<input type="date">` /
   `<input type="time">` controls. The "native controls dropped between styled
   ones" defect is solved at the field level. §D-forms therefore specs the
-  *arrangement* of those fields, not their appearance — with one change:
+  _arrangement_ of those fields, not their appearance — with one change:
   `PickerSurface` must open a sheet on touch (§E).
 - **Points / баллы are being deleted.** Nothing in this document renders a
   point, a score, a streak or a rank. `PLURALS.point` has already been removed
@@ -39,36 +39,36 @@ server, driven by Playwright with the API stubbed by fixtures, `ru-RU`,
 `Europe/Moscow`. Phone = 390×844 @2x, Desktop = 1440×900, plus 320×800 and
 1024×800 checks.
 
-| File | Screen | Viewport / theme |
-|---|---|---|
-| `today-phone-light/dark` | Сегодня | 390 both themes |
-| `today-desktop-light/dark` | Сегодня | 1440 both themes |
-| `today-320` | Сегодня | 320 light |
-| `today-empty-phone` | Сегодня, no data | 390 light |
-| `today-loading-phone` | Сегодня, pending | 390 light |
-| `tasks-phone-dark` | Задачи | 390 dark |
-| `tasks-desktop-light`, `tasks-desktop1024` | Задачи | 1440 / 1024 light |
-| `tasks-empty-phone`, `tasks-loading-phone` | Задачи | 390 light |
-| `calendar-phone-dark`, `calendar-phone-light` | Календарь | 390 |
-| `calendar-desktop-light` | Календарь | 1440 |
-| `goals-phone-light`, `goals-desktop-light` | Копилки | 390 / 1440 |
-| `shopping-phone-light`, `shopping-desktop-light` | Покупки (списки) | 390 / 1440 |
-| `shopping-empty-phone` | Покупки, no lists | 390 |
-| `list-phone-light`, `list-phone-dark` | Покупки → список | 390 |
-| `list-phone-typed` | список, «хлеб» typed | 390 dark |
-| `list-desktop-light` | список | 1440 |
-| `list-320` | список | 320 |
-| `wall-phone-dark`, `wall-desktop-light` | Стена | 390 / 1440 |
-| `family-phone-light`, `family-desktop-light` | Семья (crashes: points) | 390 / 1440 |
-| `settings-phone-light`, `settings-desktop-light/dark` | Настройки | 390 / 1440 |
-| `settings-notifications-phone/-desktop` | Уведомления | 390 / 1440 |
-| `settings-profile-phone`, `settings-accounts-phone` | Профиль / Способы входа | 390 |
-| `admin-members-desktop` | Участники | 1440 |
-| `task-create-phone-dark`, `task-create-desktop` | «Новое дело» modal | 390 / 1440 |
-| `event-create-phone-dark`, `event-create-desktop` | «Новое событие» modal | 390 / 1440 |
-| `goal-create-phone-dark` | «Новая копилка» modal | 390 |
-| `notif-panel-phone` | Notifications panel | 390 |
-| `login-anon-phone/-desktop`, `register-anon-phone` | Вход / Регистрация | 390 / 1440 |
+| File                                                  | Screen                  | Viewport / theme  |
+| ----------------------------------------------------- | ----------------------- | ----------------- |
+| `today-phone-light/dark`                              | Сегодня                 | 390 both themes   |
+| `today-desktop-light/dark`                            | Сегодня                 | 1440 both themes  |
+| `today-320`                                           | Сегодня                 | 320 light         |
+| `today-empty-phone`                                   | Сегодня, no data        | 390 light         |
+| `today-loading-phone`                                 | Сегодня, pending        | 390 light         |
+| `tasks-phone-dark`                                    | Задачи                  | 390 dark          |
+| `tasks-desktop-light`, `tasks-desktop1024`            | Задачи                  | 1440 / 1024 light |
+| `tasks-empty-phone`, `tasks-loading-phone`            | Задачи                  | 390 light         |
+| `calendar-phone-dark`, `calendar-phone-light`         | Календарь               | 390               |
+| `calendar-desktop-light`                              | Календарь               | 1440              |
+| `goals-phone-light`, `goals-desktop-light`            | Копилки                 | 390 / 1440        |
+| `shopping-phone-light`, `shopping-desktop-light`      | Покупки (списки)        | 390 / 1440        |
+| `shopping-empty-phone`                                | Покупки, no lists       | 390               |
+| `list-phone-light`, `list-phone-dark`                 | Покупки → список        | 390               |
+| `list-phone-typed`                                    | список, «хлеб» typed    | 390 dark          |
+| `list-desktop-light`                                  | список                  | 1440              |
+| `list-320`                                            | список                  | 320               |
+| `wall-phone-dark`, `wall-desktop-light`               | Стена                   | 390 / 1440        |
+| `family-phone-light`, `family-desktop-light`          | Семья (crashes: points) | 390 / 1440        |
+| `settings-phone-light`, `settings-desktop-light/dark` | Настройки               | 390 / 1440        |
+| `settings-notifications-phone/-desktop`               | Уведомления             | 390 / 1440        |
+| `settings-profile-phone`, `settings-accounts-phone`   | Профиль / Способы входа | 390               |
+| `admin-members-desktop`                               | Участники               | 1440              |
+| `task-create-phone-dark`, `task-create-desktop`       | «Новое дело» modal      | 390 / 1440        |
+| `event-create-phone-dark`, `event-create-desktop`     | «Новое событие» modal   | 390 / 1440        |
+| `goal-create-phone-dark`                              | «Новая копилка» modal   | 390               |
+| `notif-panel-phone`                                   | Notifications panel     | 390               |
+| `login-anon-phone/-desktop`, `register-anon-phone`    | Вход / Регистрация      | 390 / 1440        |
 
 Measured facts used below:
 
@@ -93,8 +93,8 @@ desktop <main>         x=240 w=1200,  content column x=328 w=1024
 > **«Кухонная доска» — the kitchen board: the app is the note surface by the
 > front door, not a dashboard of the household.**
 
-A dashboard's job is to display state. A board's job is to hold *the next thing
-someone has to do*, at a size you can read while putting your shoes on. Five
+A dashboard's job is to display state. A board's job is to hold _the next thing
+someone has to do_, at a size you can read while putting your shoes on. Five
 people share this app — two parents, a teenager, a ten-year-old and a
 grandmother — and none of them opened it to review metrics. They opened it to
 find out whether anything needs them, and to add one thing.
@@ -133,7 +133,7 @@ nothing is answered in three seconds. That is the thing to fix.
   paired with a second progress bar for the same number (Копилки does this
   today — two indicators, one value, per card).
 - Anything competitive. D5 already bans points and ranking; this direction also
-  bans the *shape* of it — leaderboards, medals, "лучший", ordering people by
+  bans the _shape_ of it — leaderboards, medals, "лучший", ordering people by
   effort.
 - Chrome that repeats. One «все задачи» link per screen, on the section header,
   not a footer row on every card.
@@ -178,20 +178,20 @@ Three additions:
 :root {
   /* Tinted ground for the one "needs you now" block per screen.
      Not --card: it must read as a different KIND of surface, not a lighter one. */
-  --surface-attention:      oklch(0.9705 0.0225 42);   /* clay wash        */
-  --surface-attention-fg:   oklch(0.3585 0.0985 34);
-  --surface-calm:           oklch(0.9645 0.0265 150);  /* sage wash, "done"*/
-  --surface-calm-fg:        oklch(0.3285 0.0525 150);
+  --surface-attention: oklch(0.9705 0.0225 42); /* clay wash        */
+  --surface-attention-fg: oklch(0.3585 0.0985 34);
+  --surface-calm: oklch(0.9645 0.0265 150); /* sage wash, "done"*/
+  --surface-calm-fg: oklch(0.3285 0.0525 150);
   /* The rail / hairline that separates rows inside one surface.
      Lighter than --border, which is for the outline of a surface. */
-  --hairline:               oklch(0.9285 0.0125 80);
+  --hairline: oklch(0.9285 0.0125 80);
 }
 .dark {
-  --surface-attention:      oklch(0.2685 0.0345 38);
-  --surface-attention-fg:   oklch(0.8585 0.0705 40);
-  --surface-calm:           oklch(0.2585 0.0285 152);
-  --surface-calm-fg:        oklch(0.8785 0.0505 150);
-  --hairline:               oklch(1 0 0 / 8%);
+  --surface-attention: oklch(0.2685 0.0345 38);
+  --surface-attention-fg: oklch(0.8585 0.0705 40);
+  --surface-calm: oklch(0.2585 0.0285 152);
+  --surface-calm-fg: oklch(0.8785 0.0505 150);
+  --hairline: oklch(1 0 0 / 8%);
 }
 ```
 
@@ -224,21 +224,21 @@ load-bearing for legibility.
 
 **Scale.** Sizes are px, `rem`-authored. Line heights are absolute.
 
-| Token | Size / LH | Weight | Face | Used for |
-|---|---|---|---|---|
-| `display` | 28 / 34 | 700 | Onest | The greeting on Сегодня; a goal's saved amount. **Max one per screen.** |
-| `h1` | 22 / 28 | 700 | Onest | Page title (`PageHeader`), sheet title |
-| `h2` | 17 / 24 | 600 | Onest | Section heading inside a screen; the title of a detail sheet's group |
-| `row` | 17 / 24 | 500 | Inter | **The tappable line of a row** — task title, item name, event title, settings label |
-| `body` | 15 / 22 | 400 | Inter | Descriptions, notes, empty-state copy |
-| `meta` | 13 / 18 | 500 | Inter | Time, quantity, category, counts, "3 задачи" |
-| `label` | 12 / 16 | 600, +0.06em, uppercase | Inter | Section labels only (ОВОЩИ, СЕГОДНЯ, УВЕДОМЛЕНИЯ). **Never for content.** |
-| `input` | 17 / 24 touch, 15 / 22 pointer:fine | 400 | Inter | Every text control. Never below 16 on coarse. |
+| Token     | Size / LH                           | Weight                  | Face  | Used for                                                                            |
+| --------- | ----------------------------------- | ----------------------- | ----- | ----------------------------------------------------------------------------------- |
+| `display` | 28 / 34                             | 700                     | Onest | The greeting on Сегодня; a goal's saved amount. **Max one per screen.**             |
+| `h1`      | 22 / 28                             | 700                     | Onest | Page title (`PageHeader`), sheet title                                              |
+| `h2`      | 17 / 24                             | 600                     | Onest | Section heading inside a screen; the title of a detail sheet's group                |
+| `row`     | 17 / 24                             | 500                     | Inter | **The tappable line of a row** — task title, item name, event title, settings label |
+| `body`    | 15 / 22                             | 400                     | Inter | Descriptions, notes, empty-state copy                                               |
+| `meta`    | 13 / 18                             | 500                     | Inter | Time, quantity, category, counts, "3 задачи"                                        |
+| `label`   | 12 / 16                             | 600, +0.06em, uppercase | Inter | Section labels only (ОВОЩИ, СЕГОДНЯ, УВЕДОМЛЕНИЯ). **Never for content.**           |
+| `input`   | 17 / 24 touch, 15 / 22 pointer:fine | 400                     | Inter | Every text control. Never below 16 on coarse.                                       |
 
 Rules:
 
 - No weight below 400 anywhere. The current build has `text-xs
-  text-muted-foreground` doing real work (the shopping quick-add hint, the
+text-muted-foreground` doing real work (the shopping quick-add hint, the
   «Начисляются тому, кто…» help text); at 12/400 muted that is decoration.
   Promote to `meta` 13/500 or delete it.
 - `row` is **17px, not 16.** This is the iOS body size and this app is read by a
@@ -267,11 +267,11 @@ pill. Nothing else. Delete `--radius-2xl` usage.
 
 **Elevation — exactly three levels, and only one of them casts a shadow.**
 
-| Level | Surface | Border | Shadow | What |
-|---|---|---|---|---|
-| L0 ground | `--background` | — | none | The page |
-| L1 surface | `--card` | 1px `--border`, radius 12 | **none** | Every in-page card, list panel, row group |
-| L2 floating | `--popover` | 1px `--border`, radius 16 | `0 12px 32px -12px rgb(0 0 0 / .28)` | Dialogs, sheets, popovers, toasts, the notifications panel |
+| Level       | Surface        | Border                    | Shadow                               | What                                                       |
+| ----------- | -------------- | ------------------------- | ------------------------------------ | ---------------------------------------------------------- |
+| L0 ground   | `--background` | —                         | none                                 | The page                                                   |
+| L1 surface  | `--card`       | 1px `--border`, radius 12 | **none**                             | Every in-page card, list panel, row group                  |
+| L2 floating | `--popover`    | 1px `--border`, radius 16 | `0 12px 32px -12px rgb(0 0 0 / .28)` | Dialogs, sheets, popovers, toasts, the notifications panel |
 
 `shared/ui/card.tsx` currently ships `shadow-sm` on every card. Remove it. The
 whole point of the warm palette is that white `--card` on sand `--background`
@@ -288,27 +288,27 @@ Today the app uses `--primary` for every affordance and `--chart-1..5` for
 nothing. Fix both.
 
 **One filled primary per view.** `--primary` marks the single action the user
-came to this screen to perform. On Покупки that is *not* «Новый список» (a
+came to this screen to perform. On Покупки that is _not_ «Новый список» (a
 full-width clay button is currently the loudest thing on a screen whose job is
 to show you three lists) — it is opening a list. Everything else is
 `variant="ghost"` or `variant="secondary"`.
 
 **Status colours, and what they are allowed to tint.**
 
-| Meaning | Token | Applied to |
-|---|---|---|
-| Просрочено | `--destructive` | The row's 3px left rail + the word «Просрочено». **Not the row background.** Four overdue tasks must not be four pink boxes. |
-| Скоро (< 2 ч), не отправлено | `--warning` | The meta line only |
-| Сделано / куплено / собрано | `--success` on `--surface-calm` | The tick fill; a done group's ground |
-| Требует решения | `--surface-attention` | The one attention block per screen (§C2) |
-| Удалить | `--destructive` | Text + icon of the destructive action, never a filled button except inside a confirm dialog |
+| Meaning                      | Token                           | Applied to                                                                                                                   |
+| ---------------------------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Просрочено                   | `--destructive`                 | The row's 3px left rail + the word «Просрочено». **Not the row background.** Four overdue tasks must not be four pink boxes. |
+| Скоро (< 2 ч), не отправлено | `--warning`                     | The meta line only                                                                                                           |
+| Сделано / куплено / собрано  | `--success` on `--surface-calm` | The tick fill; a done group's ground                                                                                         |
+| Требует решения              | `--surface-attention`           | The one attention block per screen (§C2)                                                                                     |
+| Удалить                      | `--destructive`                 | Text + icon of the destructive action, never a filled button except inside a confirm dialog                                  |
 
 **Member identity — this is what `--chart-1..5` is for.**
 
 The family has five people and the theme has five chart colours: clay, sage,
 honey, plum, sky, both light and dark ramps, already perceptually spaced. Assign
-`chart-{(sortOrder % 5) + 1}` to each member and use it *everywhere a person
-appears*:
+`chart-{(sortOrder % 5) + 1}` to each member and use it _everywhere a person
+appears_:
 
 - the **member disc** — 24px circle, member colour at 18 % as ground, member
   colour at full as the initial, used for assignee, attendee, contributor,
@@ -322,8 +322,8 @@ Stop rendering `users.color` for these. The seeded values (`#2563eb`,
 fight the warm palette on every screen they appear on — visible in
 `today-desktop-light`, where a pink «БН» disc sits on a sand card. Keep the
 column (a member may still pick one, and it is used for the ICS feed), but the
-UI renders from the ramp. If the family wants to choose, let them choose *one of
-the five*.
+UI renders from the ramp. If the family wants to choose, let them choose _one of
+the five_.
 
 **Never colour alone.** Overdue also says «Просрочено». Done also has a tick.
 A member disc also has an initial. Assume one of the five is colour-blind.
@@ -338,13 +338,13 @@ This is the part to get right.
 
 Tailwind defaults, used properly.
 
-| Range | Shell | Content |
-|---|---|---|
-| **< 768** (`base`) | Top bar + bottom tab bar | One column. Gutter 16. Full width. |
-| **768–1023** (`md`) | Sidebar rail 240 + top bar | One column, **max 640, left-aligned**, gutter 32. Not centred in a void. |
-| **1024–1279** (`lg`) | Sidebar 240 + top bar | **Two columns**: main `minmax(420px, 720px)` + side `320px`, gap 24, gutter 32 |
-| **≥ 1280** (`xl`) | Sidebar 240 + top bar | Two columns: main `minmax(480px, 760px)` + side `360px`, gap 32, gutter 40, container max **1360** |
-| **≥ 1536** | as `xl` | Do **not** grow the columns. Grow the gutters. |
+| Range                | Shell                      | Content                                                                                            |
+| -------------------- | -------------------------- | -------------------------------------------------------------------------------------------------- |
+| **< 768** (`base`)   | Top bar + bottom tab bar   | One column. Gutter 16. Full width.                                                                 |
+| **768–1023** (`md`)  | Sidebar rail 240 + top bar | One column, **max 640, left-aligned**, gutter 32. Not centred in a void.                           |
+| **1024–1279** (`lg`) | Sidebar 240 + top bar      | **Two columns**: main `minmax(420px, 720px)` + side `320px`, gap 24, gutter 32                     |
+| **≥ 1280** (`xl`)    | Sidebar 240 + top bar      | Two columns: main `minmax(480px, 760px)` + side `360px`, gap 32, gutter 40, container max **1360** |
+| **≥ 1536**           | as `xl`                    | Do **not** grow the columns. Grow the gutters.                                                     |
 
 Today `AppShell` uses one `mx-auto max-w-3xl xl:max-w-5xl`, which at 1440
 produces a 1024px column centred inside 1200px of `<main>` — measured. That is
@@ -376,13 +376,14 @@ normal section in band 3.
 
 - Prose: max **68ch**.
 - **A row is never wider than 720px.** If the column is wider, the row's
-  *surface* may be full-bleed but its content is capped at 720 and left-aligned,
+  _surface_ may be full-bleed but its content is capped at 720 and left-aligned,
   so the trailing chevron / switch / delete sits at content-right.
 
   This is the single rule that kills the "label at x=378, chevron at x=1326"
   class of defect, and it is not hypothetical — `list-desktop-light` shows a
   shopping row 1024px wide with «Картошка» at x=386 and its 🗑 at x=1325.
   **≈ 900px of nothing between an item and its delete button.**
+
 - Anything that is genuinely a table (the notification matrix, the members
   admin list) is exempt and may use the full column.
 
@@ -411,20 +412,20 @@ Any list whose rows have a time renders inside a rail:
 
 ### C4. What fills a 1440px screen
 
-The side column is not filler. Each screen already *has* the content — it is
+The side column is not filler. Each screen already _has_ the content — it is
 currently stacked below the fold or crammed above the list on a phone.
 
-| Screen | Main column | Side column (≥ lg) |
-|---|---|---|
-| Сегодня | Attention block + Мои дела + Сегодня в календаре | Неделя (7 compact day rows) · Копилка · Заявки |
-| Задачи | The task list | **Фильтры** (moved out of the phone chip wall) · Нагрузка за неделю |
-| Календарь | Agenda or month grid | Mini month grid · «Подписаться на календарь» |
-| Копилки | Goal rows | Сводка (накоплено / в работе / достигнуто) |
-| Покупки → список | Items | «Часто покупаем» · «Уже куплено» (collapsed) |
-| Стена | Feed | «Спасибо» · Опросы |
-| Семья | Members | Нагрузка / справедливость |
-| Настройки | The selected section | The section nav — Профиль / Уведомления / Способы входа / Оформление |
-| Участники | The queue | Roles legend + counts |
+| Screen           | Main column                                      | Side column (≥ lg)                                                   |
+| ---------------- | ------------------------------------------------ | -------------------------------------------------------------------- |
+| Сегодня          | Attention block + Мои дела + Сегодня в календаре | Неделя (7 compact day rows) · Копилка · Заявки                       |
+| Задачи           | The task list                                    | **Фильтры** (moved out of the phone chip wall) · Нагрузка за неделю  |
+| Календарь        | Agenda or month grid                             | Mini month grid · «Подписаться на календарь»                         |
+| Копилки          | Goal rows                                        | Сводка (накоплено / в работе / достигнуто)                           |
+| Покупки → список | Items                                            | «Часто покупаем» · «Уже куплено» (collapsed)                         |
+| Стена            | The board: open polls · pinned · the stream      | «Спасибо» · «Что решили» (§D7)                                       |
+| Семья            | Members                                          | Нагрузка / справедливость                                            |
+| Настройки        | The selected section                             | The section nav — Профиль / Уведомления / Способы входа / Оформление |
+| Участники        | The queue                                        | Roles legend + counts                                                |
 
 Two consequences worth stating:
 
@@ -436,19 +437,19 @@ Two consequences worth stating:
    controls in it.
 2. **The side column collapses, it does not disappear.** Below `lg` its contents
    move to the bottom of the main column in the same order, except Фильтры,
-   which becomes a single «Фильтры ·  3» row that opens a sheet.
+   which becomes a single «Фильтры · 3» row that opens a sheet.
 
 ### C5. Density targets
 
 A phone screen should answer its question inside **1.5 viewports** (≈ 1260px).
 Measured today:
 
-| Screen | Now | Target |
-|---|---|---|
-| Сегодня | 1661 | ≤ 1100 |
-| Задачи | 2232 | ≤ 1300 (filters into a sheet, rows 56 not 96) |
-| Уведомления | 4820 | ≤ 1400 (matrix, §D9) |
-| Покупки → список | 1280 | ≤ 1280 (fine; fix the overlap instead) |
+| Screen           | Now  | Target                                        |
+| ---------------- | ---- | --------------------------------------------- |
+| Сегодня          | 1661 | ≤ 1100                                        |
+| Задачи           | 2232 | ≤ 1300 (filters into a sheet, rows 56 not 96) |
+| Уведомления      | 4820 | ≤ 1400 (matrix, §D9)                          |
+| Покупки → список | 1280 | ≤ 1280 (fine; fix the overlap instead)        |
 
 ---
 
@@ -456,7 +457,7 @@ Measured today:
 
 Common conventions for every spec below: **loading** = a skeleton with the same
 shape and count as the real content, minimum 250 ms on screen so it cannot
-flash, and on a *refetch* the old data stays visible with a 2px `--primary`
+flash, and on a _refetch_ the old data stays visible with a 2px `--primary`
 progress bar under the app bar instead of blanking. **Error** = `ErrorState`
 with a retry. **Empty** = `EmptyState` with **a required action** — an empty
 screen is an invitation, and `EmptyState.action` becomes non-optional (§E).
@@ -792,24 +793,223 @@ illustration above a composer that is already the invitation.
 
 ---
 
-### D7. Стена
+### D7. Стена — the board, not the feed
 
-**What the user came for:** "what did the family say."
+**What the user came for:** "what did the family say, and does anything need me."
 
-- Pinned post first, on `--surface-attention` with a small 📌 and «закреплено до
-  25 августа» in `meta`. Everything else in one feed.
-- Post row: author disc + name + relative time · title (`h2`) · body (`body`,
-  clamped to 4 lines with «ещё») · reaction bar · «N комментариев».
-- The composer is **not** always on screen. It is the app-bar `⊕`, opening the
-  same full-screen sheet pattern as every other create flow (§D-forms).
-- Reactions: a single row of at most five emoji + a `+`. Tap toggles; the count
-  animates by 1 with no layout shift (reserve the digit width with
-  `tabular-nums`).
-- System posts (goal reached, birthday) get no author disc and a `--surface-calm`
-  ground so they are visibly not a person talking.
+The README's line is the spine of this screen: _announcements, comments on
+anything, kudos and polls — **deliberately not a chat, Telegram already
+exists.**_ Everything below is that clause made structural. If a future pass
+finds itself adding a composer at the bottom of the page, or an auto-loading
+stream, or a tab bar over three parallel timelines, it has rebuilt the thing
+this screen exists not to be.
 
-**Desktop**: feed at 720; side = «Спасибо» totals and open polls.
-**Empty**: «На стене пусто» + «Написать».
+#### D7.1 Three refusals, and why each one is load-bearing
+
+**No composer on screen.** A text field pinned to the bottom of a page is the
+single feature that turns a noticeboard into a messenger, and once it is there
+every other decision follows it: newest-first ordering, unread counts, presence.
+There is exactly one text field on Стена that is ever visible, and it lives
+_inside a discussion somebody deliberately opened_. Everything else starts from
+the app bar (D7.3). Get this wrong and the family now has a worse Telegram with
+fewer people in it, and the kitchen board they actually needed is gone.
+
+**The board is finite.** Twelve notes, then one quiet «Что было раньше» row. The
+old build fetched the next page from an `IntersectionObserver`, which made the
+main column unbounded — and _everything the shell puts after the main column is
+unreachable under an unbounded scroll_. That single fact is what forced the whole
+screen into tabs (D7.2). A board holds what is currently up; an archive is a
+different product and nobody opened this one to browse one.
+
+**Order is meaning, not recency.** Open questions, then what is pinned, then what
+has happened. A chat has exactly one ordering and it is the clock; a board is
+sorted by what needs you.
+
+#### D7.2 One tree at every width — the exception is retired
+
+Стена used to be the only screen in the app that mounted a **different component
+tree per width**: `useTwoColumn()`, tabs below 1088px, feed-plus-side-column
+above it. The reasoning recorded at the time was that letting the side column
+collapse under an infinite feed makes «Опросы» unreachable in practice, while
+rendering both copies gives one half-typed poll question two places to live.
+
+Both halves of that were true, and both were symptoms. The cause was that the
+panels **owned composers**. A panel that owns typed state cannot be duplicated; a
+panel that is a pure function of server state can be rendered anywhere, twice, or
+not at all, for free — which is what `use-two-column.ts`'s own doc comment says
+to prefer.
+
+> **Rule.** No panel on Стена owns a composer. Every create flow is mounted once,
+> by the page, behind the board's one door. Panels are pure functions of server
+> state, and the layout is the same tree at 320px and at 1440px.
+
+With the composers hoisted and the board bounded, the ordinary shell layout is
+enough: `<SideColumn>` portals one instance into the grid's `<aside>`, which is
+the second column above 1088px and the foot of the page below it. Measured on an
+iPhone 15 with a five-note board, «Спасибо» starts at y≈1815 — one flick, not an
+endless scroll — and every action it offers is also two taps from the app bar, so
+the panel's position is never the only route to anything.
+
+**Consequence of getting it wrong:** a per-width tree means every behaviour on
+this screen has to be verified twice, and the two copies drift. The first symptom
+is always the same — something typed on a phone is not there when the window is
+widened.
+
+#### D7.3 The one door
+
+The board takes three kinds of note — an announcement, a question, a thank-you —
+and they are pinned up by the same hand. So there is **one** primary action,
+`⊕ «Написать»` in the app bar, opening «Что повесим на доску?»: Объявление ·
+Опрос · Спасибо, each gated by `useCan()` (`post:create`, `poll:create`,
+`kudos:give`). A reader who holds exactly one of the three skips the menu and
+lands in that composer — a menu with one item is a tap tax, and a `child`, who
+may write and may thank but may not create a poll, would otherwise pay it every
+time. A reader who holds none gets no button.
+
+One door is also what fixed the empty states. Two panels used to have empty
+states with **no possible action**, because each panel's own invitation already
+sat ~60px above it in its own header: a second copy would have been the same
+button twice and a second `Dialog` for one flow.
+
+> **Rule.** A panel that cannot say what to do next does not render an empty
+> state — it does not render. «Решаем вместе» with no open question, «Что решили»
+> with nothing decided: the board is not missing anything, so nothing is drawn.
+> The **board itself** has exactly one empty state, and its action is the one
+> door.
+
+**Consequence of getting it wrong:** an empty state that cannot invite is the
+composition telling you it is wrong. Adding a button to it hides the message.
+
+#### D7.4 Band 2 — one loud thing, by precedence
+
+Precedence: **an open poll nobody has answered → a pinned announcement →
+nothing.** Whichever wins takes the clay `--surface-attention` wash; the loser
+renders as an ordinary `card` section and keeps saying what it is _in words_ —
+📌 «Закреплено до 25 августа» — because colour is never the only signal (§B4).
+The precedence is evaluated live: answer the poll and the wash moves to the pin
+in the same render.
+
+Two tinted blocks stacked is two loud things, which is exactly what band 2 exists
+to prevent (§C2).
+
+#### D7.5 The board
+
+```
+ РЕШАЕМ ВМЕСТЕ                              Вас спрашивают   ← band 2 (or card)
+ ┌───────────────────────────────────────────────────────┐
+ │ (П) Павел · 2 часа назад                              │
+ │ Куда едем на выходных?                                │
+ │ до 22 августа, 13:51                                  │
+ │ ( ) На дачу     ( ) В город     ( ) Никуда            │  ← no shares yet
+ │ Ответили (П)(Б)(Л)   Завершить            Обсудить    │
+ └───────────────────────────────────────────────────────┘
+ ЗАКРЕПЛЕНО
+ ┌───────────────────────────────────────────────────────┐
+ │ (П) Павел · 2 дня назад                          ⋯    │
+ │ 📌 Закреплено до 25 августа                           │
+ │ Ключи от дачи у соседей                               │
+ │ Если едете раньше меня — ключи у Нины Петровны…       │
+ │ 👍 2   ☺+                                 Обсудить    │
+ └───────────────────────────────────────────────────────┘
+ НА ДОСКЕ
+ ┌───────────────────────────────────────────────────────┐
+ │ (М) Мама · 35 минут назад                        ⋯    │
+ │ В субботу едем к бабушке                              │
+ │ Выезжаем в 10:00, не проспите.                        │
+ │ ❤️ 3  🎉 1  ☺+                    Обсуждение · 3      │
+ ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤
+ │ (Л) Лиза выполнила задачу „Полить цветы“ · 55 мин…    │  ← the quiet layer
+ └───────────────────────────────────────────────────────┘
+                     Что было раньше                        ← band 4
+```
+
+- **Notes are rows on one surface, not cards.** Twelve bordered cards in a column
+  is twelve boxes of near-identical weight — the "six equal tiles" failure §A2
+  removed from Сегодня. The `Section` is the board; the inset hairline between
+  rows is what makes twelve notes read as one object. The _size_ difference
+  between an announcement and an activity line is the hierarchy: if those two
+  ever start looking alike the board stops working.
+- **Announcement:** author disc + name + relative time on **one** line · title
+  (`h2`, display face) · body (`body`, clamped to four lines with «ещё») · one
+  44px line carrying the reactions **and** the thread toggle. Two stacked rows of
+  chrome under every note is ~88px per note, which on a phone is most of what the
+  board would be made of.
+- **Activity line:** member disc + the server's frozen Russian sentence, muted,
+  with the timestamp **inside** the sentence rather than beside it. Measured at
+  320px, a right-aligned time next to a wrapping summary reads as «Лиза выполнила
+  · 55 минут назад · задачу „Полить цветы“» — the clock interrupts the clause.
+- **System post:** no author disc at all and the sage `--surface-calm` ground on
+  the row. «Семейный бот» with a face beside it is an uncanny sixth family
+  member.
+- **Reactions:** at most five emoji + a `+`; tap toggles; the digit width is
+  reserved with `tabular-nums` so 9 → 10 does not shift the row. This is the one
+  count allowed on this screen — it belongs to a _note_, not to a person, it
+  cannot be accumulated across the family, and nothing sorts by it (contrast
+  D7.7).
+
+#### D7.6 Polls — the result is hidden until you have answered
+
+The card used to draw every option's share on first paint, so the first thing a
+ten-year-old saw was «На дачу 67 %», and then they voted for на дачу. A family is
+precisely the group where that anchoring bites hardest, because the two loudest
+votes are usually the parents'.
+
+> **Rule.** Shares and bars render only once the reader has answered, or once the
+> poll is closed. Nothing is withheld that anybody is entitled to — the whole
+> result appears the instant you have said your own piece.
+
+Who has answered is drawn as **member discs, never as «Проголосовали: 3»**. The
+discs say the thing somebody actually says out loud — "we are waiting on Папа" —
+and they are a set attached to one question, not a tally against a name. A closed
+poll renders the result and never a form (voting past the deadline is a
+server-side `409`, and a dead radio button followed by an error toast is a small
+betrayal every time). Closed polls leave the board for «Что решили» in the side
+column, where each row states the question and what was decided — and reports a
+tie _as a tie_, because «Решили: на дачу» when half the family said «в город» is
+the kind of quiet lie a family app cannot afford.
+
+#### D7.7 «Спасибо» — the rule is negative
+
+Alphabetical, never sorted by count. No place, no medal, no «лидер недели». A
+member who has been thanked nothing appears in the same list at the same weight
+as everyone else, and the chip says **whether** somebody was thanked this month
+and nothing more. «7 спасибо» beside a name is a scoreboard whatever the heading
+says (D5), and the family member reading the smaller number learns exactly the
+wrong thing.
+
+> **Rule.** This holds out loud as well as on screen. The chip's visible text
+> **is** its accessible name, and the count is never written into a `title`, an
+> `aria-label` or a tooltip. A weekly-load bar on Семья was once found reading
+> «40 % (своя доля 33 %)» to a screen reader while drawing no numbers at all —
+> handing a blind family member the exact scoreboard the sighted design refused
+> to draw. `wall.test.tsx` asserts that the rendered subtree, markup included,
+> contains no such digit.
+
+#### D7.8 Gestures, states, permissions
+
+- **No swipe on a note, deliberately.** §G4 puts a swipe on rows with one
+  _reversible_ action. A note's row actions are pin and delete: one is not
+  reversible, and the other is a toggle _with an expiry date_, which is not a
+  thing a thumb should set by accident. Long-press opens the same sheet the
+  visible `⋯` opens (§G5), built from one list so the two doors cannot drift.
+- **Pinning always expires.** «Закреплено до 25 августа» self-clears; a boolean
+  would stay pinned forever. The date is rendered day-and-month — the minute of a
+  pin's expiry is a number nobody set and nobody can act on.
+- **Loading** is a skeleton of the same shape and count. **The board's** error is
+  a full `ErrorState` with a retry; a _panel's_ error is a quiet inline line with
+  a retry and never `role="alert"`, because a side query that failed must not
+  become the loudest thing on a board that loaded perfectly well.
+- **Permissions** go through `useCan()`, never a role comparison (D4). Verified
+  against `ROLE_PERMISSIONS` rather than assumed: a `child` holds `post:create`,
+  `comment:create`, `kudos:give` and `poll:vote` but **not** `poll:create`,
+  `poll:close` or `post:pin` — so their door offers two notes and not three,
+  their polls carry no «Завершить», and a pinned note somebody else wrote carries
+  no `⋯` at all. A `guest` holds none of them: they read the board, and the empty
+  state says «Когда кто-нибудь что-то напишет, это появится здесь» rather than
+  offering a button that would 403.
+
+**Desktop**: board at 720; side column = «Спасибо» · «Что решили».
+**Empty**: «На доске пусто» + «Написать».
 
 ---
 
@@ -821,7 +1021,7 @@ The main page has already been rebuilt and is good. Two changes only.
    column = the section list (Профиль · Уведомления · Способы входа ·
    Оформление · Календарь на телефоне), main = the selected section. Today the
    page is a 670px column floating in 1200px with 440px empty to its right — the
-   content to fill it is the navigation that is currently *in* the column.
+   content to fill it is the navigation that is currently _in_ the column.
 2. **The `ValueRow` measure rule (§C2) applies here**, which is what
    permanently prevents the original «label at 378, chevron at 1326» defect from
    coming back on any future settings row.
@@ -830,7 +1030,7 @@ The main page has already been rebuilt and is good. Two changes only.
 
 Measured **4820px on a phone, 3774px on desktop.** It is already grouped, which
 helps, but the shape is wrong: each of 19 types is a card containing a master
-switch, and *inside* it a second row with three more switches (Push / Telegram /
+switch, and _inside_ it a second row with three more switches (Push / Telegram /
 В приложении). **76 switches**, and the same three words repeated 19 times.
 
 Make it an actual matrix — which is what `PreferenceMatrix.tsx` is named for.
@@ -874,7 +1074,7 @@ at the top of the section, not on every row.
 
 - **Тихие часы** and **Устройства** stay as separate sections below.
 - Устройства currently renders «Не отвечает — похоже, подписка умерла» in
-  destructive red on *both* rows plus a stray unlabelled checkbox. Dead
+  destructive red on _both_ rows plus a stray unlabelled checkbox. Dead
   subscriptions get a `--warning` chip «не отвечает» and one «Удалить»; the
   checkbox is a bug — remove it.
 - The «Проверка / Отправить тестовое уведомление» block stays (research §15
@@ -952,11 +1152,11 @@ screens roughly once a day.
 
 ### F1. What is wrong now, measured
 
-| | Phone dialog | Desktop dialog | Viewport |
-|---|---|---|---|
-| «Новое дело» | 358 × **1326**, top 63 | 512 × **1030**, top 68 | 844 / 900 |
+|                 | Phone dialog           | Desktop dialog         | Viewport  |
+| --------------- | ---------------------- | ---------------------- | --------- |
+| «Новое дело»    | 358 × **1326**, top 63 | 512 × **1030**, top 68 | 844 / 900 |
 | «Новое событие» | 358 × **1640**, top 34 | 672 × **1198**, top 36 | 844 / 900 |
-| «Новая копилка» | 358 × **1034**, top 42 | — | 844 |
+| «Новая копилка» | 358 × **1034**, top 42 | —                      | 844       |
 
 - **«Создать» is off-screen at every size, including 1440×900.** The user must
   scroll a dialog to find the button that does the thing they opened it for.
@@ -990,16 +1190,16 @@ out of the way**.
 
 **Defaults.**
 
-| Field | Default | Why |
-|---|---|---|
-| Событие: начало | next :00 or :30 at least 30 min from now, family TZ | the build currently defaults to «02:00», a timezone artefact |
-| Событие: длительность | 1 час | |
-| Событие: весь день | off | |
-| Дело: срок | today 21:00 if created before 18:00, else tomorrow 21:00 | "by the end of the evening" is what a family means |
-| Дело: исполнитель | «Любой» | assigning is a second decision |
-| Повторение | не повторяется | |
-| Видимость | household | |
-| Напоминание | за 1 час (events), в срок (tasks) | |
+| Field                 | Default                                                  | Why                                                          |
+| --------------------- | -------------------------------------------------------- | ------------------------------------------------------------ |
+| Событие: начало       | next :00 or :30 at least 30 min from now, family TZ      | the build currently defaults to «02:00», a timezone artefact |
+| Событие: длительность | 1 час                                                    |                                                              |
+| Событие: весь день    | off                                                      |                                                              |
+| Дело: срок            | today 21:00 if created before 18:00, else tomorrow 21:00 | "by the end of the evening" is what a family means           |
+| Дело: исполнитель     | «Любой»                                                  | assigning is a second decision                               |
+| Повторение            | не повторяется                                           |                                                              |
+| Видимость             | household                                                |                                                              |
+| Напоминание           | за 1 час (events), в срок (tasks)                        |                                                              |
 
 ### F3. The container — a full-screen sheet on a phone
 
@@ -1097,14 +1297,14 @@ Every remaining chip grid becomes either a single-row segmented control (≤ 3
 short options, mutually exclusive, used daily) or a **list of radio rows in a
 sheet**.
 
-| Field | Now | Becomes |
-|---|---|---|
+| Field                    | Now                     | Becomes                                                                                                                                                                                                                                                                                            |
+| ------------------------ | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Повторение (5–6 options) | 2-col chip grid, ragged | `🔁 Повторение · не повторяется ›` → sheet with a **single-column list**: ○ Не повторяется / ○ Ежедневно / ○ По дням недели / ○ Раз в N недель / ○ N-е число месяца / ○ Последний день месяца. Selecting one that needs parameters reveals them **inline under that row**, not on a second screen. |
-| Исполнитель (5 people) | 3-col chip grid | `👥 Кто · Любой ›` → sheet with a **horizontal row of member discs** (Любой + 5 people, 64px each, fits 390px) — a person is a face, not a pill |
-| Срок (4 presets) | 2-col chip grid | The **one** case that stays inline: a single-row segmented control `[Сегодня][Завтра][На неделе][Дата…]`. It is the daily decision on a task. |
-| Категория | free text input | `ValueRow` → sheet with the existing categories as rows + «Новая» |
-| Видимость | Select | Moves behind «Подробнее», default household |
-| Напоминания | chips | `ValueRow` → sheet |
+| Исполнитель (5 people)   | 3-col chip grid         | `👥 Кто · Любой ›` → sheet with a **horizontal row of member discs** (Любой + 5 people, 64px each, fits 390px) — a person is a face, not a pill                                                                                                                                                    |
+| Срок (4 presets)         | 2-col chip grid         | The **one** case that stays inline: a single-row segmented control `[Сегодня][Завтра][На неделе][Дата…]`. It is the daily decision on a task.                                                                                                                                                      |
+| Категория                | free text input         | `ValueRow` → sheet with the existing categories as rows + «Новая»                                                                                                                                                                                                                                  |
+| Видимость                | Select                  | Moves behind «Подробнее», default household                                                                                                                                                                                                                                                        |
+| Напоминания              | chips                   | `ValueRow` → sheet                                                                                                                                                                                                                                                                                 |
 
 Net effect on «Новое событие», phone: **6 visible controls** (title, when-row,
 and four `ValueRow`s under «ПОДРОБНЕЕ») instead of 12 fields and 2 chip grids.
@@ -1177,7 +1377,7 @@ accident.
 
 So: **no capability is reachable only by gesture.** Every swipe action also
 exists as a visible control on the row (a tick, a 🗑) or in the row's action
-sheet, which opens from a visible `⋯` *and* from long-press. The gesture is a
+sheet, which opens from a visible `⋯` _and_ from long-press. The gesture is a
 second door onto the same room.
 
 The corollary is that gestures are allowed to be silent. No coach marks, no
@@ -1195,7 +1395,7 @@ Reasoning:
 - Gating on standalone makes the gestures untestable in a browser, undebuggable
   in devtools and invisible to whichever family member has not installed yet —
   which, on the evidence of who installs PWAs, is likely the grandmother, the
-  person who most needs the visible control *and* would most benefit from a
+  person who most needs the visible control _and_ would most benefit from a
   large forgiving swipe target.
 - `display-mode: standalone` is genuinely required only for things that cannot
   work otherwise: push permission and subscription (research §1), the install
@@ -1228,7 +1428,7 @@ the **left** edge. Two measures, both applied:
 Applies to: shopping items, task rows, notification rows. Component:
 `shared/ui/swipe-row.tsx` (§E).
 
-- **Engage** when horizontal movement ≥ 12px *and* |Δx| ≥ 2 × |Δy|. Otherwise it
+- **Engage** when horizontal movement ≥ 12px _and_ |Δx| ≥ 2 × |Δy|. Otherwise it
   is a scroll and the row never moves. Once engaged, `touch-action: pan-y` is
   released to the row for the rest of the gesture.
 - **Track 1:1** with the finger, with rubber-band resistance past 50 % of row
@@ -1246,11 +1446,11 @@ Applies to: shopping items, task rows, notification rows. Component:
 **Which action goes on the swipe.** Exactly one per row, and **it is always the
 reversible one**:
 
-| Row | Swipe left | Never on a swipe |
-|---|---|---|
-| Shopping item | куплено / вернуть | **удалить** |
-| Task | сделано / вернуть | удалить, пропустить |
-| Notification | прочитано | удалить |
+| Row           | Swipe left        | Never on a swipe    |
+| ------------- | ----------------- | ------------------- |
+| Shopping item | куплено / вернуть | **удалить**         |
+| Task          | сделано / вернуть | удалить, пропустить |
+| Notification  | прочитано         | удалить             |
 
 Delete is destructive and irreversible from the user's point of view, so it is
 not put behind a gesture at all. That removes the "lose your shopping list"
@@ -1275,7 +1475,7 @@ visual snap. Never vibrate on tap, on open, on success or on error.
 - The row gets `-webkit-touch-callout: none` and `user-select: none` (the
   `.no-callout` utility already exists) so iOS does not raise its own selection
   bubble.
-- Long-press is for the *secondary menu* only. Nothing is reachable solely by
+- Long-press is for the _secondary menu_ only. Nothing is reachable solely by
   long-press.
 
 ### G6. Pull to refresh
@@ -1339,70 +1539,70 @@ Named against the real tree.
 
 ### New — `src/shared/ui/`
 
-| File | What |
-|---|---|
+| File                    | What                                                                                                                                                                                                             |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `responsive-dialog.tsx` | `Dialog` on `(pointer: fine)`, vaul `Drawer` on coarse. Props: `size: 'full' \| 'tall' \| 'auto'`, `title`, `description`, `primaryAction`, `onOpenChange`. The single highest-leverage change in this document. |
-| `form-sheet.tsx` | The create/edit container (§F3). Fixed `pt-safe` header with Отмена / title / primary; scrolling body; `pb-safe`. Unsaved-input guard + `sessionStorage` draft on `visibilitychange`. |
-| `value-row.tsx` | The 56px row: optional leading icon, label, value (or «—»), trailing chevron/switch/action. **Caps its content at 720px** (§C2). Used by settings, forms, detail screens. |
-| `section.tsx` | `label` (12/600 uppercase) + optional right-hand link + hairline-separated children on one L1 surface. Replaces per-widget `Card`. |
-| `swipe-row.tsx` | §G4. Props: `action: { label, icon, tone, onCommit }`, `undoLabel`. Handles the 32px dead zone, the axis lock, the two stops, the toast. |
-| `segmented-control.tsx` | Promote `features/tasks/components/SegmentedControl.tsx` to shared. Max 3 options, single row, never wraps, 44px. |
-| `day-rail.tsx` | §C3. Renders the 56px rail cell (time / day marker / member tick). |
-| `member-disc.tsx` | 24/32/64px, ramp colour by `sortOrder % 5`, initial. Wraps `UserAvatar`. |
-| `pull-to-refresh.tsx` | §G6. Wraps `AppShell`'s main. |
-| `use-coarse-pointer.ts` | `matchMedia('(pointer: coarse)')` hook, live. |
+| `form-sheet.tsx`        | The create/edit container (§F3). Fixed `pt-safe` header with Отмена / title / primary; scrolling body; `pb-safe`. Unsaved-input guard + `sessionStorage` draft on `visibilitychange`.                            |
+| `value-row.tsx`         | The 56px row: optional leading icon, label, value (or «—»), trailing chevron/switch/action. **Caps its content at 720px** (§C2). Used by settings, forms, detail screens.                                        |
+| `section.tsx`           | `label` (12/600 uppercase) + optional right-hand link + hairline-separated children on one L1 surface. Replaces per-widget `Card`.                                                                               |
+| `swipe-row.tsx`         | §G4. Props: `action: { label, icon, tone, onCommit }`, `undoLabel`. Handles the 32px dead zone, the axis lock, the two stops, the toast.                                                                         |
+| `segmented-control.tsx` | Promote `features/tasks/components/SegmentedControl.tsx` to shared. Max 3 options, single row, never wraps, 44px.                                                                                                |
+| `day-rail.tsx`          | §C3. Renders the 56px rail cell (time / day marker / member tick).                                                                                                                                               |
+| `member-disc.tsx`       | 24/32/64px, ramp colour by `sortOrder % 5`, initial. Wraps `UserAvatar`.                                                                                                                                         |
+| `pull-to-refresh.tsx`   | §G6. Wraps `AppShell`'s main.                                                                                                                                                                                    |
+| `use-coarse-pointer.ts` | `matchMedia('(pointer: coarse)')` hook, live.                                                                                                                                                                    |
 
 ### Change — `src/shared/ui/`
 
-| File | Change |
-|---|---|
-| `card.tsx` | Remove `shadow-sm`. `gap-6 py-6` → `gap-4 py-4`; `px-6` → `px-4`. |
-| `field-shell.tsx` | `PickerSurface` renders a `Drawer` on coarse pointers, `Popover` on fine (§F4). |
-| `sheet.tsx` / `drawer.tsx` | Add the 36×4 handle to every bottom drawer; verify `pb-safe` on all four sides. |
-| `button.tsx` | Add `size="row"` (44px, full width, left-aligned) for the action sheets. Confirm every size is ≥ 44px on coarse. |
-| `input.tsx`, `textarea.tsx`, `select.tsx` | 17px on coarse, 15px on fine. Height 48 coarse / 40 fine. |
-| `empty-state.tsx`, `shared/components/EmptyState.tsx` | `action` becomes **required**. Cap the description at two lines. |
+| File                                                  | Change                                                                                                           |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `card.tsx`                                            | Remove `shadow-sm`. `gap-6 py-6` → `gap-4 py-4`; `px-6` → `px-4`.                                                |
+| `field-shell.tsx`                                     | `PickerSurface` renders a `Drawer` on coarse pointers, `Popover` on fine (§F4).                                  |
+| `sheet.tsx` / `drawer.tsx`                            | Add the 36×4 handle to every bottom drawer; verify `pb-safe` on all four sides.                                  |
+| `button.tsx`                                          | Add `size="row"` (44px, full width, left-aligned) for the action sheets. Confirm every size is ≥ 44px on coarse. |
+| `input.tsx`, `textarea.tsx`, `select.tsx`             | 17px on coarse, 15px on fine. Height 48 coarse / 40 fine.                                                        |
+| `empty-state.tsx`, `shared/components/EmptyState.tsx` | `action` becomes **required**. Cap the description at two lines.                                                 |
 
 ### Change — `src/shared/components/`
 
-| File | Change |
-|---|---|
-| `PageHeader.tsx` | Title uses `--font-display` at `h1`. On `≥ md` the title and the primary action move into `TopAppBar` and `PageHeader` renders only description + filters. `actions` collapse to a single icon button below `sm`. |
-| `EditScopeDialog.tsx` | Becomes the **entry** prompt (§F6) and gains a one-line consequence under each option. |
-| `ConfirmDialog.tsx` | Via `ResponsiveDialog`. Destructive confirms name what is being removed and how many. |
-| `UserAvatar.tsx` | Colour comes from the chart ramp, not `users.color`. Export `AvatarGroup` capped at 4 + «+N». |
+| File                  | Change                                                                                                                                                                                                            |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PageHeader.tsx`      | Title uses `--font-display` at `h1`. On `≥ md` the title and the primary action move into `TopAppBar` and `PageHeader` renders only description + filters. `actions` collapse to a single icon button below `sm`. |
+| `EditScopeDialog.tsx` | Becomes the **entry** prompt (§F6) and gains a one-line consequence under each option.                                                                                                                            |
+| `ConfirmDialog.tsx`   | Via `ResponsiveDialog`. Destructive confirms name what is being removed and how many.                                                                                                                             |
+| `UserAvatar.tsx`      | Colour comes from the chart ramp, not `users.color`. Export `AvatarGroup` capped at 4 + «+N».                                                                                                                     |
 
 ### Change — `src/app/layout/`
 
-| File | Change |
-|---|---|
-| `AppShell.tsx` | The §C1 grid: `main` + optional `aside` slot, per-route. Hosts `PullToRefresh`. Container maxes per breakpoint, not one `max-w-3xl xl:max-w-5xl`. |
-| `BottomTabBar.tsx` | **Opaque `--card` surface** — drop `bg-background/95` and `backdrop-blur-md`; they are literally the page colour and are why the bar does not read as a bar. Keep the 1px top border. Active tab gets a 48×32 `--secondary` pill behind the icon plus `--primary` icon and label. Surface extends into `env(safe-area-inset-bottom)`; the icon+label block stays centred in the top 56px. |
-| `TopAppBar.tsx` | On `≥ md`, carry the page title and the screen's one primary action. Today it is 1200×57 holding two controls. |
-| `DesktopSidebar.tsx` | Fine as is. Add the pending-approval count badge on «Участники». |
+| File                 | Change                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AppShell.tsx`       | The §C1 grid: `main` + optional `aside` slot, per-route. Hosts `PullToRefresh`. Container maxes per breakpoint, not one `max-w-3xl xl:max-w-5xl`.                                                                                                                                                                                                                                         |
+| `BottomTabBar.tsx`   | **Opaque `--card` surface** — drop `bg-background/95` and `backdrop-blur-md`; they are literally the page colour and are why the bar does not read as a bar. Keep the 1px top border. Active tab gets a 48×32 `--secondary` pill behind the icon plus `--primary` icon and label. Surface extends into `env(safe-area-inset-bottom)`; the icon+label block stays centred in the top 56px. |
+| `TopAppBar.tsx`      | On `≥ md`, carry the page title and the screen's one primary action. Today it is 1200×57 holding two controls.                                                                                                                                                                                                                                                                            |
+| `DesktopSidebar.tsx` | Fine as is. Add the pending-approval count badge on «Участники».                                                                                                                                                                                                                                                                                                                          |
 
 ### Change — features
 
-| File | Change |
-|---|---|
-| `features/shopping/pages/ListPage.tsx` | The sticky offset fix (§D6). Composer top-of-list at `≥ md`. |
-| `features/shopping/components/QuickAddBar.tsx` | Opaque; ≤ 3 rows; suggestions above the field; hint inline. |
-| `features/shopping/components/FrequentStrip.tsx` | Edge fade + a `›` affordance; currently the last chip is clipped mid-word at 390px. |
-| `features/shopping/components/ItemRow.tsx` | Wrap in `SwipeRow` (куплено). 56/68px. |
-| `features/today/components/WidgetCard.tsx` | **Delete.** Replaced by `Section`. |
-| `features/today/pages/TodayPage.tsx` | The band model (§C2/D1). One attention block, one «все ›» per section. |
-| `features/today/components/LoadWidget.tsx` | Delete with points. |
-| `features/tasks/components/TaskCard.tsx` | 56px row, member disc, member tick. Remove the coloured footer band. Wrap in `SwipeRow`. |
-| `features/tasks/components/TaskFilters.tsx` | Segmented `Мои/Все` + one «Фильтры · N» row → sheet on phone; side-column panel on desktop. |
-| `features/tasks/components/TaskForm.tsx` | Rebuild per §F3–F5. Remove Баллы. |
-| `features/calendar/components/EventFormDialog.tsx` | Rebuild per §F3–F5. |
-| `features/calendar/pages/CalendarPage.tsx` | Month into the app-bar title; remove `SubscribePanel` from the page. |
-| `features/calendar/components/AgendaList.tsx` | Adopt `DayRail`. |
-| `features/goals/components/GoalCard.tsx` | Row, one indicator, no floating «Пополнить». |
-| `features/goals/components/ProgressRing.tsx` | Detail screen only. |
-| `features/settings/components/PreferenceMatrix.tsx` | Become an actual matrix (§D8a). |
-| `features/family/components/WeekLoadBar.tsx` | Remove points; `choreCount` only. |
-| `features/wall/components/AnnouncementComposer.tsx` | Into a `FormSheet` behind the app-bar `⊕`. |
+| File                                                | Change                                                                                                                                                                                                                                               |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `features/shopping/pages/ListPage.tsx`              | The sticky offset fix (§D6). Composer top-of-list at `≥ md`.                                                                                                                                                                                         |
+| `features/shopping/components/QuickAddBar.tsx`      | Opaque; ≤ 3 rows; suggestions above the field; hint inline.                                                                                                                                                                                          |
+| `features/shopping/components/FrequentStrip.tsx`    | Edge fade + a `›` affordance; currently the last chip is clipped mid-word at 390px.                                                                                                                                                                  |
+| `features/shopping/components/ItemRow.tsx`          | Wrap in `SwipeRow` (куплено). 56/68px.                                                                                                                                                                                                               |
+| `features/today/components/WidgetCard.tsx`          | **Delete.** Replaced by `Section`.                                                                                                                                                                                                                   |
+| `features/today/pages/TodayPage.tsx`                | The band model (§C2/D1). One attention block, one «все ›» per section.                                                                                                                                                                               |
+| `features/today/components/LoadWidget.tsx`          | Delete with points.                                                                                                                                                                                                                                  |
+| `features/tasks/components/TaskCard.tsx`            | 56px row, member disc, member tick. Remove the coloured footer band. Wrap in `SwipeRow`.                                                                                                                                                             |
+| `features/tasks/components/TaskFilters.tsx`         | Segmented `Мои/Все` + one «Фильтры · N» row → sheet on phone; side-column panel on desktop.                                                                                                                                                          |
+| `features/tasks/components/TaskForm.tsx`            | Rebuild per §F3–F5. Remove Баллы.                                                                                                                                                                                                                    |
+| `features/calendar/components/EventFormDialog.tsx`  | Rebuild per §F3–F5.                                                                                                                                                                                                                                  |
+| `features/calendar/pages/CalendarPage.tsx`          | Month into the app-bar title; remove `SubscribePanel` from the page.                                                                                                                                                                                 |
+| `features/calendar/components/AgendaList.tsx`       | Adopt `DayRail`.                                                                                                                                                                                                                                     |
+| `features/goals/components/GoalCard.tsx`            | Row, one indicator, no floating «Пополнить».                                                                                                                                                                                                         |
+| `features/goals/components/ProgressRing.tsx`        | Detail screen only.                                                                                                                                                                                                                                  |
+| `features/settings/components/PreferenceMatrix.tsx` | Become an actual matrix (§D8a).                                                                                                                                                                                                                      |
+| `features/family/components/WeekLoadBar.tsx`        | Remove points; `choreCount` only.                                                                                                                                                                                                                    |
+| `features/wall/components/AnnouncementComposer.tsx` | Into a `FormSheet` behind the app-bar `⊕` — which is `BoardCompose`, the board's one door for all three kinds of note (§D7.3). Стена's panels own no state and the screen mounts one tree at every width; `useTwoColumn` is not used there any more. |
 
 ---
 
@@ -1416,14 +1616,13 @@ Non-negotiable. From D7 and `docs/research/ios-pwa-push.md` §9.
 2. **Every text control ≥ 16px on coarse pointers.** iOS zooms the viewport on
    focus below 16 and never zooms back, and `maximum-scale` is ignored. The
    global `@media (pointer: coarse) { input, select, textarea { font-size: 16px
-   !important } }` in `index.css` stays; this spec raises the intent to 17.
+!important } }` in `index.css` stays; this spec raises the intent to 17.
 3. **No horizontal scroll at 320px.** Verified: `list-320` and `today-320` both
-   report `scrollWidth === 320`. Any new fixed-width element must be checked at
-   320. Horizontal *scrollers* (Часто покупаем, member discs) are allowed and
+   report `scrollWidth === 320`. Any new fixed-width element must be checked at 320. Horizontal _scrollers_ (Часто покупаем, member discs) are allowed and
    must have an edge fade so the clipped item reads as scrollable, not broken.
 4. **Safe-area insets everywhere an edge is touched.** `pt-safe` on the app bar
    and every full-screen sheet header; `pb-safe` on the tab bar, bottom drawers
-   and any bottom-anchored composer. The tab bar's *surface* extends into the
+   and any bottom-anchored composer. The tab bar's _surface_ extends into the
    inset; its content does not.
 5. **`dvh`, never `vh`.** `100dvh` for the shell, sheets and any full-height
    pane. `vh` on iOS means the large viewport and produces a jump when the URL
@@ -1437,7 +1636,7 @@ Non-negotiable. From D7 and `docs/research/ios-pwa-push.md` §9.
 7. **The document is the scroll container**, as `AppShell` already does, so iOS
    collapses the URL bar in browser and "tap the status bar to scroll to top"
    works. (`docs/research/ios-pwa-push.md` §9 proposes an inner pane; that trade
-   is deliberately not taken. The "dead band under the tab bar" is a *surface*
+   is deliberately not taken. The "dead band under the tab bar" is a _surface_
    problem — the bar is the page colour at 95 % alpha — not a scroll problem, and
    §E fixes it there.)
 8. **Never `location.reload()`** in pull-to-refresh, an update prompt or a retry.
@@ -1448,7 +1647,7 @@ Non-negotiable. From D7 and `docs/research/ios-pwa-push.md` §9.
     on every interactive element; `.no-callout` on anything long-pressable.
 11. **`prefers-reduced-motion`** disables the swipe-row collapse, the sheet
     spring and every transition. Already reset globally — keep it.
-12. **Contrast ≥ 4.5:1** for body text and ≥ 3:1 for UI boundaries in *both*
+12. **Contrast ≥ 4.5:1** for body text and ≥ 3:1 for UI boundaries in _both_
     themes. New tokens in §B1 must be re-measured before they ship; the existing
     `--primary` work at `oklch(.5535 …)` must not be undone.
 13. **Colour is never the only signal** (§B4).

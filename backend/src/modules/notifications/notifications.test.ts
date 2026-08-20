@@ -820,7 +820,9 @@ describe('escalation (D11)', () => {
   it('seeds the default policies on an empty table, and never again', async () => {
     vi.mocked(repo.countEscalationPolicies).mockResolvedValue(0);
     vi.mocked(repo.insertEscalationPolicies).mockImplementation((_x, values) =>
-      Promise.resolve(values as unknown as Awaited<ReturnType<typeof repo.insertEscalationPolicies>>),
+      Promise.resolve(
+        values as unknown as Awaited<ReturnType<typeof repo.insertEscalationPolicies>>,
+      ),
     );
 
     expect(await ensureDefaultEscalationPolicies(db)).toBe(DEFAULT_ESCALATION_POLICIES.length);
@@ -877,9 +879,7 @@ describe('escalation (D11)', () => {
         updatedAt: new Date(),
       },
     ]);
-    vi.mocked(repo.insertIntent).mockResolvedValue(
-      intent({ id: 'intent-2' }),
-    );
+    vi.mocked(repo.insertIntent).mockResolvedValue(intent({ id: 'intent-2' }));
 
     expect(await escalateIntent(db, 'intent-1', now)).toBe('person_escalated');
 
@@ -919,9 +919,7 @@ describe('escalation (D11)', () => {
         updatedAt: new Date(),
       },
     ]);
-    vi.mocked(repo.insertIntent).mockResolvedValue(
-      intent({ id: 'intent-2' }),
-    );
+    vi.mocked(repo.insertIntent).mockResolvedValue(intent({ id: 'intent-2' }));
 
     await escalateIntent(db, 'intent-1', now);
 
@@ -982,7 +980,6 @@ describe('subscription health (D11)', () => {
 /* Integration lives in `notifications.inbox.integration.test.ts`, because this
    file mocks the repository module-wide and a test that imports the mock while
    claiming to exercise Postgres is worse than no test. */
-
 
 /* -------------------------------------------------------------------------- */
 /* Fixtures                                                                    */

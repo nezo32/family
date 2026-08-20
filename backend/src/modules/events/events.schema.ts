@@ -15,7 +15,11 @@ import {
 
 import { createdAt, primaryId, timestamps } from '../../db/base.js';
 import { users } from '../identity/users.schema.js';
-import { occurrenceStatus, recurrenceColumns, visibility } from '../scheduling/recurrence.schema.js';
+import {
+  occurrenceStatus,
+  recurrenceColumns,
+  visibility,
+} from '../scheduling/recurrence.schema.js';
 
 /**
  * Calendar events. Structurally identical to tasks (same recurrence spine, same
@@ -78,7 +82,10 @@ export const eventSeries = pgTable(
      * Empty => no reminders. The notification job reads this and enqueues
      * against the occurrence, so a moved occurrence reschedules its reminders.
      */
-    reminderOffsets: integer().array().notNull().default(sql`'{}'::int[]`),
+    reminderOffsets: integer()
+      .array()
+      .notNull()
+      .default(sql`'{}'::int[]`),
 
     /** Hex accent for the calendar chip. NULL => fall back to the creator colour. */
     color: text(),

@@ -924,8 +924,7 @@ export async function getIntentReceipts(
   const deliveries = await repo.listDeliveriesForIntent(db, intentId);
 
   // 404 rather than 403: an outsider must not learn the intent exists (D4).
-  const mayView =
-    intent.actorId === viewerId || deliveries.some((d) => d.userId === viewerId);
+  const mayView = intent.actorId === viewerId || deliveries.some((d) => d.userId === viewerId);
   if (!mayView) throw notFound('Notification');
 
   return {

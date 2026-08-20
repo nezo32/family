@@ -1,6 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
-import { hasZodFastifySchemaValidationErrors, isResponseSerializationError } from 'fastify-type-provider-zod';
+import {
+  hasZodFastifySchemaValidationErrors,
+  isResponseSerializationError,
+} from 'fastify-type-provider-zod';
 import { ZodError } from 'zod';
 
 import type { ApiErrorBody, ErrorCode } from '@family/shared';
@@ -46,7 +49,13 @@ export const errorHandlerPlugin = fp(
     app.setNotFoundHandler(
       { preHandler: app.hasDecorator('rateLimit') ? undefined : undefined },
       (request, reply) =>
-        respond(reply, request.id, 'NOT_FOUND', 404, `Route ${request.method} ${request.url} not found`),
+        respond(
+          reply,
+          request.id,
+          'NOT_FOUND',
+          404,
+          `Route ${request.method} ${request.url} not found`,
+        ),
     );
 
     app.setErrorHandler((error: unknown, request: FastifyRequest, reply: FastifyReply) => {
@@ -58,7 +67,14 @@ export const errorHandlerPlugin = fp(
           (details[key] ??= []).push(issue.params.issue.message);
         }
         request.log.info({ details }, 'request validation failed');
-        return respond(reply, request.id, 'VALIDATION_ERROR', 400, 'Request validation failed', details);
+        return respond(
+          reply,
+          request.id,
+          'VALIDATION_ERROR',
+          400,
+          'Request validation failed',
+          details,
+        );
       }
 
       /* ---------- response serialization: always our bug ---------- */
@@ -86,7 +102,14 @@ export const errorHandlerPlugin = fp(
         const logPayload = { err: error, code: error.code, context: error.context };
         if (error.statusCode >= 500) request.log.error(logPayload, error.message);
         else request.log.info(logPayload, error.message);
-        return respond(reply, request.id, error.code, error.statusCode, error.message, error.details);
+        return respond(
+          reply,
+          request.id,
+          error.code,
+          error.statusCode,
+          error.message,
+          error.details,
+        );
       }
 
       /* ---------- fastify / framework errors ---------- */
@@ -101,7 +124,11 @@ export const errorHandlerPlugin = fp(
       if (fastifyError.statusCode === 415) {
         return respond(reply, request.id, 'UNSUPPORTED_MEDIA_TYPE', 415, 'Unsupported media type');
       }
-      if (fastifyError.statusCode && fastifyError.statusCode >= 400 && fastifyError.statusCode < 500) {
+      if (
+        fastifyError.statusCode &&
+        fastifyError.statusCode >= 400 &&
+        fastifyError.statusCode < 500
+      ) {
         return respond(
           reply,
           request.id,
@@ -118,7 +145,9 @@ export const errorHandlerPlugin = fp(
         request.id,
         'INTERNAL_ERROR',
         500,
-        config.isProduction ? 'Internal server error' : ((error as Error)?.message ?? 'Internal server error'),
+        config.isProduction
+          ? 'Internal server error'
+          : ((error as Error)?.message ?? 'Internal server error'),
       );
     });
   },

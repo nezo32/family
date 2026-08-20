@@ -444,7 +444,11 @@ export interface LoginResult {
  * email still pays the full argon2 cost (see `verifyPassword`), so neither
  * timing nor error code reveals whether the account exists.
  */
-export async function login(db: Db, input: LoginRequest, ctx: RequestContext): Promise<LoginResult> {
+export async function login(
+  db: Db,
+  input: LoginRequest,
+  ctx: RequestContext,
+): Promise<LoginResult> {
   const user = await repo.findUserByEmail(db, input.email);
   const ok = await verifyPassword(user?.passwordHash ?? null, input.password);
 

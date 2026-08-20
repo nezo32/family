@@ -195,9 +195,13 @@ export function drawCrop(
 
 function toBlobAsync(canvas: CanvasLike, type: string, quality: number): Promise<Blob | null> {
   return new Promise((resolve) => {
-    canvas.toBlob((blob) => {
-      resolve(blob);
-    }, type, quality);
+    canvas.toBlob(
+      (blob) => {
+        resolve(blob);
+      },
+      type,
+      quality,
+    );
   });
 }
 

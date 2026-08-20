@@ -2,15 +2,109 @@
 
 Two suites live in one Vitest run.
 
-| suite | needs | runs by default |
-|---|---|---|
-| **unit** — pure functions, fake repositories, `app.inject()` without a database | nothing | yes |
-| **integration** — the real app against a real Postgres and Redis | Docker | only when `TEST_DATABASE_URL` is set |
+| suite                                                                           | needs   | runs by default                      |
+| ------------------------------------------------------------------------------- | ------- | ------------------------------------ |
+| **unit** — pure functions, fake repositories, `app.inject()` without a database | nothing | yes                                  |
+| **integration** — the real app against a real Postgres and Redis                | Docker  | only when `TEST_DATABASE_URL` is set |
 
 Every DB-backed block is wrapped in `describe.skipIf(!process.env.TEST_DATABASE_URL)`,
 so `pnpm test` on a laptop with no Docker still passes — it just skips the
 integration half. Nothing is silently green: the skipped tests are reported as
 skipped.
+
+---
+
+## "Will CI pass?" — answered before pushing
+
+```bash
+make verify-ci          # or: pnpm run verify:ci, or: bash infra/scripts/verify-ci.sh
+```
+
+`infra/scripts/verify-ci.sh` runs **the same commands as
+`.github/workflows/ci.yml`, in its jobs' order**, against the working tree. It
+takes a few minutes and it answers "is the required `CI` check going to be
+green". There are two scripts and they are not the same gate:
+
+| script          | covers                                                                                                                                                                                               | when                                |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| `verify-ci.sh`  | seven of the eight CI jobs: shared build, `pnpm -r run lint`, `format:check`, `typecheck`, backend `test:cov` (with object storage), frontend `test:cov`, `vite build`, the service-worker assertion | before pushing                      |
+| `verify-all.sh` | the same ground plus the two things `verify-ci.sh` leaves out — the Playwright suite, which is CI's eighth job, and both Docker images at `--target build`, which are `docker.yml`'s                 | before calling a piece of work done |
+
+The eighth CI job is `e2e`, and `verify-ci.sh` does not run it: `verify-all.sh`
+already orchestrates a full stack and Playwright against it, and a second copy
+of that here would double this script's runtime for coverage that already
+exists. So — `verify-ci.sh` when you want to know quickly whether the push will
+go red, `verify-all.sh` when you are finishing a piece of work.
+
+### Run the CI command, not a local approximation of it
+
+The script exists because of a repeated failure shape: a gate that passes
+locally and fails in the place that counts. Three instances so far.
+
+1. A path alias `tsc` accepted and the container could not resolve
+   (`docs/CONVENTIONS.md` rule 6).
+2. `playwright.config.ts` importing from `e2e/`, which `.dockerignore` withholds
+   from the image build context (rule 7).
+3. **`eslint .` versus `eslint src`.** Every local gate — `verify-all.sh`
+   included — linted `src`. CI runs `pnpm -r run lint`, and each package's
+   `lint` script is `eslint .`, which also covers `eslint.config.js`,
+   `vitest.config.ts`, `drizzle.config.ts` and `e2e/`. `backend/eslint.config.js`
+   was a hard parsing error under `eslint .` for as long as it had existed, and
+   no local run could see it. It failed the `lint + format` job on every push.
+
+The cause of (3) is worth knowing, because it will recur the next time a `.js`
+file is added to a package whose ESLint config is type-aware. The backend preset
+is `recommendedTypeChecked` with `projectService: true`, so the parser demands a
+TypeScript program containing every file it lints. `backend/tsconfig.json` listed
+`eslint.config.js` in `include` — but `allowJs` is off, so a `.js` path in
+`include` is dropped from the program silently, and the project service then
+reports `was not found by the project service`. The fix is the `**/*.js` block at
+the end of `backend/eslint.config.js`, which drops type-aware linting for JS.
+That block must stay **after** the one that sets `projectService`: flat config is
+last-match-wins.
+
+### `format:check` and line endings
+
+`.prettierrc` sets `endOfLine: lf` and `.gitattributes` sets `* text=auto
+eol=lf`, so a CI checkout is always LF and the literal `pnpm run format:check` is
+right there. On a Windows working tree it is not: anything an editor or an agent
+wrote lands as CRLF and the literal command reports several hundred files. That
+number is noise, and treating it as noise is how **106 genuinely misformatted
+files** stayed invisible — including files that had been flagged and skipped over
+by three separate agents as "pre-existing deviations".
+
+`verify-ci.sh` therefore runs the check with `--end-of-line auto`. Because
+`text=auto` normalises to LF in the index, no file can reach CI with CRLF
+whatever the working tree holds — so ignoring line endings locally is the same
+check as CI's, with a platform artefact removed, not a weaker one. Pass
+`VERIFY_CI_STRICT_EOL=1` to run the literal command.
+
+To reproduce CI's view faithfully by hand instead, check out into a fresh
+directory, which yields LF:
+
+```bash
+git worktree add ../family-ci main --detach
+cd ../family-ci && pnpm install --frozen-lockfile
+```
+
+### What CI runs, and the one thing it does not
+
+`ci.yml` has eight jobs: `setup`, `lint`, `typecheck`, `test-backend`,
+`test-frontend`, `build-frontend`, `e2e`, and the `ci` aggregate that the branch
+protection rule points at. Every suite in this document runs in one of them.
+
+- **The backend suite runs whole.** The `test-backend` job provides Postgres,
+  Redis **and** a RustFS service container, so the object-storage suite is
+  exercised rather than skipped: 1040 tests, none skipped. See "Object storage".
+- **Playwright runs.** The `e2e` job builds the frontend, starts a real API and
+  a `vite preview` in front of it, and drives all 95 tests over both browser
+  projects. It is slower than the other jobs (~1 worker, 2 retries) and it is
+  part of the required check, on pull requests as well as pushes — a gate that
+  does not run where merges happen cannot stop anything.
+- **The Docker images are the exception.** They live in
+  `.github/workflows/docker.yml`, a separate workflow that runs on push to
+  `main` and builds both images in full. `verify-all.sh` builds their `build`
+  stage locally; `verify-ci.sh` does not.
 
 ---
 
@@ -83,8 +177,25 @@ TEST_DATABASE_URL=postgres://family:family@127.0.0.1:5432/family_test \
   npx vitest run
 ```
 
-With it set the run is 959 tests and nothing is skipped; without it, 945 and 14
-skips. `infra/scripts/verify-all.sh` always passes it.
+With it set the run is 1040 tests and nothing is skipped; without it, 1026 pass
+and 14 skip — one whole test file. `infra/scripts/verify-all.sh` always passes
+it.
+
+**CI runs it too.** The `test-backend` job in `.github/workflows/ci.yml` has a
+`rustfs` service container beside Postgres and Redis, and passes the same four
+`TEST_S3_*` variables, so a push exercises all 1040 tests. Before that service
+existed the job was green having run 1026 of them, with `s3.adapter.ts` at 17%
+coverage, `storage.service.ts` at 10% and `storage.repository.ts` at 5% — on the
+code path that handles user-uploaded files.
+
+RustFS rather than MinIO for a mechanical reason: a GitHub `services:` entry can
+pass environment variables and docker-create options but **never a `command:`**,
+and MinIO needs `server /data`. RustFS takes all of its configuration from the
+environment, needs no volume for a single job, and the suite creates its own
+bucket. The job also does a `curl` against the health endpoint before running
+the tests — a service container that is healthy on its own network but not
+reachable on the mapped port would otherwise put the suite straight back to
+skipping itself, silently, behind a green tick.
 
 ### Only one integration run at a time
 
@@ -154,6 +265,39 @@ Two things about that command are load-bearing:
   rather than fall back to sharing one account — the suite still runs, but the
   429 is telling you the backend was started without the factor.
 
+### It runs in CI, and one detail keeps it there
+
+`.github/workflows/ci.yml` has an `e2e` job that does exactly what the three
+commands above do: start the backing services, migrate, seed, `vite build`,
+start the API and a `vite preview` in front of it, then run the suite. It is a
+transcription of `infra/scripts/verify-all.sh`, and the two should be changed
+together rather than allowed to drift.
+
+Three things in that job are load-bearing, and all three are the lessons above
+written as YAML:
+
+- **It brings the services up with `docker compose -f
+infra/docker-compose.dev.yml`, not with a `services:` block.** `helpers.ts`
+  sweeps its debris by shelling out to `docker exec family-dev-postgres-1 psql
+-U family -d family`, and that container name is the one the dev compose
+  project produces. A GitHub service container is named by the runner and
+  cannot be renamed, so the sweep would die on "no such container". The
+  alternative — teaching `e2e/` to find the database some other way — is
+  editing the suite to suit CI, which is how a local gate and a CI gate start
+  drifting apart. **If you change how `helpers.ts` reaches the database, that
+  job changes with it.**
+- **`RATE_LIMIT_FACTOR=100`,** for the reason in the previous section.
+- **`NODE_ENV` is not set.** A job-level `NODE_ENV=development` reaches every
+  step, and `vite build` then emits the React development bundle — 940 KB
+  against 695 KB, measured — so the suite would be exercising a bundle no user
+  receives. `core/config.ts` already defaults NODE_ENV to `development`, which
+  is what keeps `RATE_LIMIT_FACTOR` from being forced back to 1, so the backend
+  needs nothing set either.
+
+The job uploads `playwright-report/` and `test-results/` as an artifact on every
+run, and tails the API log on failure — a failing spec is usually a failing
+request, and the reason for it is in the server log rather than in the trace.
+
 ### Two runs at once are fine — unlike the backend suite
 
 Where the integration suite refuses to start a second run (the advisory lock
@@ -169,7 +313,7 @@ so the `??=` in a worker, and the one in `helpers.ts`, only ever read the value
 back. Set `E2E_RUN_ID` yourself to pin a run (CI job id, say) or to make two
 invocations deliberately share an account.
 
-This matters because a *shared* account is where two runs collide. Refresh-token
+This matters because a _shared_ account is where two runs collide. Refresh-token
 reuse detection revokes a family the other run is still holding, and the
 per-account login throttle (8 attempts / 15 min, `login-throttle.ts`) counts both
 runs' sign-ins together. Both are correct behaviour; both surface as unrelated
@@ -265,7 +409,7 @@ another agent's fixtures out from under a live run, and both `users` and
 Six hours because these are inert: an extra `users` row slows nothing down and
 hides no data, so the cutoff is set for safety rather than tidiness.
 
-**Rows the specs write — thirty minutes.** These are *not* inert, and deleting the
+**Rows the specs write — thirty minutes.** These are _not_ inert, and deleting the
 account does not take them with it: the seeded family owns some of the same
 data, and a task created through the UI outlives its creator. The tasks list
 fetches `limit: 100`, so once ~125 `E2E дело` series had accumulated, the task
@@ -330,7 +474,7 @@ things:
    picked up automatically. The drizzle migration journal is preserved.
 2. Deletes the `rl:*` keys from Redis. `@fastify/rate-limit` keeps its counters
    there, and they survive both a truncate and a process restart — without this
-   the *second* run of the suite would hit the registration limit (5/hour) while
+   the _second_ run of the suite would hit the registration limit (5/hour) while
    building fixtures and fail for a reason unrelated to what it tests.
 
 Fixtures never depend on the dev seed or on any fixed id. `createOwner()`
@@ -348,17 +492,17 @@ from rebuilding the app.
 
 ## Where the tests live
 
-| file | covers |
-|---|---|
-| `src/test/db.ts` | test-database wiring, `truncateAll()` |
-| `src/test/harness.ts` | app lifecycle, `request()`, role fixtures |
+| file                                                      | covers                                                                                                                              |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `src/test/db.ts`                                          | test-database wiring, `truncateAll()`                                                                                               |
+| `src/test/harness.ts`                                     | app lifecycle, `request()`, role fixtures                                                                                           |
 | `src/modules/identity/auth-lifecycle.integration.test.ts` | register → approve → login → refresh → logout, concurrent approval, suspension, refresh rotation under concurrency, reuse detection |
-| `src/modules/identity/permissions.integration.test.ts` | the role matrix through the real router, 404-vs-403, escalation guards |
-| `src/modules/goals/money.integration.test.ts` | balance ≡ ledger sum, idempotent `clientId`, row-lock serialisation, bigint precision |
-| `src/modules/tasks/recurrence.integration.test.ts` | materialization, idempotency, completion counted once, `this_and_future` split, rotation fairness |
-| `src/modules/events/ics-feed.integration.test.ts` | ICS document validity, ETag/304, feed-token rotation and revocation |
-| `src/modules/notifications/fanout.integration.test.ts` | fan-out per preference, quiet-hours deferral, ack idempotency |
-| `src/core/queue/queues.integration.test.ts` | the BullMQ `jobId` contract |
+| `src/modules/identity/permissions.integration.test.ts`    | the role matrix through the real router, 404-vs-403, escalation guards                                                              |
+| `src/modules/goals/money.integration.test.ts`             | balance ≡ ledger sum, idempotent `clientId`, row-lock serialisation, bigint precision                                               |
+| `src/modules/tasks/recurrence.integration.test.ts`        | materialization, idempotency, completion counted once, `this_and_future` split, rotation fairness                                   |
+| `src/modules/events/ics-feed.integration.test.ts`         | ICS document validity, ETag/304, feed-token rotation and revocation                                                                 |
+| `src/modules/notifications/fanout.integration.test.ts`    | fan-out per preference, quiet-hours deferral, ack idempotency                                                                       |
+| `src/core/queue/queues.integration.test.ts`               | the BullMQ `jobId` contract                                                                                                         |
 
 Existing module suites (`*.test.ts`) also contain DB-gated blocks; they run
 under the same `TEST_DATABASE_URL`.

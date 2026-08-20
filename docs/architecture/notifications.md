@@ -1,6 +1,6 @@
 # Notifications — pipeline design
 
-Implements **D10**. Read `docs/DECISIONS.md` first; this note explains *how* the
+Implements **D10**. Read `docs/DECISIONS.md` first; this note explains _how_ the
 ratified decisions are built, not whether they are right.
 
 Owned files:
@@ -12,7 +12,7 @@ Owned files:
 > **The stake.** Notifications are the feature most likely to make the family
 > abandon the app. One push at 03:00 and a parent turns notifications off
 > forever — and they never turn them back on. Every rule below exists to make
-> that impossible: quiet hours *defer* rather than drop, dedupe keys make a
+> that impossible: quiet hours _defer_ rather than drop, dedupe keys make a
 > retried job silent, and a per-user hourly cap bounds the worst case even when
 > a feature misbehaves.
 
@@ -77,17 +77,17 @@ message is rendered from the payload, not from a fresh read.
 
 ## 2. Why intents and deliveries are two tables
 
-| | `notification_intents` | `notification_deliveries` |
-|---|---|---|
-| Cardinality | one per event | one per recipient × channel × device |
-| Meaning | *what happened* | *who was told, how, when, whether it worked* |
-| Idempotency | `dedupe_key` unique | retried in place (`attempt`, `last_error`) |
-| Lifetime | keep for history/debug | trimmed by the cleanup job |
+|             | `notification_intents` | `notification_deliveries`                    |
+| ----------- | ---------------------- | -------------------------------------------- |
+| Cardinality | one per event          | one per recipient × channel × device         |
+| Meaning     | _what happened_        | _who was told, how, when, whether it worked_ |
+| Idempotency | `dedupe_key` unique    | retried in place (`attempt`, `last_error`)   |
+| Lifetime    | keep for history/debug | trimmed by the cleanup job                   |
 
 Reasons they are not one table:
 
 1. **Idempotency has one natural home.** "Do not tell the family twice about the
-   same thing" is a statement about the *event*. With a single table the dedupe
+   same thing" is a statement about the _event_. With a single table the dedupe
    key would have to include the recipient and the channel, and a fan-out that
    grew a new recipient would double-notify everyone else.
 2. **Fan-out is not knowable at emit time.** Recipients depend on the RBAC
@@ -117,7 +117,7 @@ case (a child sleeps at 21:00, an adult at 00:30).
    dropped — a child never gets `member_pending_approval`, and a teen never gets
    a `goal_contribution` for a goal they cannot see. This filter runs against the
    RBAC catalog in `@family/shared`, so it cannot drift from the API guards. The
-   role overrides in `NOTIFICATION_PREFERENCE_ROLE_OVERRIDES` are *UI defaults*
+   role overrides in `NOTIFICATION_PREFERENCE_ROLE_OVERRIDES` are _UI defaults_
    only; this step is the enforcement.
 3. **Status filter.** Only `status = 'active'` users. A `pending_approval` or
    `suspended` user gets nothing.
@@ -148,7 +148,7 @@ Resolution follows the D2 time model — the window is wall clock in the
 recipient's timezone (`users.timezone`, falling back to
 `family_settings.timezone`), converted to a UTC instant with Temporal at
 evaluation time. Never hardcode an offset; a family member in another timezone
-must get *their* quiet hours, not Moscow's.
+must get _their_ quiet hours, not Moscow's.
 
 ```
 now inside a window?
@@ -164,7 +164,7 @@ now inside a window?
 mode that is offered prominently; `silence` exists for the user who would rather
 miss the ping than get it late, and even then the inbox row is written.
 
-Overlapping windows compose: a delivery is quiet if it falls inside *any* window,
+Overlapping windows compose: a delivery is quiet if it falls inside _any_ window,
 and the deferral target is the end of the **latest** window it is currently
 inside, so `22:00–07:00` plus `13:00–15:00` does not release a message into a
 second quiet window.
@@ -182,16 +182,16 @@ Redis is already a dependency (`ioredis`, `bullmq`). Three queues, one worker
 process (`backend/src/worker.ts`), started separately from the API so a wedged
 push never blocks HTTP.
 
-| Queue | Job name | Trigger | What it does |
-|---|---|---|---|
-| `notifications` | `fanout` | after an intent commits | intent → delivery rows (§3, §4) |
-| `notifications` | `dispatch` | after fan-out, and by `sweep` | sends one delivery row via its channel adapter |
-| `notifications` | `sweep` | repeatable, every 60 s | picks up `status='scheduled' AND scheduled_for <= now()` and enqueues `dispatch` |
-| `notifications` | `escalate` | repeatable, every 5 min | evaluates `escalation_policies` (§7) |
-| `notifications` | `digest` | repeatable, every 15 min | finds due `digest_subscriptions` rows, builds and emits the weekly digest intent |
-| `maintenance` | `subscription-health` | repeatable, daily 04:00 | silent ping to every push subscription (§6) |
-| `maintenance` | `cleanup` | repeatable, daily 04:30 | prunes expired subscriptions, deliveries older than 90 days, intents with no deliveries |
-| `maintenance` | `vapid-check` | on boot | fails fast if the VAPID keypair is missing or malformed |
+| Queue           | Job name              | Trigger                       | What it does                                                                            |
+| --------------- | --------------------- | ----------------------------- | --------------------------------------------------------------------------------------- |
+| `notifications` | `fanout`              | after an intent commits       | intent → delivery rows (§3, §4)                                                         |
+| `notifications` | `dispatch`            | after fan-out, and by `sweep` | sends one delivery row via its channel adapter                                          |
+| `notifications` | `sweep`               | repeatable, every 60 s        | picks up `status='scheduled' AND scheduled_for <= now()` and enqueues `dispatch`        |
+| `notifications` | `escalate`            | repeatable, every 5 min       | evaluates `escalation_policies` (§7)                                                    |
+| `notifications` | `digest`              | repeatable, every 15 min      | finds due `digest_subscriptions` rows, builds and emits the weekly digest intent        |
+| `maintenance`   | `subscription-health` | repeatable, daily 04:00       | silent ping to every push subscription (§6)                                             |
+| `maintenance`   | `cleanup`             | repeatable, daily 04:30       | prunes expired subscriptions, deliveries older than 90 days, intents with no deliveries |
+| `maintenance`   | `vapid-check`         | on boot                       | fails fast if the VAPID keypair is missing or malformed                                 |
 
 Job options:
 
@@ -256,16 +256,16 @@ about the same thing replaces the previous banner rather than stacking.
 Web Push **only to a PWA installed on the Home Screen** (iOS 16.4+), and
 `Notification.requestPermission()` must be called from a **user gesture**. So:
 
-- Never request permission on first load. Ask at a *meaningful* moment — right
+- Never request permission on first load. Ask at a _meaningful_ moment — right
   after the user accepts their first task, or from Settings → Уведомления.
 - Detect the installed state (`display-mode: standalone` / `navigator.standalone`)
   and store it in `push_subscriptions.is_standalone`. On iOS without it, show
   the "Добавить на экран «Домой»" instructions instead of a permission button
   that cannot work.
 - iOS silently drops the permission when the PWA is removed and re-added, and
-  the subscription is *not* revoked server-side.
+  the subscription is _not_ revoked server-side.
 - The user gesture requirement means no `await` may run before
-  `requestPermission()` in the click handler — fetch the VAPID key *before* the
+  `requestPermission()` in the click handler — fetch the VAPID key _before_ the
   button is clickable, not inside the handler.
 
 ### 6.1 Subscription health-check
@@ -336,24 +336,24 @@ escalate sweep (every 5 min):
 Every route requires an authenticated session. Personal routes are guarded by
 `notification:manage:own`; there is no `public: true` route in this module.
 
-| Method | Path | Guard | Body / query | Response |
-|---|---|---|---|---|
-| `GET` | `/api/notifications` | session | `cursor`, `limit`, `unreadOnly` | `paginated(inAppNotificationSchema)` |
-| `GET` | `/api/notifications/unread-count` | session | — | `unreadCountSchema` |
-| `POST` | `/api/notifications/read` | session | `markReadRequestSchema` | `okSchema` |
-| `GET` | `/api/notifications/preferences` | `notification:manage:own` | — | `preferencesResponseSchema` |
-| `PUT` | `/api/notifications/preferences` | `notification:manage:own` | `updatePreferencesRequestSchema` | `preferencesResponseSchema` |
-| `PUT` | `/api/notifications/quiet-hours` | `notification:manage:own` | `updateQuietHoursRequestSchema` | `quietHoursSchema[]` |
-| `GET` | `/api/notifications/vapid-public-key` | session | — | `vapidPublicKeySchema` |
-| `GET` | `/api/notifications/subscriptions` | `notification:manage:own` | — | `pushSubscriptionSummarySchema[]` |
-| `POST` | `/api/notifications/subscriptions` | `notification:manage:own` | `pushSubscriptionRequestSchema` | `pushSubscriptionSummarySchema` |
-| `POST` | `/api/notifications/subscriptions/ack` | `notification:manage:own` | `{ endpoint }` | `okSchema` |
-| `DELETE` | `/api/notifications/subscriptions` | `notification:manage:own` | `pushUnsubscribeRequestSchema` | `okSchema` |
-| `POST` | `/api/notifications/test` | `notification:manage:own` | `notificationTestRequestSchema` | `notificationTestResponseSchema` |
-| `GET` | `/api/notifications/digest` | `notification:manage:own` | — | `digestSubscriptionSchema` |
-| `PUT` | `/api/notifications/digest` | `notification:manage:own` | `digestSubscriptionSchema` | `digestSubscriptionSchema` |
-| `GET` | `/api/notifications/telegram` | `notification:manage:own` | — | link status |
-| `DELETE` | `/api/notifications/telegram` | `notification:manage:own` | — | `okSchema` |
+| Method   | Path                                   | Guard                     | Body / query                     | Response                             |
+| -------- | -------------------------------------- | ------------------------- | -------------------------------- | ------------------------------------ |
+| `GET`    | `/api/notifications`                   | session                   | `cursor`, `limit`, `unreadOnly`  | `paginated(inAppNotificationSchema)` |
+| `GET`    | `/api/notifications/unread-count`      | session                   | —                                | `unreadCountSchema`                  |
+| `POST`   | `/api/notifications/read`              | session                   | `markReadRequestSchema`          | `okSchema`                           |
+| `GET`    | `/api/notifications/preferences`       | `notification:manage:own` | —                                | `preferencesResponseSchema`          |
+| `PUT`    | `/api/notifications/preferences`       | `notification:manage:own` | `updatePreferencesRequestSchema` | `preferencesResponseSchema`          |
+| `PUT`    | `/api/notifications/quiet-hours`       | `notification:manage:own` | `updateQuietHoursRequestSchema`  | `quietHoursSchema[]`                 |
+| `GET`    | `/api/notifications/vapid-public-key`  | session                   | —                                | `vapidPublicKeySchema`               |
+| `GET`    | `/api/notifications/subscriptions`     | `notification:manage:own` | —                                | `pushSubscriptionSummarySchema[]`    |
+| `POST`   | `/api/notifications/subscriptions`     | `notification:manage:own` | `pushSubscriptionRequestSchema`  | `pushSubscriptionSummarySchema`      |
+| `POST`   | `/api/notifications/subscriptions/ack` | `notification:manage:own` | `{ endpoint }`                   | `okSchema`                           |
+| `DELETE` | `/api/notifications/subscriptions`     | `notification:manage:own` | `pushUnsubscribeRequestSchema`   | `okSchema`                           |
+| `POST`   | `/api/notifications/test`              | `notification:manage:own` | `notificationTestRequestSchema`  | `notificationTestResponseSchema`     |
+| `GET`    | `/api/notifications/digest`            | `notification:manage:own` | —                                | `digestSubscriptionSchema`           |
+| `PUT`    | `/api/notifications/digest`            | `notification:manage:own` | `digestSubscriptionSchema`       | `digestSubscriptionSchema`           |
+| `GET`    | `/api/notifications/telegram`          | `notification:manage:own` | —                                | link status                          |
+| `DELETE` | `/api/notifications/telegram`          | `notification:manage:own` | —                                | `okSchema`                           |
 
 Notes:
 

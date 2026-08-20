@@ -1,66 +1,91 @@
 import type { ReactionSummary } from '@family/shared';
 
 /**
- * Russian strings for the family wall.
+ * Russian strings for the family board.
  *
  * Tone rules for anything added here (they are the whole point of this
- * section): warm, first-person-plural, never corporate, never comparative.
- * "Спасибо получили" — not "Рейтинг участников". The wall is the one screen
- * people open because they want to, not because something is due.
+ * section): warm, «вы», never corporate, never comparative. The board is the
+ * one screen people open because they want to, not because something is due.
+ *
+ * ## The vocabulary is deliberately a *board's*, not a *feed's*
+ *
+ * «Лента», «Опубликовать», «Отправить», «Показать ещё» are the words of a
+ * timeline, and a timeline with a text field at the bottom is a chat. The
+ * family already has one. So the nouns here are the nouns of the note surface
+ * by the front door: «доска», «повесить», «закреплено», «решаем вместе» — and
+ * the one verb that starts everything is «написать», which is what you do with
+ * a note, not with a message.
  */
 export const WALL_RU = {
   title: 'Стена',
-  description: 'Объявления, благодарности и общие решения.',
+  description: 'Доска дома: объявления, общие решения и спасибо.',
 
-  tabs: {
-    feed: 'Лента',
-    polls: 'Опросы',
-    kudos: 'Спасибо',
-  },
-
-  /* ------------------------------- feed --------------------------------- */
-  feed: {
-    pinnedSection: 'Закреплено',
-    empty: 'Здесь пока тихо',
-    emptyDescription: 'Напишите первое объявление — его увидит вся семья.',
-    loadMore: 'Показать ещё',
-    loadingMore: 'Загружаем…',
+  /* -------------------------------- board -------------------------------- */
+  board: {
+    /** The stream section's label — everything that is not asking for you. */
+    label: 'На доске',
+    /** Band 2, when open polls take it. */
+    pollsLabel: 'Решаем вместе',
+    /** Band 2 or a quiet section, depending on what won the wash (§C2). */
+    pinnedLabel: 'Закреплено',
+    decidedLabel: 'Что решили',
+    empty: 'На доске пусто',
+    emptyDescription: 'Повесьте первую записку — её увидят все дома.',
+    /** A reader who may not write anything. Guests see the board, not a lie. */
+    emptyReadOnly: 'Когда кто-нибудь что-то напишет, это появится здесь.',
+    more: 'Что было раньше',
+    loadingMore: 'Смотрим…',
     end: 'Это всё, что было',
     systemAuthor: 'Семейный бот',
     unknownAuthor: 'Участник',
-    activityLabel: 'Событие в семье',
+    loadError: 'Не удалось открыть доску',
+  },
+
+  /* ------------------------------- compose ------------------------------- */
+  /**
+   * The one door (§D7). Three kinds of note, one button, one place — which is
+   * what lets every panel on this screen be stateless and therefore live
+   * wherever the layout wants it.
+   */
+  compose: {
+    open: 'Написать',
+    menuTitle: 'Что повесим на доску?',
+    menuDescription: 'Объявление, опрос или спасибо.',
+    post: 'Объявление',
+    postHint: 'Новость, о которой надо знать всем дома',
+    poll: 'Опрос',
+    pollHint: 'Спросить семью и решить вместе',
+    kudos: 'Спасибо',
+    kudosHint: 'Сказать спасибо кому-то из своих',
   },
 
   /* ---------------------------- announcements ---------------------------- */
   post: {
-    compose: 'Написать',
     composeTitle: 'Новое объявление',
     composeDescription: 'Коротко и по-человечески — это увидят все дома.',
     fieldTitle: 'Заголовок',
     fieldTitlePlaceholder: 'Необязательно',
     fieldBody: 'Текст',
     fieldBodyPlaceholder: 'Например: в субботу едем к бабушке, выезжаем в 10:00',
-    publish: 'Опубликовать',
-    publishing: 'Публикуем…',
-    published: 'Объявление опубликовано',
+    publish: 'Повесить',
+    published: 'Объявление на доске',
     pinned: 'Закреплено',
     pinnedUntil: (until: string) => `Закреплено до ${until}`,
     pin: 'Закрепить',
     unpin: 'Открепить',
-    pinFor: 'Закрепить на',
+    pinFor: 'Держать наверху',
+    pinNone: 'не закреплять',
     pinDay: 'день',
     pinThreeDays: '3 дня',
     pinWeek: 'неделю',
-    pinNone: 'не закреплять',
     pinnedToast: 'Закрепили наверху',
     unpinnedToast: 'Убрали из закреплённых',
-    delete: 'Удалить объявление',
+    delete: 'Снять с доски',
     /** Screen-reader name of the row's action sheet (§G5). */
     menuTitle: 'Действия с объявлением',
-    deleteConfirmTitle: 'Удалить объявление?',
-    deleteConfirmDescription: 'Оно исчезнет из ленты у всех. Отменить не получится.',
-    deleted: 'Объявление удалено',
-    edited: 'изменено',
+    deleteConfirmTitle: 'Снять объявление с доски?',
+    deleteConfirmDescription: 'Оно исчезнет у всех. Вернуть не получится.',
+    deleted: 'Сняли с доски',
     more: 'ещё',
     less: 'свернуть',
   },
@@ -68,21 +93,19 @@ export const WALL_RU = {
   /* ------------------------------ comments ------------------------------- */
   comments: {
     toggle: 'Обсудить',
-    count: (n: number) => `Комментарии (${String(n)})`,
+    count: (n: number) => `Обсуждение · ${String(n)}`,
     empty: 'Пока никто не ответил.',
-    placeholder: 'Написать…',
-    send: 'Отправить',
+    placeholder: 'Что скажете?',
+    send: 'Ответить',
     sending: 'Отправляем…',
     deleteConfirmTitle: 'Удалить комментарий?',
     deleteConfirmDescription: 'Он пропадёт у всех участников.',
     deleted: 'Комментарий удалён',
-    loadOlder: 'Показать ещё',
-    failed: 'Не отправилось',
+    loadOlder: 'Что было раньше',
   },
 
   /* ----------------------------- reactions ------------------------------- */
   reactions: {
-    add: 'Реакция',
     addAria: 'Добавить реакцию',
     you: 'Вы',
     youAndOthers: (others: number) => `Вы и ещё ${String(others)}`,
@@ -102,23 +125,21 @@ export const WALL_RU = {
     message: 'За что',
     messagePlaceholder: 'Например: спасибо, что забрал Лизу из школы',
     emoji: 'Значок',
-    send: 'Отправить спасибо',
-    sending: 'Отправляем…',
+    send: 'Сказать спасибо',
     sent: 'Спасибо отправлено',
     /**
      * No count, deliberately. A per-person total that grows is a scoreboard
      * whatever the heading says (D5) — «Спасибо» is the one screen that exists
      * to make people feel good, and a smaller number beside a bigger one
      * teaches a child they are losing. The chip says *whether* somebody was
-     * thanked this month, and nothing more.
+     * thanked this month, and nothing more. This applies to the accessible
+     * name too: the chip's text **is** its label, so a screen reader hears the
+     * same two words the sighted reader does.
      */
     receivedSome: 'спасибо есть',
     receivedNone: 'пока без спасибо',
-    totalsTitle: 'Спасибо за последний месяц',
-    totalsHint: 'Показываем всех — по алфавиту, без счёта, без мест и рейтингов.',
-    recentTitle: 'Последние',
-    empty: 'Пока никто никого не благодарил.',
-    emptyDescription: 'Самое время начать.',
+    hint: 'Все, по алфавиту. Без счёта, без мест, без рейтингов.',
+    nobodyYet: 'В этом месяце ещё никто никого не благодарил.',
   },
 
   /* ------------------------------- polls --------------------------------- */
@@ -134,30 +155,32 @@ export const WALL_RU = {
     addOption: 'Добавить вариант',
     removeOption: 'Убрать вариант',
     allowMultiple: 'Можно выбрать несколько',
-    closesAt: 'Голосуем до',
-    closesAtHint: 'Необязательно. После этого времени опрос покажет результат.',
+    closes: 'Ждём ответы',
+    closesNever: 'сколько нужно',
+    closesDay: 'сутки',
+    closesThreeDays: '3 дня',
+    closesWeek: 'неделю',
     publish: 'Спросить',
-    published: 'Опрос опубликован',
-    vote: 'Голосовать',
+    published: 'Опрос на доске',
+    vote: 'Ответить',
     voting: 'Считаем…',
-    voted: 'Ваш голос учтён',
-    changeVote: 'Изменить ответ',
+    /** The one line that makes band 2 a question and not a card. */
+    needsYou: 'Вас спрашивают',
+    answered: 'Вы ответили',
+    closedBadge: 'Завершён',
     yourChoice: 'ваш выбор',
-    open: 'Идёт голосование',
-    closed: 'Голосование завершено',
     closesIn: (when: string) => `до ${when}`,
     closedAlready: 'Опрос уже завершён — вот результат.',
     close: 'Завершить',
     closeConfirmTitle: 'Завершить опрос?',
     closeConfirmDescription: 'Голоса больше принимать не будем. Вернуть нельзя.',
-    closed_: 'Опрос завершён',
-    totalVoters: (n: number) => `Проголосовали: ${String(n)}`,
-    noVotesYet: 'Пока никто не проголосовал',
-    empty: 'Опросов пока нет',
-    emptyDescription: 'Спросите семью о чём-нибудь — это быстрее, чем переписка.',
-    filterAll: 'Все',
-    filterOpen: 'Открытые',
-    filterClosed: 'Завершённые',
+    closedToast: 'Опрос завершён',
+    /** Who has answered so far — discs, never a tally beside a name. */
+    answeredBy: 'Ответили',
+    noVotesYet: 'Пока никто не ответил',
+    /** «Что решили» rows: the option that got the most answers. */
+    decidedOn: (label: string) => `Решили: ${label}`,
+    decidedTie: 'Без явного большинства',
     resultShare: (percent: number) => `${String(percent)}%`,
   },
 } as const;

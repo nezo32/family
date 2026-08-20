@@ -1,5 +1,3 @@
-
-
 import { getDb, type Db } from '../../core/db.js';
 import { logger } from '../../core/logger.js';
 import { registerJobHandler } from '../../core/queue/workers.js';
@@ -47,7 +45,6 @@ export const CHORE_JOBS = {
 } as const;
 
 export type ChoreJobName = (typeof CHORE_JOBS)[keyof typeof CHORE_JOBS];
-
 
 let registered = false;
 

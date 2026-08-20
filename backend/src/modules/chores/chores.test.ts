@@ -447,7 +447,9 @@ describe('swaps', () => {
       accept: true,
     });
     await expect(
-      svc.swaps.respond(actor(ADULT, ['task:assign:any', 'chore:swap:accept']), swap.id, { accept: true }),
+      svc.swaps.respond(actor(ADULT, ['task:assign:any', 'chore:swap:accept']), swap.id, {
+        accept: true,
+      }),
     ).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 

@@ -67,7 +67,17 @@ import { WALL_RU } from './locale';
  * and handed straight back; nothing in this file constructs one.
  */
 
-const FEED_PAGE_SIZE = 20;
+/**
+ * Twelve, not twenty — and the board never auto-loads the next page (§D7).
+ *
+ * A board is finite; an infinite scroll is a feed, and everything the shell
+ * puts *after* the main column (the side column, which collapses to the bottom
+ * of the page on a phone) is unreachable in practice under an unbounded one.
+ * Twelve notes is roughly 1.5 phone viewports, which is §C5's density target
+ * for a list screen, so «Спасибо» sits one flick below the board rather than
+ * behind a scroll that never ends.
+ */
+const FEED_PAGE_SIZE = 12;
 const COMMENT_PAGE_SIZE = 30;
 const KUDOS_WINDOW_DAYS = 30;
 
@@ -458,6 +468,60 @@ export function applyVote(
   };
 }
 
+/**
+ * Has the reader answered this poll?
+ *
+ * This is the predicate that decides what the board shouts about (§D7): an
+ * unanswered open poll is the one thing on Стена that is genuinely addressed to
+ * *you*, and it is what takes the attention wash. Once you have answered, the
+ * same poll stays on the board and stops being loud.
+ */
+export function isAnsweredByMe(poll: PollResponse): boolean {
+  return poll.myOptionIds.length > 0;
+}
+
+/**
+ * Everyone who has answered, once each, in option order.
+ *
+ * Rendered as member discs rather than as «Проголосовали: 3». The discs say the
+ * useful thing — whom the family is still waiting on — without printing a
+ * number beside anybody's name, and a poll is a decision, not a tally of
+ * people.
+ */
+export function votersOf(poll: PollResponse): string[] {
+  const seen = new Set<string>();
+  for (const option of poll.options) {
+    for (const id of option.voterIds) seen.add(id);
+  }
+  return [...seen];
+}
+
+/**
+ * What the family decided: the option with the most answers, or `null` when two
+ * options tie at the top.
+ *
+ * A tie is reported as a tie rather than resolved by array order — «Решили: на
+ * дачу» when half the family said «в город» is the kind of quiet lie a family
+ * app cannot afford.
+ */
+export function decidedOption(poll: PollResponse): { label: string; share: number } | null {
+  let best: { label: string; voteCount: number } | null = null;
+  let tied = false;
+  for (const option of poll.options) {
+    if (!best || option.voteCount > best.voteCount) {
+      best = { label: option.label, voteCount: option.voteCount };
+      tied = false;
+    } else if (option.voteCount === best.voteCount) {
+      tied = true;
+    }
+  }
+  if (!best || tied || best.voteCount === 0) return null;
+  return {
+    label: best.label,
+    share: Math.round((best.voteCount / Math.max(1, poll.totalVoters)) * 100),
+  };
+}
+
 interface PollsSnapshot {
   previous: [QueryKey, InfiniteData<PollListResponse> | undefined][];
 }
@@ -537,7 +601,7 @@ export function useClosePoll(): UseMutationResult<PollResponse, Error, string> {
   return useMutation({
     mutationFn: (id: string) => closePoll(id),
     onSuccess: (poll) => {
-      notify.success(WALL_RU.polls.closed_);
+      notify.success(WALL_RU.polls.closedToast);
       patchPollCaches(queryClient, poll.id, () => poll);
       void queryClient.invalidateQueries({ queryKey: POLLS_ROOT });
     },
@@ -611,7 +675,9 @@ export function useRoster(): Roster {
       byId,
       members,
       nameOf: (id) =>
-        id ? (byId.get(id)?.displayName ?? WALL_RU.feed.unknownAuthor) : WALL_RU.feed.systemAuthor,
+        id
+          ? (byId.get(id)?.displayName ?? WALL_RU.board.unknownAuthor)
+          : WALL_RU.board.systemAuthor,
     };
   }, [query.data]);
 }

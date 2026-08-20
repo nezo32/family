@@ -27,7 +27,6 @@ import { assertClean, watch } from './helpers';
  * see `core/config.ts` for why that is a harness problem and not a product one.
  */
 
-
 /** Every navigable route, with what proves it rendered. */
 const ROUTES: Array<{ path: string; expect: RegExp; name: string }> = [
   { path: '/', expect: /Сегодня|Доброе|Добрый/i, name: 'today' },
@@ -36,14 +35,16 @@ const ROUTES: Array<{ path: string; expect: RegExp; name: string }> = [
   { path: '/goals', expect: /Копилк|Цел/i, name: 'goals' },
   { path: '/shopping', expect: /Покупк|Список/i, name: 'shopping' },
   // Стена has no visible page heading at any width — the title is hoisted into
-  // the app bar (§C4), and «Лента» was only ever a tab label, which the
-  // two-column composition does not have (§D7: feed in the main column,
-  // «Спасибо» and «Опросы» in the side one). These two words are the screen's
-  // own vocabulary, they appear nowhere else in the app, and they render at
-  // **both** widths — as tab labels below 1088px and as the side column's
-  // panels above it. Two of them rather than one so a copy tweak to either
-  // cannot silently stop the check proving anything.
-  { path: '/wall', expect: /Спасибо|Опрос/i, name: 'wall' },
+  // the app bar (§C4) — and it has no tabs any more: §D7's board renders one
+  // tree at every width, so «Опрос» is now absent whenever no poll is open.
+  // These two phrases are the board's own vocabulary, they appear nowhere else
+  // in the app, and each of them renders at **every** width and in **every**
+  // data state: «Спасибо» is the side-column panel (beside the board above
+  // 1088px, at the foot of it below), and «На доске» is either the stream's
+  // section label or the empty state's «На доске пусто». Two of them rather
+  // than one so a copy tweak to either cannot silently stop the check proving
+  // anything.
+  { path: '/wall', expect: /Спасибо|На доске/i, name: 'wall' },
   { path: '/family', expect: /Семья|Участник/i, name: 'family' },
   { path: '/settings', expect: /Настройк/i, name: 'settings' },
   { path: '/settings/profile', expect: /Профиль|Имя/i, name: 'settings/profile' },
@@ -86,13 +87,40 @@ test.describe('layout holds at phone width', () => {
 });
 
 test.describe('forms and modals open', () => {
-  const FLOWS: Array<{ name: string; path: string; open: RegExp; expect: RegExp }> = [
-    { name: 'new task', path: '/tasks', open: /Новое дело|Новая задача|Добавить/i, expect: /Название|Что нужно сделать/i },
+  /**
+   * `via` is a second click between the trigger and the form — Стена's one door
+   * opens «Что повесим на доску?» first, because the board takes three kinds of
+   * note and they are pinned up by the same button (§D7). Without it this test
+   * would look for a text field inside a menu.
+   */
+  const FLOWS: Array<{ name: string; path: string; open: RegExp; via?: RegExp; expect: RegExp }> = [
+    {
+      name: 'new task',
+      path: '/tasks',
+      open: /Новое дело|Новая задача|Добавить/i,
+      expect: /Название|Что нужно сделать/i,
+    },
     // The calendar's action uses the short label «Событие», not «Новое событие».
     { name: 'new event', path: '/calendar', open: /^Событие$|Новое событие/i, expect: /Название/i },
-    { name: 'new goal', path: '/goals', open: /Новая цель|Новая копилка|Добавить/i, expect: /Название|Цель/i },
-    { name: 'new list', path: '/shopping', open: /Новый список|Добавить список/i, expect: /Название/i },
-    { name: 'new post', path: '/wall', open: /Написать|Объявление|Добавить/i, expect: /Текст|Сообщение|Заголовок/i },
+    {
+      name: 'new goal',
+      path: '/goals',
+      open: /Новая цель|Новая копилка|Добавить/i,
+      expect: /Название|Цель/i,
+    },
+    {
+      name: 'new list',
+      path: '/shopping',
+      open: /Новый список|Добавить список/i,
+      expect: /Название/i,
+    },
+    {
+      name: 'new post',
+      path: '/wall',
+      open: /^Написать$/,
+      via: /^Объявление/,
+      expect: /Текст|Сообщение|Заголовок/i,
+    },
   ];
 
   for (const flow of FLOWS) {
@@ -110,6 +138,18 @@ test.describe('forms and modals open', () => {
       });
       await trigger.click();
 
+      if (flow.via) {
+        const step = page.getByRole('button', { name: flow.via }).first();
+        await expect(step, `no ${String(flow.via)} step on ${flow.path}`).toBeVisible({
+          timeout: 10_000,
+        });
+        await step.click();
+        // Wait for the menu to go before asking for `role=dialog`: both
+        // surfaces are dialogs, and two of them on screen at once is a strict
+        // mode violation rather than a flake.
+        await expect(step).toBeHidden({ timeout: 5_000 });
+      }
+
       const dialog = page.getByRole('dialog');
       await expect(dialog).toBeVisible({ timeout: 10_000 });
 
@@ -125,7 +165,9 @@ test.describe('forms and modals open', () => {
 
       // The submit control must be reachable without hunting: it is the single
       // most common complaint about long forms on a phone.
-      const submit = dialog.getByRole('button', { name: /Создать|Сохранить|Опубликовать/i }).first();
+      const submit = dialog
+        .getByRole('button', { name: /Создать|Сохранить|Опубликовать|Повесить/i })
+        .first();
       await expect(submit).toBeVisible();
 
       await page.keyboard.press('Escape');
@@ -154,5 +196,50 @@ test.describe('modals respect the safe area', () => {
     const box = await dialog.boundingBox();
     expect(box, 'dialog has no box').not.toBeNull();
     expect(box!.y, 'dialog starts above the viewport top').toBeGreaterThanOrEqual(0);
+  });
+});
+
+test.describe('push diagnostics degrade rather than break', () => {
+  // iPhone 15 CSS metrics. The whole notification surface is designed for this
+  // width and for a thumb, and the diagnostics card is the one screen a
+  // non-technical person is asked to read out loud over the phone.
+  test.use({ viewport: { width: 393, height: 852 } });
+
+  test('the diagnostics card renders and names the missing preconditions', async ({ page }) => {
+    const problems = watch(page);
+
+    await page.goto('/settings/notifications');
+
+    // Headless Chromium has no `Notification`, no `PushManager` and, over the
+    // preview server, no usable service worker. That is exactly the shape of a
+    // Safari tab on iOS — the card must report it, not throw. A crash here is
+    // the failure this whole screen exists to prevent, since it would crash on
+    // the one device that needs it.
+    const card = page.getByTestId('push-diagnostics');
+    await expect(card).toBeVisible({ timeout: 15_000 });
+
+    // A verdict is always rendered, whatever the environment.
+    await expect(page.getByTestId('push-diagnostics-verdict')).toBeVisible({ timeout: 15_000 });
+
+    // And the copy control is reachable in one tap, at thumb size.
+    const copy = page.getByTestId('push-diagnostics-copy');
+    await expect(copy).toBeVisible();
+    const box = await copy.boundingBox();
+    expect(box, 'copy button has no box').not.toBeNull();
+    expect(box!.height, 'copy button is below the 44px touch target').toBeGreaterThanOrEqual(44);
+
+    assertClean(problems, 'push diagnostics');
+  });
+
+  test('the notifications screen does not scroll sideways at iPhone width', async ({ page }) => {
+    await page.goto('/settings/notifications');
+    await expect(page.getByTestId('push-diagnostics')).toBeVisible({ timeout: 15_000 });
+
+    // The diagnostics rows carry a User-Agent string and a service-worker
+    // scope — the two longest unbroken tokens in the app. They must wrap.
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow, `notifications overflows by ${overflow}px`).toBeLessThanOrEqual(0);
   });
 });

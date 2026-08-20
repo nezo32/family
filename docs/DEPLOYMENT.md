@@ -77,6 +77,7 @@ each person — treat a rotation as a migration, not a config tweak.
 
    `Bot domain invalid` means unregistered or registered to a different domain;
    an HTML page means it is set correctly.
+
 3. **Client Secret — open @BotFather _as a mini app_, not as a chat.** Tap the
    menu/attachment button on the @BotFather chat to launch the mini app, select
    the bot, then select **Login Widget**. That screen is the only place the
@@ -105,7 +106,7 @@ each person — treat a rotation as a migration, not a config tweak.
    ```
 
    The origin alone is not enough. Telegram happily serves the consent page for
-   an **unregistered `redirect_uri`** and only rejects it *after* the user taps
+   an **unregistered `redirect_uri`** and only rejects it _after_ the user taps
    «Accept», so the symptom is a login that looks fine right up until the last
    step. Register the redirect URI byte-for-byte as the app sends it — scheme,
    host and path all exactly as above, no trailing slash. If you change
@@ -135,31 +136,34 @@ configuration is injected at runtime.
 ## 3. GitHub configuration
 
 ### 3.1 Repository **secrets**
+
 `Settings → Secrets and variables → Actions → Secrets`
 
-| Name | Value |
-|---|---|
-| `DEPLOY_SSH_KEY` | Private key that may SSH to the VDI (see §4.2). Paste the whole file including the BEGIN/END lines. |
+| Name                     | Value                                                                                                          |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `DEPLOY_SSH_KEY`         | Private key that may SSH to the VDI (see §4.2). Paste the whole file including the BEGIN/END lines.            |
 | `DEPLOY_SSH_KNOWN_HOSTS` | Output of `ssh-keyscan -H 193.124.180.31`. Without it the workflow falls back to trust-on-first-use and warns. |
 
 ### 3.2 Repository **variables**
+
 `Settings → Secrets and variables → Actions → Variables`
 
-| Name | Value |
-|---|---|
-| `DEPLOY_HOST` | `193.124.180.31` |
-| `DEPLOY_USER` | `deploy` (or `root` — see §4.2) |
-| `DEPLOY_PATH` | `/opt/family` |
-| `DEPLOY_PORT` | `22` |
-| `APP_DOMAIN` | `nezo.su` |
-| `VITE_API_URL` | **leave empty** — API and app share one origin. Setting `/api` here produces `/api/api/...` and breaks every screen. |
-| `VITE_VAPID_PUBLIC_KEY` | the public half from `gen:vapid` |
-| `VITE_TELEGRAM_BOT_USERNAME` | your bot username, no `@` |
+| Name                         | Value                                                                                                                |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `DEPLOY_HOST`                | `193.124.180.31`                                                                                                     |
+| `DEPLOY_USER`                | `deploy` (or `root` — see §4.2)                                                                                      |
+| `DEPLOY_PATH`                | `/opt/family`                                                                                                        |
+| `DEPLOY_PORT`                | `22`                                                                                                                 |
+| `APP_DOMAIN`                 | `nezo.su`                                                                                                            |
+| `VITE_API_URL`               | **leave empty** — API and app share one origin. Setting `/api` here produces `/api/api/...` and breaks every screen. |
+| `VITE_VAPID_PUBLIC_KEY`      | the public half from `gen:vapid`                                                                                     |
+| `VITE_TELEGRAM_BOT_USERNAME` | your bot username, no `@`                                                                                            |
 
 Note the last three are **build-time**: they are compiled into the PWA bundle,
 so changing one requires a rebuild, not just a restart.
 
 ### 3.3 Environment (optional)
+
 Create an environment named `production` if you want a manual approval gate on
 deploys. `deploy.yml` is `workflow_dispatch`-only regardless — nothing reaches
 the server until you deliberately run it.
@@ -270,16 +274,16 @@ The real consumer of disk is old image layers after many deploys —
 
 ## 7. Quick reference — every variable
 
-| Variable | Where from | Required? |
-|---|---|---|
-| `APP_PUBLIC_URL`, `APP_DOMAIN`, `ACME_EMAIL` | you | **yes** |
-| `POSTGRES_PASSWORD`, `REDIS_PASSWORD` | `openssl rand` | **yes** |
-| `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `COOKIE_SECRET`, `ENCRYPTION_KEY` | `openssl rand` | **yes** |
-| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | `gen:vapid` | for push |
-| `BOOTSTRAP_OWNER_EMAIL` | you | first boot |
-| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google Cloud Console | for Google sign-in |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME` | @BotFather | for Telegram sign-in **and** the fallback notification channel |
-| `TELEGRAM_CLIENT_SECRET` | @BotFather | OIDC flow only |
+| Variable                                                                     | Where from           | Required?                                                      |
+| ---------------------------------------------------------------------------- | -------------------- | -------------------------------------------------------------- |
+| `APP_PUBLIC_URL`, `APP_DOMAIN`, `ACME_EMAIL`                                 | you                  | **yes**                                                        |
+| `POSTGRES_PASSWORD`, `REDIS_PASSWORD`                                        | `openssl rand`       | **yes**                                                        |
+| `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `COOKIE_SECRET`, `ENCRYPTION_KEY` | `openssl rand`       | **yes**                                                        |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`                     | `gen:vapid`          | for push                                                       |
+| `BOOTSTRAP_OWNER_EMAIL`                                                      | you                  | first boot                                                     |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`                                   | Google Cloud Console | for Google sign-in                                             |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`                                | @BotFather           | for Telegram sign-in **and** the fallback notification channel |
+| `TELEGRAM_CLIENT_SECRET`                                                     | @BotFather           | OIDC flow only                                                 |
 
 `VAPID_SUBJECT` **must** be a real, resolvable `mailto:` or `https://` — Apple
 rejects anything else with `403 BadJwtToken`, which breaks push on every iPhone
@@ -401,16 +405,16 @@ exists to protect. Set `GENERATIONS=1` if you truly want exactly one file.
 
 ### When it runs
 
-Around **14:00 local**, roughly daily — but driven by *when the last backup
-actually happened*, never by the clock alone. The container wakes every hour and
+Around **14:00 local**, roughly daily — but driven by _when the last backup
+actually happened_, never by the clock alone. The container wakes every hour and
 asks one question:
 
-| Since the last good backup | What happens |
-|---|---|
-| less than 20 h | nothing |
-| 20–26 h, before 14:00 | wait for 14:00 |
+| Since the last good backup | What happens                          |
+| -------------------------- | ------------------------------------- |
+| less than 20 h             | nothing                               |
+| 20–26 h, before 14:00      | wait for 14:00                        |
 | 20–26 h, at or after 14:00 | back up now — this is the normal case |
-| more than 26 h | back up now, whatever time it is |
+| more than 26 h             | back up now, whatever time it is      |
 
 That last row is the one that matters. If the PC was off at 14:00 — or off for
 three days — the backup happens within an hour of it next coming on, rather than
@@ -483,7 +487,7 @@ It never touches anything real.
 This is the part that matters, and it is worth reading before you need it.
 
 **1. Prove the backup first.** Run `restore-check.sh` on it, as above.
-Discovering the dump is bad *after* step 3 turns a bad afternoon into a bad week.
+Discovering the dump is bad _after_ step 3 turns a bad afternoon into a bad week.
 
 **2. Copy the file up to the server.**
 

@@ -171,8 +171,7 @@ export interface TelegramTokenFailure {
  * hints at where the secret comes from.
  */
 export const TELEGRAM_TOKEN_ERROR_HINTS: Readonly<Record<string, string>> = {
-  invalid_client:
-    `Telegram rejected our client authentication - TELEGRAM_CLIENT_SECRET is missing or wrong. To fix: ${TELEGRAM_CLIENT_SECRET_FIX}.`,
+  invalid_client: `Telegram rejected our client authentication - TELEGRAM_CLIENT_SECRET is missing or wrong. To fix: ${TELEGRAM_CLIENT_SECRET_FIX}.`,
   invalid_grant:
     'The authorization code was already used, has expired, or was issued for a different redirect_uri.',
   invalid_request:
@@ -337,9 +336,13 @@ export function telegramLoginOrigin(publicOrigin: string = getConfig().publicOri
   try {
     url = new URL(publicOrigin);
   } catch (cause) {
-    throw new AppError('SERVICE_UNAVAILABLE', `APP_PUBLIC_URL is not a valid URL: ${publicOrigin}`, {
-      cause,
-    });
+    throw new AppError(
+      'SERVICE_UNAVAILABLE',
+      `APP_PUBLIC_URL is not a valid URL: ${publicOrigin}`,
+      {
+        cause,
+      },
+    );
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') {
     throw new AppError(
@@ -601,8 +604,7 @@ export function telegramProfileFromClaims(claims: Record<string, unknown>): OAut
     );
   }
 
-  const username =
-    typeof claims.preferred_username === 'string' ? claims.preferred_username : null;
+  const username = typeof claims.preferred_username === 'string' ? claims.preferred_username : null;
 
   return {
     provider: 'telegram',

@@ -156,9 +156,7 @@ export function RecurrenceBuilder(props: {
 
             {arm === 'weekly' ? weekdayField : null}
 
-            {arm === 'weekly_interval' ? (
-              <div className="mt-3">{weekdayField}</div>
-            ) : null}
+            {arm === 'weekly_interval' ? <div className="mt-3">{weekdayField}</div> : null}
 
             {arm === 'monthly_day' ? (
               <div className="flex flex-col gap-2">

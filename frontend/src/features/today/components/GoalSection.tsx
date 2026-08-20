@@ -73,7 +73,10 @@ export function GoalSection(props: { milestone: DashboardMilestone | null }) {
           role="img"
           aria-label={`${milestone.title}: ${String(milestone.progressPercent)} %`}
         >
-          <span className="block h-full rounded-full bg-primary" style={{ width: `${String(fill)}%` }} />
+          <span
+            className="block h-full rounded-full bg-primary"
+            style={{ width: `${String(fill)}%` }}
+          />
         </span>
 
         <span className="mt-2 flex flex-wrap items-baseline justify-between gap-x-3 text-[13px] leading-[18px] font-medium tabular-nums">

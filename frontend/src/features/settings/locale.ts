@@ -347,10 +347,14 @@ export const SETTINGS_RU = {
     deniedText:
       'Разрешение спрашивают один раз, и здесь его уже не переспросить — снять запрет можно только в настройках устройства.',
     deniedStepsTitle: 'Как вернуть на iPhone',
+    /* Same path as `diagnostics.resetSteps` — one remedy, one wording. iOS
+       lists a web app under «Уведомления», next to ordinary apps, once the
+       prompt has been answered at least once. */
     deniedSteps: [
       'Откройте «Настройки» на телефоне',
-      'Пролистайте вниз до приложения «Семья»',
-      'Откройте «Уведомления» и включите «Допуск уведомлений»',
+      'Откройте «Уведомления»',
+      'Пролистайте список до «Семья»',
+      'Включите «Разрешить уведомления»',
       'Вернитесь сюда и нажмите «Включить уведомления»',
     ] as readonly string[],
     deniedStepsAndroid:
@@ -385,5 +389,271 @@ export const SETTINGS_RU = {
     /* --- misc --------------------------------------------------------------- */
 
     deviceLabelHint: 'Устройство определится само — переименовать его можно в списке ниже.',
+
+    /* --- one message per failure, naming cause and remedy -------------------- */
+
+    /**
+     * Keyed by `EnableOutcome`. The generic «Не удалось включить уведомления»
+     * is what produced a support thread nobody could close: it is true of every
+     * failure and actionable for none of them. Every entry here names the thing
+     * that went wrong **and** the next thing to do about it, because the person
+     * reading it is standing in front of the broken phone and we are not.
+     *
+     * `enableFailed` above survives only as a toast title.
+     */
+    failureTitle: {
+      denied: 'Телефон запретил уведомления',
+      'blocked-in-settings': 'Уведомления выключены в настройках iPhone',
+      dismissed: 'Разрешение не выдано',
+      unsupported: 'Этот браузер не умеет уведомления',
+      'needs-install': 'Сначала установите приложение',
+      misconfigured: 'Приложению не выдан ключ уведомлений',
+      'not-ready': 'Приложение ещё не готово',
+      'gesture-lost': 'Телефон не засчитал нажатие',
+      'subscribe-rejected': 'Телефон отказался оформить подписку',
+      'server-rejected': 'Сервер не принял подписку',
+      failed: 'Не удалось включить уведомления',
+    },
+
+    failureHint: {
+      denied:
+        'Разрешение спрашивают один раз, и переспросить его приложение не может. Снимите запрет в настройках телефона, потом вернитесь сюда и нажмите «Включить уведомления».',
+      /**
+       * WebKit bug 320551. The most useful sentence in this whole file: iOS
+       * reports «ещё не спрашивали» in this state, so the app looks willing and
+       * the phone silently refuses. Naming the toggle is the entire remedy.
+       */
+      'blocked-in-settings':
+        'Телефон говорит, что разрешение ещё не спрашивали, но окно так и не появилось. Так бывает, когда уведомления для «Семьи» выключены в настройках iPhone: «Настройки» → «Уведомления» → «Семья» → «Разрешить уведомления». Включите — и нажмите здесь ещё раз.',
+      dismissed:
+        'Запрос закрыли, ничего не выбрав. Ничего не сломалось — нажмите «Включить уведомления» ещё раз.',
+      unsupported:
+        'Откройте приложение в Safari на iPhone или в Chrome на компьютере — здесь уведомлений просто нет.',
+      'needs-install':
+        'На iPhone уведомления работают только у приложения, добавленного на экран «Домой»: «Поделиться» → «На экран „Домой“», и не выключайте «Открыть как веб‑приложение». Потом запустите «Семью» с новой иконки.',
+      misconfigured:
+        'Это сбой на нашей стороне, а не на телефоне: сервер не отдал ключ для подписки. Откройте «Диагностику уведомлений» ниже и пришлите текст — чинить это здесь нечего.',
+      'not-ready':
+        'Фоновая служба приложения ещё запускается — так бывает на первом запуске после установки. Подождите несколько секунд и нажмите ещё раз; если кнопка не оживает, закройте приложение полностью и откройте заново.',
+      'gesture-lost':
+        'Между нажатием и запросом прошло слишком много времени — у телефона на это пять секунд. Нажмите «Включить уведомления» ещё раз и не переключайтесь на другие приложения.',
+      'subscribe-rejected':
+        'Обычно помогает закрыть приложение полностью, открыть заново и нажать «Включить уведомления» одним касанием. Точная причина — в «Диагностике уведомлений» ниже.',
+      'server-rejected':
+        'Телефон подписку оформил, а наш сервер её не принял. Проверьте интернет и попробуйте ещё раз; код ошибки записан в «Диагностике уведомлений» ниже.',
+      failed:
+        'Точная причина записана в «Диагностике уведомлений» ниже — откройте её, скопируйте текст и пришлите нам.',
+    },
+  },
+
+  /* ------------------------------------------------------------------------ */
+  /* Диагностика — the instrument that lives on the user's device              */
+  /* ------------------------------------------------------------------------ */
+
+  /**
+   * Copy for the one screen that exists because we cannot reproduce the bug.
+   *
+   * Every label is a plain question a non-technical person can answer by
+   * looking at it, in the order the platform enforces the preconditions. The
+   * *values* stay technical on purpose — `NotAllowedError`, an HTTP status, a
+   * service-worker scope — because they are meant to be pasted to somebody who
+   * can read them.
+   */
+  diagnostics: {
+    title: 'Диагностика уведомлений',
+    description: 'Что именно мешает уведомлениям на этом устройстве.',
+    show: 'Показать диагностику',
+    hide: 'Скрыть диагностику',
+    refresh: 'Проверить заново',
+    checking: 'Проверяем…',
+    copy: 'Скопировать',
+    copied: 'Скопировано — можно вставить в переписку',
+    copyFailed: 'Скопировать не вышло — выделите текст ниже вручную',
+
+    /** The one-line answer at the top. Everything below is supporting detail. */
+    verdictTitle: {
+      ok: 'Всё в порядке',
+      'not-installed': 'Приложение открыто не как приложение',
+      'ios-non-safari': 'Открыто не в Safari',
+      unsupported: 'Браузер не поддерживает уведомления',
+      denied: 'Уведомления запрещены в настройках телефона',
+      'blocked-in-settings': 'Уведомления выключены в настройках iPhone',
+      'not-asked': 'Разрешение ещё не запрашивали',
+      'no-service-worker': 'Фоновая служба приложения не запущена',
+      'sw-not-active': 'Фоновая служба ещё запускается',
+      'no-subscription': 'Подписка на этом устройстве не оформлена',
+      'server-unaware': 'Сервер не знает про это устройство',
+      misconfigured: 'Приложению не выдан ключ уведомлений',
+      unknown: 'Не удалось определить причину',
+    },
+
+    verdictHint: {
+      ok: 'Устройство подписано, и сервер о нём знает. Если уведомления всё равно не приходят — отправьте тестовое уведомление выше, а потом проверьте «Фокус», «Не беспокоить» и «Сводку по расписанию» на телефоне.',
+      /**
+       * iOS 26 added an «Открыть как веб‑приложение» switch to the share sheet.
+       * Left off, the icon is a bookmark: it looks installed, opens in Safari,
+       * and can never receive a push. Naming it is the difference between a
+       * fixable problem and a mystery.
+       */
+      'not-installed':
+        'Иконка на экране «Домой» должна открываться как приложение, а не как закладка в Safari. Удалите иконку, добавьте заново через Safari → «Поделиться» → «На экран „Домой“» и не выключайте переключатель «Открыть как веб‑приложение». Потом запустите «Семью» с новой иконки.',
+      'ios-non-safari':
+        'Chrome, Firefox и Яндекс на iPhone не умеют добавлять приложение на экран «Домой». Откройте этот адрес в Safari.',
+      unsupported:
+        'Приложение будет работать, но напоминания придут только внутри него. Уведомления есть в Safari на iPhone (после установки) и в Chrome на компьютере.',
+      denied:
+        'Приложение не может переспросить разрешение — его снимают только в настройках телефона.',
+      /**
+       * The 320551 state. iOS reports «ещё не спрашивали» while refusing to
+       * ask, so the app looks willing and nothing happens. This is the most
+       * likely single cause for anyone who has tried and failed before.
+       */
+      'blocked-in-settings':
+        'Телефон отвечает «разрешение ещё не спрашивали», но окно с вопросом так и не появляется. Так ведёт себя iPhone, когда уведомления для «Семьи» уже выключены в его настройках. Включите их по шагам ниже — из приложения это не чинится.',
+      'not-asked':
+        'Нажмите «Включить уведомления» выше — телефон должен показать окно с вопросом. Если окно не появилось, а надпись не изменилась, значит уведомления выключены в настройках iPhone: смотрите шаги ниже.',
+      'no-service-worker':
+        'Закройте приложение полностью и откройте заново. Если не помогло — переустановите иконку с экрана «Домой».',
+      'sw-not-active':
+        'Так бывает на первом запуске после установки. Подождите несколько секунд и нажмите «Проверить заново»; кнопка «Включить уведомления» оживёт сама.',
+      'no-subscription':
+        'Разрешение есть, но подписка не создана. Нажмите «Включить уведомления» выше — нужно живое касание, само это не починится.',
+      'server-unaware':
+        'Телефон подписан, но на сервере этого устройства нет. Выключите и снова включите уведомления на этом устройстве.',
+      misconfigured:
+        'Сбой на нашей стороне: сервер не отдал ключ для подписки. Скопируйте отчёт и пришлите нам.',
+      unknown:
+        'Скопируйте отчёт кнопкой ниже и пришлите нам — в нём есть всё, что нужно, чтобы разобраться.',
+    },
+
+    /* --- row labels --------------------------------------------------------- */
+
+    rows: {
+      standalone: 'Запущено как приложение',
+      displayMode: 'Режим отображения',
+      notificationApi: 'Notification есть в браузере',
+      pushManagerApi: 'PushManager есть в браузере',
+      serviceWorkerApi: 'Service Worker есть в браузере',
+      permission: 'Разрешение на уведомления',
+      lastAttempt: 'Чем кончилась последняя попытка',
+      serviceWorker: 'Фоновая служба (service worker)',
+      serviceWorkerScope: 'Область службы',
+      serviceWorkerControlling: 'Служба управляет страницей',
+      registrationPushManager: 'pushManager у службы',
+      subscription: 'Подписка в браузере',
+      subscriptionOrigin: 'Служба доставки',
+      subscriptionFingerprint: 'Отпечаток подписки',
+      serverKnows: 'Сервер знает это устройство',
+      serverDeviceCount: 'Устройств на сервере',
+      vapidKey: 'Ключ для подписки (VAPID)',
+      online: 'Сеть',
+      timezone: 'Часовой пояс',
+      appVersion: 'Версия приложения',
+      userAgent: 'Браузер (User-Agent)',
+    },
+
+    /* --- values ------------------------------------------------------------- */
+
+    yes: 'да',
+    no: 'нет',
+    unknown: 'не удалось проверить',
+    none: '—',
+    online: 'онлайн',
+    offline: 'офлайн',
+    keyPresent: 'есть',
+    keyMissing: 'нет',
+
+    permissionValue: {
+      granted: 'разрешено',
+      denied: 'запрещено',
+      default: 'ещё не спрашивали',
+      unsupported: 'недоступно в этом браузере',
+    },
+
+    /**
+     * Shown under the permission row whenever it reads `default` on iOS.
+     *
+     * Without it that row is actively misleading: iOS reports the same value
+     * for "we have never asked" and for "you turned it off in Settings and I
+     * will never ask again" (WebKit bug 320551). A reader who trusts the row
+     * concludes the app has simply not got round to asking.
+     */
+    permissionDefaultCaveat:
+      'Осторожно: iPhone показывает «ещё не спрашивали» и тогда, когда уведомления для «Семьи» уже выключены в его настройках. Изнутри приложения эти два случая неразличимы. Если окно с вопросом не появляется — считайте, что дело в настройках телефона.',
+
+    lastAttemptNone: 'в этом сеансе не пробовали',
+    lastAttemptValue: {
+      enabled: 'подписка оформлена',
+      denied: 'пользователь запретил',
+      'blocked-in-settings': 'телефон не показал окно (выключено в настройках)',
+      dismissed: 'окно закрыли без ответа',
+      unsupported: 'браузер не поддерживает',
+      'needs-install': 'приложение не установлено',
+      misconfigured: 'нет ключа для подписки',
+      'not-ready': 'фоновая служба ещё не активна',
+      'gesture-lost': 'нажатие не засчитано',
+      'subscribe-rejected': 'телефон отклонил подписку',
+      'server-rejected': 'сервер отклонил подписку',
+      failed: 'ошибка без объяснения',
+    },
+
+    swValue: {
+      none: 'не зарегистрирована',
+      installing: 'устанавливается',
+      waiting: 'ждёт обновления',
+      active: 'работает',
+      unknown: 'не удалось проверить',
+    },
+
+    /* --- the verbatim error ------------------------------------------------- */
+
+    /**
+     * Shown untranslated, and labelled as such, so nobody "helpfully" rewrites
+     * `NotAllowedError` into «что-то пошло не так» on the way to us.
+     */
+    lastErrorTitle: 'Последняя ошибка, дословно',
+    lastErrorNone: 'Ошибок при включении не было.',
+    lastErrorStage: {
+      permission: 'на шаге разрешения',
+      registration: 'на шаге фоновой службы',
+      subscribe: 'на шаге подписки',
+      server: 'на шаге отправки на сервер',
+      unsubscribe: 'на шаге отключения',
+    },
+    lastErrorAt: (at: string) => `Когда: ${at}`,
+    lastErrorHttp: (status: number, code?: string) =>
+      code ? `HTTP ${String(status)} · ${code}` : `HTTP ${String(status)}`,
+
+    /* --- the iOS reset path, spelled out ------------------------------------ */
+
+    /**
+     * The single most useful thing on this screen when the answer is `denied`.
+     * iOS never re-asks, and «включите в настройках» without the path is how a
+     * family member gives up.
+     */
+    resetTitle: 'Как включить уведомления в настройках iPhone',
+    resetSteps: [
+      'Откройте «Настройки» на iPhone',
+      'Откройте «Уведомления»',
+      'Пролистайте список до «Семья» — приложение стоит там же, где обычные приложения',
+      'Включите «Разрешить уведомления»',
+      'Заодно проверьте, что включены «Экран блокировки», «Центр уведомлений» и «Баннеры»',
+      'Вернитесь в приложение и нажмите «Включить уведомления»',
+    ] as readonly string[],
+    /**
+     * A genuinely useful diagnostic the user can perform with their eyes: iOS
+     * lists a web app under Уведомления **only after** the permission prompt
+     * has been answered at least once. Its absence therefore distinguishes
+     * "never asked" from "asked and then revoked" — the two states
+     * `Notification.permission === 'default'` cannot tell apart.
+     */
+    resetAbsentNote:
+      'Если «Семьи» в этом списке нет — телефон ещё ни разу не спрашивал разрешение. Значит дело не в настройках: вернитесь и нажмите «Включить уведомления».',
+    resetAndroid:
+      'На Android: «Настройки» → «Приложения» → «Семья» → «Уведомления». В браузере на компьютере — значок замка слева от адреса страницы.',
+
+    /** Headless browsers and desktop test runs have none of these APIs. */
+    degradedNote:
+      'Здесь нет ни Notification, ни PushManager, ни service worker — так выглядит обычная вкладка браузера или тестовая среда. Это не поломка приложения.',
   },
 } as const;

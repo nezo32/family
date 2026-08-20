@@ -89,10 +89,10 @@ services:
       # than baked so that a fix is `restart`, not `build && push && pull`.
       - ./:/opt/backup-pull:ro
 
-    entrypoint: ["/bin/sh", "/opt/backup-pull/entrypoint.sh"]
+    entrypoint: ['/bin/sh', '/opt/backup-pull/entrypoint.sh']
 
     healthcheck:
-      test: ["CMD", "/bin/sh", "/opt/backup-pull/pull.sh", "--health"]
+      test: ['CMD', '/bin/sh', '/opt/backup-pull/pull.sh', '--health']
       # Once a minute: it is a `stat` and a `cat`, and the point of the check
       # is to notice quickly, not to be frugal.
       interval: 1m
@@ -104,8 +104,8 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "5m"
-        max-file: "5"
+        max-size: '5m'
+        max-file: '5'
 
     # It reads one directory over ssh and writes to a bind mount, so it can
     # give up essentially every capability.

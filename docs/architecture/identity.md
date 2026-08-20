@@ -22,14 +22,14 @@ one or the other is present.
 
 ### 1.1 OAuth — Google / Telegram
 
-| Method | Path                       | Guard  | Purpose                                                                                                                                                                                                                                                          |
-| ------ | -------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET`  | `/auth/google/start`       | public | Build the OIDC authorization URL (code + PKCE), insert the `oauth_transactions` row, `302` to Google. `?intent=link` additionally requires a session.                                                                                                            |
-| `GET`  | `/auth/google/callback`    | public | `?code&state`. Consume the transaction, exchange the code, verify the id_token, resolve or create the identity, issue the session.                                                                                                                               |
-| `GET`  | `/auth/telegram/start`     | public | OIDC at `https://oauth.telegram.org`, scopes `openid profile telegram:bot_access`.                                                                                                                                                                               |
-| `GET`  | `/auth/telegram/callback`  | public | As Google. The bot-access grant is what lets us DM admins about pending signups.                                                                                                                                                                                 |
-| `POST` | `/auth/telegram/widget`    | public | **Legacy fallback.** Hash-verified Login Widget payload (`telegramWidgetPayloadSchema`).                                                                                                                                                                         |
-| `POST` | `/auth/telegram/init-data` | public | **Legacy fallback.** Mini App `initData`, verified raw (`telegramInitDataSchema`).                                                                                                                                                                               |
+| Method | Path                       | Guard  | Purpose                                                                                                                                               |
+| ------ | -------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/auth/google/start`       | public | Build the OIDC authorization URL (code + PKCE), insert the `oauth_transactions` row, `302` to Google. `?intent=link` additionally requires a session. |
+| `GET`  | `/auth/google/callback`    | public | `?code&state`. Consume the transaction, exchange the code, verify the id_token, resolve or create the identity, issue the session.                    |
+| `GET`  | `/auth/telegram/start`     | public | OIDC at `https://oauth.telegram.org`, scopes `openid profile telegram:bot_access`.                                                                    |
+| `GET`  | `/auth/telegram/callback`  | public | As Google. The bot-access grant is what lets us DM admins about pending signups.                                                                      |
+| `POST` | `/auth/telegram/widget`    | public | **Legacy fallback.** Hash-verified Login Widget payload (`telegramWidgetPayloadSchema`).                                                              |
+| `POST` | `/auth/telegram/init-data` | public | **Legacy fallback.** Mini App `initData`, verified raw (`telegramInitDataSchema`).                                                                    |
 
 `intent=link` on any `/start` requires a session and `identity:manage:own`; the
 caller's id is written to `oauth_transactions.link_user_id` and the callback

@@ -277,6 +277,19 @@ export function formatDateLong(value: Date | string | number, timeZone?: string)
   return intl({ day: 'numeric', month: 'long', year: 'numeric' }, timeZone).format(toDate(value));
 }
 
+/**
+ * `25 августа` — day and month, no year and no clock.
+ *
+ * For a date whose *day* is the whole point and whose minute is noise: a pin's
+ * expiry («закреплено до 25 августа»), a deadline a family reads at a glance.
+ * `formatDateTime` would add «, 13:44» — a number nobody set, nobody reads and
+ * nobody can act on — and `formatDateLong` would add «2026 г.» to something
+ * that is at most a week away.
+ */
+export function formatDayMonth(value: Date | string | number, timeZone?: string): string {
+  return intl({ day: 'numeric', month: 'long' }, timeZone).format(toDate(value));
+}
+
 /** `7 сентября, 19:00` */
 export function formatDateTime(value: Date | string | number, timeZone?: string): string {
   return intl(

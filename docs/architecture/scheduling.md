@@ -6,13 +6,13 @@ Binding context: **D1** (single tenant), **D2** (recurrence & time model),
 
 Owned files:
 
-| File | Contents |
-|---|---|
-| `backend/src/modules/scheduling/recurrence.schema.ts` | `recurrenceColumns()`, `visibility`, `occurrence_status` |
-| `backend/src/modules/tasks/tasks.schema.ts` | `task_series`, `task_occurrences`, `assigned_via` |
-| `backend/src/modules/events/events.schema.ts` | `event_series`, `event_occurrences`, `event_attendees` |
-| `backend/src/modules/chores/chores.schema.ts` | `rotations`, `rotation_members`, `user_blackouts`, `chore_swaps`, `kudos` |
-| `packages/shared/src/contracts/{tasks,events,chores}.ts` | zod contracts |
+| File                                                     | Contents                                                                  |
+| -------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `backend/src/modules/scheduling/recurrence.schema.ts`    | `recurrenceColumns()`, `visibility`, `occurrence_status`                  |
+| `backend/src/modules/tasks/tasks.schema.ts`              | `task_series`, `task_occurrences`, `assigned_via`                         |
+| `backend/src/modules/events/events.schema.ts`            | `event_series`, `event_occurrences`, `event_attendees`                    |
+| `backend/src/modules/chores/chores.schema.ts`            | `rotations`, `rotation_members`, `user_blackouts`, `chore_swaps`, `kudos` |
+| `packages/shared/src/contracts/{tasks,events,chores}.ts` | zod contracts                                                             |
 
 ---
 
@@ -38,7 +38,7 @@ completion handler.
 
 ### Why `occurrence_key` and not `starts_at` is the identity
 
-`occurrence_key` is the floating local datetime the rule *originally* produced.
+`occurrence_key` is the floating local datetime the rule _originally_ produced.
 It never changes. When a user drags Tuesday's dentist appointment to Wednesday,
 `starts_at` / `ends_at` / `local_date` / `starts_local` all change and
 `occurrence_key` stays `2026-09-08T14:00:00`.
@@ -158,7 +158,7 @@ since March, under three different schedules".
 
 ### 3.4 Edit all
 
-Update the series in place. If the *schedule* changed, delete every
+Update the series in place. If the _schedule_ changed, delete every
 `scheduled`, non-exception future occurrence and re-materialize; if only
 metadata changed (title, notes, category), nothing is deleted — the resolution
 rule means every non-overridden occurrence picks the new value up for free.
@@ -187,7 +187,7 @@ how much pain each one saves:
 2. **It would fight the materializer.** Two writers (the sweeper and the user)
    racing on the same row for a value that is derivable from data already there.
 3. **The status enum stays meaningful.** `scheduled → done | skipped |
-   cancelled` are transitions a *person* causes. Overdue is not something anyone
+cancelled` are transitions a _person_ causes. Overdue is not something anyone
    did.
 4. **It is cheap.** `task_occurrences_overdue_idx` is a partial index on
    `due_at where status = 'scheduled'`; the family-scale row count makes this a
@@ -256,7 +256,7 @@ Never recomputed on read, never rebalanced by a background job.
 If assignment were derived at read time, next Tuesday's chore would belong to a
 different person every time somebody completed something today. Nobody can plan
 against that, and "but it said it was mine yesterday" is the end of the feature.
-A rotation change therefore only affects occurrences materialized *after* the
+A rotation change therefore only affects occurrences materialized _after_ the
 change, unless an adult explicitly asks for `reassignFuture: true`.
 
 ### The chore counts for the doer
@@ -351,7 +351,11 @@ export interface RecurrenceEngine {
   toInstant(local: FloatingDateTime, tz: TimeZoneId): Date;
 
   /** Wall-clock arithmetic: zdt.add({ minutes }), NEVER instant + n*60000. */
-  addWallClock(local: FloatingDateTime, minutes: number, tz: TimeZoneId): { local: FloatingDateTime; instant: Date };
+  addWallClock(
+    local: FloatingDateTime,
+    minutes: number,
+    tz: TimeZoneId,
+  ): { local: FloatingDateTime; instant: Date };
 
   /** Local calendar date of a key, for the denormalized `local_date` column. */
   localDateOf(local: FloatingDateTime): string;
@@ -388,11 +392,11 @@ DST tests that must exist before this is considered done:
 The UI may only produce these (`recurrencePresetSchema` in
 `@family/shared/contracts/tasks`):
 
-| Preset | Compiles to |
-|---|---|
-| `daily` | `FREQ=DAILY;INTERVAL=n` |
-| `weekly` | `FREQ=WEEKLY;INTERVAL=n;BYDAY=MO,WE` |
-| `monthly_day` | `FREQ=MONTHLY;INTERVAL=n;BYMONTHDAY=d` |
+| Preset             | Compiles to                             |
+| ------------------ | --------------------------------------- |
+| `daily`            | `FREQ=DAILY;INTERVAL=n`                 |
+| `weekly`           | `FREQ=WEEKLY;INTERVAL=n;BYDAY=MO,WE`    |
+| `monthly_day`      | `FREQ=MONTHLY;INTERVAL=n;BYMONTHDAY=d`  |
 | `monthly_last_day` | `FREQ=MONTHLY;INTERVAL=n;BYMONTHDAY=-1` |
 
 `ends` adds `COUNT=n` or `UNTIL=<utc>`. `weekly` with `interval: 1` is "specific
@@ -409,66 +413,66 @@ with its `summary`, and offers "replace the schedule" instead of "edit".
 
 All routes are under `/api`. Every one declares a permission guard (D4);
 `404`, not `403`, outside the caller's read scope. Visibility (`household` /
-`private` / `restricted`) narrows *after* the permission check.
+`private` / `restricted`) narrows _after_ the permission check.
 
 ### Tasks
 
-| Method | Path | Permission | Notes |
-|---|---|---|---|
-| `GET` | `/tasks/series` | `task:read:own`/`:any` | `taskSeriesListQuerySchema`, cursor paginated |
-| `POST` | `/tasks/series` | `task:create` | `taskSeriesCreateSchema`; materializes eagerly |
-| `GET` | `/tasks/series/:id` | `task:read:*` | includes `recurrence.summary` + `preset` |
-| `PATCH` | `/tasks/series/:id` | `task:update:own`/`:any` | `taskSeriesUpdateSchema`, requires `scope` |
-| `DELETE` | `/tasks/series/:id` | `task:delete:own`/`:any` | `taskSeriesDeleteSchema`, requires `scope` |
-| `POST` | `/tasks/series/:id/archive` | `task:update:*` | soft stop |
-| `GET` | `/tasks/occurrences` | `task:read:*` | filters incl. `overdueOnly`, `assignee=me` |
-| `GET` | `/tasks/calendar` | `task:read:*` | `calendarRangeSchema`, local-date window |
-| `GET` | `/tasks/today` | `task:read:own` | dashboard payload, one round trip |
-| `GET` | `/tasks/occurrences/:id` | `task:read:*` | |
-| `PATCH` | `/tasks/occurrences/:id` | `task:update:*` | overrides / move; sets `is_exception` |
-| `POST` | `/tasks/occurrences/:id/complete` | `task:complete:own`/`:any` | idempotent; books the ledger |
-| `POST` | `/tasks/occurrences/:id/uncomplete` | `task:complete:any` | compensating ledger entries |
-| `POST` | `/tasks/occurrences/:id/skip` | `task:update:*` | optional EXDATE |
-| `POST` | `/tasks/occurrences/:id/assign` | `task:assign:any` | `assigned_via = 'manual'` |
-| `POST` | `/tasks/occurrences/:id/claim` | `task:complete:own` | unassigned only; `'claimed'` |
+| Method   | Path                                | Permission                 | Notes                                          |
+| -------- | ----------------------------------- | -------------------------- | ---------------------------------------------- |
+| `GET`    | `/tasks/series`                     | `task:read:own`/`:any`     | `taskSeriesListQuerySchema`, cursor paginated  |
+| `POST`   | `/tasks/series`                     | `task:create`              | `taskSeriesCreateSchema`; materializes eagerly |
+| `GET`    | `/tasks/series/:id`                 | `task:read:*`              | includes `recurrence.summary` + `preset`       |
+| `PATCH`  | `/tasks/series/:id`                 | `task:update:own`/`:any`   | `taskSeriesUpdateSchema`, requires `scope`     |
+| `DELETE` | `/tasks/series/:id`                 | `task:delete:own`/`:any`   | `taskSeriesDeleteSchema`, requires `scope`     |
+| `POST`   | `/tasks/series/:id/archive`         | `task:update:*`            | soft stop                                      |
+| `GET`    | `/tasks/occurrences`                | `task:read:*`              | filters incl. `overdueOnly`, `assignee=me`     |
+| `GET`    | `/tasks/calendar`                   | `task:read:*`              | `calendarRangeSchema`, local-date window       |
+| `GET`    | `/tasks/today`                      | `task:read:own`            | dashboard payload, one round trip              |
+| `GET`    | `/tasks/occurrences/:id`            | `task:read:*`              |                                                |
+| `PATCH`  | `/tasks/occurrences/:id`            | `task:update:*`            | overrides / move; sets `is_exception`          |
+| `POST`   | `/tasks/occurrences/:id/complete`   | `task:complete:own`/`:any` | idempotent; books the ledger                   |
+| `POST`   | `/tasks/occurrences/:id/uncomplete` | `task:complete:any`        | compensating ledger entries                    |
+| `POST`   | `/tasks/occurrences/:id/skip`       | `task:update:*`            | optional EXDATE                                |
+| `POST`   | `/tasks/occurrences/:id/assign`     | `task:assign:any`          | `assigned_via = 'manual'`                      |
+| `POST`   | `/tasks/occurrences/:id/claim`      | `task:complete:own`        | unassigned only; `'claimed'`                   |
 
 ### Events
 
-| Method | Path | Permission | Notes |
-|---|---|---|---|
-| `GET` | `/events/series` | `event:read` | |
-| `POST` | `/events/series` | `event:create` | `attendeeIds` fanned out |
-| `GET` | `/events/series/:id` | `event:read` | |
-| `PATCH` | `/events/series/:id` | `event:update:own`/`:any` | requires `scope`; 409 on generated series |
-| `DELETE` | `/events/series/:id` | `event:delete:own`/`:any` | requires `scope` |
-| `GET` | `/events/occurrences` | `event:read` | |
-| `GET` | `/events/calendar` | `event:read` | `includeTasks` folds in the task feed |
-| `GET` | `/events/today` | `event:read` | agenda strip |
-| `PATCH` | `/events/occurrences/:id` | `event:update:*` | overrides / move / resize |
-| `POST` | `/events/occurrences/:id/cancel` | `event:delete:*` | `status = 'cancelled'` |
-| `PUT` | `/events/occurrences/:id/rsvp` | `event:read` | own answer; `:any` for somebody else |
-| `PUT` | `/events/series/:id/attendees` | `event:update:*` | scoped fan-out |
-| `GET` | `/events/feed.ics` | signed token, `public: true` | read-only ICS export |
+| Method   | Path                             | Permission                   | Notes                                     |
+| -------- | -------------------------------- | ---------------------------- | ----------------------------------------- |
+| `GET`    | `/events/series`                 | `event:read`                 |                                           |
+| `POST`   | `/events/series`                 | `event:create`               | `attendeeIds` fanned out                  |
+| `GET`    | `/events/series/:id`             | `event:read`                 |                                           |
+| `PATCH`  | `/events/series/:id`             | `event:update:own`/`:any`    | requires `scope`; 409 on generated series |
+| `DELETE` | `/events/series/:id`             | `event:delete:own`/`:any`    | requires `scope`                          |
+| `GET`    | `/events/occurrences`            | `event:read`                 |                                           |
+| `GET`    | `/events/calendar`               | `event:read`                 | `includeTasks` folds in the task feed     |
+| `GET`    | `/events/today`                  | `event:read`                 | agenda strip                              |
+| `PATCH`  | `/events/occurrences/:id`        | `event:update:*`             | overrides / move / resize                 |
+| `POST`   | `/events/occurrences/:id/cancel` | `event:delete:*`             | `status = 'cancelled'`                    |
+| `PUT`    | `/events/occurrences/:id/rsvp`   | `event:read`                 | own answer; `:any` for somebody else      |
+| `PUT`    | `/events/series/:id/attendees`   | `event:update:*`             | scoped fan-out                            |
+| `GET`    | `/events/feed.ics`               | signed token, `public: true` | read-only ICS export                      |
 
 ### Chores
 
-| Method | Path | Permission | Notes |
-|---|---|---|---|
-| `GET` | `/chores/rotations` | `task:read:any` | |
-| `POST` | `/chores/rotations` | `task:assign:any` | |
-| `PATCH` | `/chores/rotations/:id` | `task:assign:any` | `reassignFuture` off by default |
-| `DELETE` | `/chores/rotations/:id` | `task:assign:any` | 409 while series reference it |
-| `GET` | `/chores/rotations/:id/preview` | `task:read:any` | auditable dry run of the next N picks |
-| `GET` | `/chores/blackouts` | `task:read:own`/`:any` | |
-| `POST` | `/chores/blackouts` | `task:update:own` | another user needs `task:assign:any` |
-| `DELETE` | `/chores/blackouts/:id` | `task:update:own`/`:any` | |
-| `GET` | `/chores/swaps` | `task:read:own` | `direction=incoming\|outgoing\|all` |
-| `POST` | `/chores/swaps` | `task:update:own` | one pending per occurrence (409) |
-| `POST` | `/chores/swaps/:id/respond` | `task:update:own` | accept ⇒ reassign |
-| `POST` | `/chores/swaps/:id/cancel` | `task:update:own` | asker only |
-| `GET` | `/chores/fairness` | `task:read:any` | the week's split of the housework, no ranking |
-| `GET` | `/chores/kudos` | `kudos:give` | |
-| `POST` | `/chores/kudos` | `kudos:give` | 409 on the unique `(from, occurrence, emoji)` |
+| Method   | Path                            | Permission               | Notes                                         |
+| -------- | ------------------------------- | ------------------------ | --------------------------------------------- |
+| `GET`    | `/chores/rotations`             | `task:read:any`          |                                               |
+| `POST`   | `/chores/rotations`             | `task:assign:any`        |                                               |
+| `PATCH`  | `/chores/rotations/:id`         | `task:assign:any`        | `reassignFuture` off by default               |
+| `DELETE` | `/chores/rotations/:id`         | `task:assign:any`        | 409 while series reference it                 |
+| `GET`    | `/chores/rotations/:id/preview` | `task:read:any`          | auditable dry run of the next N picks         |
+| `GET`    | `/chores/blackouts`             | `task:read:own`/`:any`   |                                               |
+| `POST`   | `/chores/blackouts`             | `task:update:own`        | another user needs `task:assign:any`          |
+| `DELETE` | `/chores/blackouts/:id`         | `task:update:own`/`:any` |                                               |
+| `GET`    | `/chores/swaps`                 | `task:read:own`          | `direction=incoming\|outgoing\|all`           |
+| `POST`   | `/chores/swaps`                 | `task:update:own`        | one pending per occurrence (409)              |
+| `POST`   | `/chores/swaps/:id/respond`     | `task:update:own`        | accept ⇒ reassign                             |
+| `POST`   | `/chores/swaps/:id/cancel`      | `task:update:own`        | asker only                                    |
+| `GET`    | `/chores/fairness`              | `task:read:any`          | the week's split of the housework, no ranking |
+| `GET`    | `/chores/kudos`                 | `kudos:give`             |                                               |
+| `POST`   | `/chores/kudos`                 | `kudos:give`             | 409 on the unique `(from, occurrence, emoji)` |
 
 ---
 

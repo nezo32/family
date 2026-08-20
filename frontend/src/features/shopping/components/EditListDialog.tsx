@@ -45,7 +45,20 @@ const LIST_COLORS = [
 ] as const;
 
 /** Emoji, never a lucide name — see `shared/lib/emoji.ts` for why. */
-const LIST_ICONS = ['🛒', '🥦', '🍞', '🥛', '🧴', '💊', '🧹', '🎁', '🐶', '🔧', '🏠', '🎂'] as const;
+const LIST_ICONS = [
+  '🛒',
+  '🥦',
+  '🍞',
+  '🥛',
+  '🧴',
+  '💊',
+  '🧹',
+  '🎁',
+  '🐶',
+  '🔧',
+  '🏠',
+  '🎂',
+] as const;
 
 export function EditListDialog(props: {
   open: boolean;

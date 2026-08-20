@@ -1,6 +1,6 @@
 # Cross-client sync — the change feed
 
-Implements **D12**. Read `docs/DECISIONS.md` first; this note is *how* it is
+Implements **D12**. Read `docs/DECISIONS.md` first; this note is _how_ it is
 built, not whether it is right. It is written to be built from directly — where
 something is genuinely undecided it says so and names the experiment.
 
@@ -24,15 +24,15 @@ connection, no cursor, no log, no event payload, and no new infrastructure.
 Seven, and this list is the contract between both sides. It lives in
 `@family/shared` so neither side can drift.
 
-| Domain | Covers |
-|---|---|
-| `tasks` | task series & occurrences, chores, rotations, swaps, fairness |
-| `events` | event series & occurrences, attendees, RSVP |
-| `goals` | savings goals, milestones, transactions |
-| `shopping` | lists, items, product catalog |
-| `wall` | posts, comments, reactions, polls, kudos, activity log |
-| `members` | users, roster, approvals, avatars, own profile |
-| `notifications` | the in-app inbox and unread count |
+| Domain          | Covers                                                        |
+| --------------- | ------------------------------------------------------------- |
+| `tasks`         | task series & occurrences, chores, rotations, swaps, fairness |
+| `events`        | event series & occurrences, attendees, RSVP                   |
+| `goals`         | savings goals, milestones, transactions                       |
+| `shopping`      | lists, items, product catalog                                 |
+| `wall`          | posts, comments, reactions, polls, kudos, activity log        |
+| `members`       | users, roster, approvals, avatars, own profile                |
+| `notifications` | the in-app inbox and unread count                             |
 
 **`settings` is deliberately absent.** Sign-in methods, push device rows,
 notification preferences and quiet hours are changed by you, on the device in
@@ -41,7 +41,7 @@ domain to sync your own settings between your phone and your laptop is machinery
 for a thing nobody has asked for. If that changes, add `settings` here and map
 it to `['settings']`; nothing else needs to change.
 
-`dashboard` is not a domain either — the Today screen is a *view* over five
+`dashboard` is not a domain either — the Today screen is a _view_ over five
 domains and is invalidated by all of them, on the client. See §5.
 
 ---
@@ -101,12 +101,12 @@ No TTL, no trimming, no growth: seven integers, forever.
 registered in `backend/src/app.ts` **after** `authPlugin` (it reads
 `request.auth` only for logging, but ordering keeps the hook list readable).
 
-An `onResponse` hook, because a bump must reflect a *completed, successful*
+An `onResponse` hook, because a bump must reflect a _completed, successful_
 write:
 
 1. Return if `request.method` is `GET`, `HEAD` or `OPTIONS`.
 2. Return if `reply.statusCode >= 400`. A rejected write changed nothing.
-3. Resolve `request.routeOptions.url` (the route *pattern*, including the `/api`
+3. Resolve `request.routeOptions.url` (the route _pattern_, including the `/api`
    prefix that `registerModules` applies) through `ROUTE_DOMAINS`.
 4. Return if the match is an empty domain set.
 5. `void bumpRevisions(domains)` — fire and forget. The response has already
@@ -125,28 +125,28 @@ matches once, not once per item id.
 An ordered list of `[prefix, domains]` pairs, **first match wins**, so the
 special cases sit above the general ones. Same file.
 
-| # | Route prefix (pattern) | Domains |
-|---|---|---|
-| 1 | `/api/chores/kudos` | `wall` |
-| 2 | `/api/notifications/preferences` | *(none)* |
-| 3 | `/api/notifications/quiet-hours` | *(none)* |
-| 4 | `/api/notifications/digest` | *(none)* |
-| 5 | `/api/notifications/subscriptions` | *(none)* |
-| 6 | `/api/notifications/telegram` | *(none)* |
-| 7 | `/api/notifications/deliveries` | *(none)* |
-| 8 | `/api/notifications` | `notifications` |
-| 9 | `/api/tasks` | `tasks` |
-| 10 | `/api/chores` | `tasks` |
-| 11 | `/api/events` | `events` |
-| 12 | `/api/goals` | `goals` |
-| 13 | `/api/shopping` | `shopping` |
-| 14 | `/api/wall` | `wall` |
-| 15 | `/api/comments` | `wall` |
-| 16 | `/api/members` | `members` |
-| 17 | `/api/users` | `members` |
-| 18 | `/api/me` | `members` |
-| 19 | `/api/auth` | *(none)* |
-| 20 | `/api/dashboard` | *(none)* |
+| #   | Route prefix (pattern)             | Domains         |
+| --- | ---------------------------------- | --------------- |
+| 1   | `/api/chores/kudos`                | `wall`          |
+| 2   | `/api/notifications/preferences`   | _(none)_        |
+| 3   | `/api/notifications/quiet-hours`   | _(none)_        |
+| 4   | `/api/notifications/digest`        | _(none)_        |
+| 5   | `/api/notifications/subscriptions` | _(none)_        |
+| 6   | `/api/notifications/telegram`      | _(none)_        |
+| 7   | `/api/notifications/deliveries`    | _(none)_        |
+| 8   | `/api/notifications`               | `notifications` |
+| 9   | `/api/tasks`                       | `tasks`         |
+| 10  | `/api/chores`                      | `tasks`         |
+| 11  | `/api/events`                      | `events`        |
+| 12  | `/api/goals`                       | `goals`         |
+| 13  | `/api/shopping`                    | `shopping`      |
+| 14  | `/api/wall`                        | `wall`          |
+| 15  | `/api/comments`                    | `wall`          |
+| 16  | `/api/members`                     | `members`       |
+| 17  | `/api/users`                       | `members`       |
+| 18  | `/api/me`                          | `members`       |
+| 19  | `/api/auth`                        | _(none)_        |
+| 20  | `/api/dashboard`                   | _(none)_        |
 
 Notes on the non-obvious rows:
 
@@ -171,12 +171,12 @@ that matches nothing at all is a build error, caught by §8.1.
 BullMQ workers write rows without passing through the hook. Each of these calls
 `bumpRevisions` explicitly at the end of its handler:
 
-| File | Job / call site | Domains |
-|---|---|---|
-| `backend/src/modules/tasks/tasks.jobs.ts` | `scheduler.materialize-all`, `scheduler.materialize-series` | `tasks` |
-| `backend/src/modules/events/events.jobs.ts` | `scheduler.birthdays` | `events` |
-| `backend/src/modules/chores/chores.jobs.ts` | `chores.expire-swaps` | `tasks` |
-| `backend/src/modules/notifications/notifications.service.ts` | `deliver()`, after an `in_app` delivery row is committed | `notifications` |
+| File                                                         | Job / call site                                             | Domains         |
+| ------------------------------------------------------------ | ----------------------------------------------------------- | --------------- |
+| `backend/src/modules/tasks/tasks.jobs.ts`                    | `scheduler.materialize-all`, `scheduler.materialize-series` | `tasks`         |
+| `backend/src/modules/events/events.jobs.ts`                  | `scheduler.birthdays`                                       | `events`        |
+| `backend/src/modules/chores/chores.jobs.ts`                  | `chores.expire-swaps`                                       | `tasks`         |
+| `backend/src/modules/notifications/notifications.service.ts` | `deliver()`, after an `in_app` delivery row is committed    | `notifications` |
 
 The last one is the one that matters day to day: it is what makes the bell
 count move within a poll tick when a notification lands, rather than at next
@@ -204,15 +204,15 @@ GET /api/changes
 The handler reads all counters and then **filters by the caller's read scope**,
 using `request.auth.can(...)`:
 
-| Domain | Included when |
-|---|---|
-| `tasks` | `can('task:read')` |
-| `events` | `can('event:read')` |
-| `goals` | `can('goal:read')` |
-| `shopping` | `can('shopping:read')` |
-| `members` | `can('member:read')` |
-| `wall` | always (the wall route is auth-only) |
-| `notifications` | always (your own inbox) |
+| Domain          | Included when                        |
+| --------------- | ------------------------------------ |
+| `tasks`         | `can('task:read')`                   |
+| `events`        | `can('event:read')`                  |
+| `goals`         | `can('goal:read')`                   |
+| `shopping`      | `can('shopping:read')`               |
+| `members`       | `can('member:read')`                 |
+| `wall`          | always (the wall route is auth-only) |
+| `notifications` | always (your own inbox)              |
 
 This is cheap, and it does two things at once: a child's client never learns
 that the goals domain moved, and never invalidates a query it is not allowed to
@@ -261,15 +261,15 @@ CHANGE_DOMAIN_KEYS: Record<ChangeDomain, QueryKey[]>
 
 The key map, using the roots that exist today (each feature's `api.ts`):
 
-| Domain | Query keys invalidated |
-|---|---|
-| `tasks` | `['tasks']`, `['dashboard']` |
-| `events` | `['calendar']`, `['dashboard']` |
-| `goals` | `['goals']`, `['dashboard']` |
-| `shopping` | `['shopping']`, `['dashboard']` |
-| `wall` | `['wall']`, `['dashboard']` |
-| `members` | `['members']`, `['me']`, `['dashboard']` |
-| `notifications` | `['notifications']` |
+| Domain          | Query keys invalidated                   |
+| --------------- | ---------------------------------------- |
+| `tasks`         | `['tasks']`, `['dashboard']`             |
+| `events`        | `['calendar']`, `['dashboard']`          |
+| `goals`         | `['goals']`, `['dashboard']`             |
+| `shopping`      | `['shopping']`, `['dashboard']`          |
+| `wall`          | `['wall']`, `['dashboard']`              |
+| `members`       | `['members']`, `['me']`, `['dashboard']` |
+| `notifications` | `['notifications']`                      |
 
 Three things to know about this table:
 
@@ -395,7 +395,7 @@ family shopping list is noise; the data still arrives on focus.
   notification and `features/settings/push/sw-bridge.ts` already has a
   client↔SW message protocol. After `showNotification()` resolves, the SW could
   `postMessage({ type: 'FAMILY_CHANGE', domains: [...] })` to open clients for
-  an instant invalidation. Legal on iOS — the notification *is* shown — but the
+  an instant invalidation. Legal on iOS — the notification _is_ shown — but the
   app is almost always backgrounded when a push arrives, so the value is small.
   Owned by the push agent if it is ever built; do not write push logic here.
 - **Leader election** so only one tab of several polls. Unnecessary at six
@@ -415,27 +415,27 @@ the setting that stops response buffering and is the one people forget. What is
 per-read idle deadline — reset by each heartbeat, so a stream with a 25-second
 heartbeat survives — or as an absolute cap that kills any stream at 120 seconds
 regardless of traffic. Do not guess: put the stream route in its own `handle`
-block with the timeouts omitted, *and* send a heartbeat comment line every 25
+block with the timeouts omitted, _and_ send a heartbeat comment line every 25
 seconds. The experiment that settles it is in §9.
 
 ---
 
 ## 7. Failure modes
 
-| Situation | What happens |
-|---|---|
-| **Backend restarts** | Counters are in Redis, not in the process, so they survive. In-flight polls fail, retry twice with backoff, and resume. No spurious invalidation. |
-| **Redis restarts and loses the AOF** | Counters restart at 1, i.e. *lower* than what clients hold. `diffRevisions` compares with `!==`, so every client invalidates every domain exactly once and is then correct. This is why the comparison is not `>`. |
-| **Redis unreachable** | `readRevisions` throws, the endpoint 500s, the feed enters degraded mode (§5.4) after three failures. The rate limiter runs with `skipOnError: true`, so the rest of the app keeps serving. |
-| **Network loss** | `networkMode: 'online'` pauses the query. On reconnect, `refetchOnReconnect` fires it immediately, one diff catches everything missed, and the shopping outbox flushes its queued writes on the same `online` event. |
-| **Backgrounded for an hour** | The interval stops at `hidden`. On iOS the app most likely comes back as a cold start at `start_url` (research §8), in which case the cache is empty, `seenRef` is empty, the first response is a baseline that invalidates nothing, and every mounted query fetches normally. On a warm resume, `visibilitychange → visible` refetches `['changes']` within a beat and invalidates precisely the domains that moved. Both paths are correct; the second is the cheap one. |
-| **Access token expires mid-poll** | The poll is a normal `api.get`. It 401s, `refresh.ts` performs one single-flight rotation, the request is retried once, and the tick lands late by the width of one refresh. Because there is no connection to re-establish, N clients resuming together produce N ordinary requests, not N reconnects — this is the whole reason a connection-based design was rejected. |
-| **Refresh fails (revoked family, suspension)** | Existing behaviour: `endSession()` redirects to `/login` or `/auth/*`, `AppShell` unmounts, the poll stops. |
-| **A mutation is in flight when a diff arrives** | Held in `pendingRef` and applied when the mutation cache goes idle. The optimistic value is never overwritten. Named regression test in §8.2. |
-| **Offline shopping outbox flushes on resume** | Many writes land at once, bumping `shopping` several times. Other clients see a single diff on their next tick — counters coalesce for free, which a per-event channel would not. |
-| **Two admins approve the same member** | One wins, one gets 409 (D3). The loser's `['members']` list is invalidated within a tick and self-corrects without a reload. |
-| **A write route is added with no domain mapping** | Caught by the coverage test (§8.1), not in production. |
-| **A worker writes rows and forgets to bump** | Latency regression only: those queries still refresh on focus and on mount. |
+| Situation                                         | What happens                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Backend restarts**                              | Counters are in Redis, not in the process, so they survive. In-flight polls fail, retry twice with backoff, and resume. No spurious invalidation.                                                                                                                                                                                                                                                                                                                          |
+| **Redis restarts and loses the AOF**              | Counters restart at 1, i.e. _lower_ than what clients hold. `diffRevisions` compares with `!==`, so every client invalidates every domain exactly once and is then correct. This is why the comparison is not `>`.                                                                                                                                                                                                                                                         |
+| **Redis unreachable**                             | `readRevisions` throws, the endpoint 500s, the feed enters degraded mode (§5.4) after three failures. The rate limiter runs with `skipOnError: true`, so the rest of the app keeps serving.                                                                                                                                                                                                                                                                                |
+| **Network loss**                                  | `networkMode: 'online'` pauses the query. On reconnect, `refetchOnReconnect` fires it immediately, one diff catches everything missed, and the shopping outbox flushes its queued writes on the same `online` event.                                                                                                                                                                                                                                                       |
+| **Backgrounded for an hour**                      | The interval stops at `hidden`. On iOS the app most likely comes back as a cold start at `start_url` (research §8), in which case the cache is empty, `seenRef` is empty, the first response is a baseline that invalidates nothing, and every mounted query fetches normally. On a warm resume, `visibilitychange → visible` refetches `['changes']` within a beat and invalidates precisely the domains that moved. Both paths are correct; the second is the cheap one. |
+| **Access token expires mid-poll**                 | The poll is a normal `api.get`. It 401s, `refresh.ts` performs one single-flight rotation, the request is retried once, and the tick lands late by the width of one refresh. Because there is no connection to re-establish, N clients resuming together produce N ordinary requests, not N reconnects — this is the whole reason a connection-based design was rejected.                                                                                                  |
+| **Refresh fails (revoked family, suspension)**    | Existing behaviour: `endSession()` redirects to `/login` or `/auth/*`, `AppShell` unmounts, the poll stops.                                                                                                                                                                                                                                                                                                                                                                |
+| **A mutation is in flight when a diff arrives**   | Held in `pendingRef` and applied when the mutation cache goes idle. The optimistic value is never overwritten. Named regression test in §8.2.                                                                                                                                                                                                                                                                                                                              |
+| **Offline shopping outbox flushes on resume**     | Many writes land at once, bumping `shopping` several times. Other clients see a single diff on their next tick — counters coalesce for free, which a per-event channel would not.                                                                                                                                                                                                                                                                                          |
+| **Two admins approve the same member**            | One wins, one gets 409 (D3). The loser's `['members']` list is invalidated within a tick and self-corrects without a reload.                                                                                                                                                                                                                                                                                                                                               |
+| **A write route is added with no domain mapping** | Caught by the coverage test (§8.1), not in production.                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **A worker writes rows and forgets to bump**      | Latency regression only: those queries still refresh on focus and on mount.                                                                                                                                                                                                                                                                                                                                                                                                |
 
 ---
 
@@ -523,7 +523,7 @@ Add to the pre-launch checklist in `docs/research/ios-pwa-push.md`:
    and raise it if nobody can tell. It is one exported constant.
 2. **Does `visibilitychange → visible` fire reliably enough on a warm iOS resume
    for the focus refetch to be the fast path?** Research §8 says an installed
-   PWA usually comes back as a *cold* start, in which case the question is moot.
+   PWA usually comes back as a _cold_ start, in which case the question is moot.
    Instrument a counter of `['changes']` fetches and check it against
    checklist item 9 ("kill under memory pressure, return") on a real device.
 3. **Does `request.routeOptions.url` carry the `/api` prefix?** Settled

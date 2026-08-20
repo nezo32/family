@@ -209,9 +209,7 @@ describe('kudos notify exactly the person who was thanked', () => {
   });
 
   it('addresses the intent to the recipient alone', async () => {
-    const db = fakeDb(
-      selectReturning([{ id: RECIPIENT, displayName: 'Мария', status: 'active' }]),
-    );
+    const db = fakeDb(selectReturning([{ id: RECIPIENT, displayName: 'Мария', status: 'active' }]));
 
     await giveKudos(db, giver(), { toUserId: RECIPIENT, emoji: '👏' });
 
@@ -230,9 +228,7 @@ describe('kudos notify exactly the person who was thanked', () => {
   });
 
   it('uses the catalog priority — a thank-you must never interrupt anybody', async () => {
-    const db = fakeDb(
-      selectReturning([{ id: RECIPIENT, displayName: 'Мария', status: 'active' }]),
-    );
+    const db = fakeDb(selectReturning([{ id: RECIPIENT, displayName: 'Мария', status: 'active' }]));
 
     await giveKudos(db, giver(), { toUserId: RECIPIENT, emoji: '👏' });
 
@@ -300,9 +296,7 @@ describe('an urgent shopping item notifies only the intended shopper', () => {
     await emitUrgentItemIntent(fakeDb(), urgent);
 
     expect(onlyIntent().priority).toBe('high');
-    expect(onlyIntent().priority).toBe(
-      NOTIFICATION_TYPE_DEFAULT_PRIORITY.shopping_urgent_item,
-    );
+    expect(onlyIntent().priority).toBe(NOTIFICATION_TYPE_DEFAULT_PRIORITY.shopping_urgent_item);
   });
 
   it('is idempotent per item, so a flaky connection interrupts one person once', async () => {
@@ -388,10 +382,7 @@ describe('birthday greetings reach everyone except the birthday person', () => {
       { id: PAPA, displayName: 'Павел', birthDate: '1988-04-12', status: 'active' },
     ]);
 
-    const emitted = await announceBirthdaysToday(
-      fakeDb(),
-      new Date('2026-08-19T09:00:00.000Z'),
-    );
+    const emitted = await announceBirthdaysToday(fakeDb(), new Date('2026-08-19T09:00:00.000Z'));
 
     expect(emitted).toBe(1);
     const intent = onlyIntent();
@@ -505,9 +496,7 @@ describe('registration tells the people who can approve, and nobody else', () =>
     await registerApplicant();
 
     expect(onlyIntent().priority).toBe('high');
-    expect(onlyIntent().priority).toBe(
-      NOTIFICATION_TYPE_DEFAULT_PRIORITY.member_pending_approval,
-    );
+    expect(onlyIntent().priority).toBe(NOTIFICATION_TYPE_DEFAULT_PRIORITY.member_pending_approval);
   });
 
   it('says nothing when the first signup auto-approves itself as owner', async () => {

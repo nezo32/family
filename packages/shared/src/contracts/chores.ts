@@ -33,13 +33,7 @@ export const rotationStrategySchema = z.enum([
 ]);
 export type RotationStrategy = z.infer<typeof rotationStrategySchema>;
 
-export const swapStatusSchema = z.enum([
-  'pending',
-  'accepted',
-  'declined',
-  'cancelled',
-  'expired',
-]);
+export const swapStatusSchema = z.enum(['pending', 'accepted', 'declined', 'cancelled', 'expired']);
 export type SwapStatus = z.infer<typeof swapStatusSchema>;
 
 /* -------------------------------------------------------------------------- */

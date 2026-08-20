@@ -27,9 +27,8 @@ if (config.RUN_MIGRATIONS_ON_BOOT) {
  */
 try {
   const { getDb } = await import('./core/db.js');
-  const { ensureDefaultEscalationPolicies } = await import(
-    './modules/notifications/notifications.service.js'
-  );
+  const { ensureDefaultEscalationPolicies } =
+    await import('./modules/notifications/notifications.service.js');
   await ensureDefaultEscalationPolicies(getDb());
 } catch (err) {
   logger.error({ err }, 'could not seed the default escalation policies');

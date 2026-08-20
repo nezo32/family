@@ -405,9 +405,7 @@ const wallRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const { sinceDays } = request.query;
-      const since = sinceDays
-        ? new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000)
-        : undefined;
+      const since = sinceDays ? new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000) : undefined;
       return { items: await wall.kudosTotals(getDb(), since ? { since } : {}) };
     },
   );

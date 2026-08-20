@@ -26,62 +26,62 @@ no `public: true` route in this domain (D4 deny-by-default).
 
 ### Moneybox — `/goals`
 
-| Method | Path | Permission | Notes |
-|---|---|---|---|
-| GET | `/goals` | `goal:read` | `?status[]&scope=all\|family\|mine&sort=&cursor=&limit=` |
-| POST | `/goals` | `goal:create` | optional inline `milestones[]` |
-| GET | `/goals/:id` | `goal:read` | includes `contributors[]` |
-| PATCH | `/goals/:id` | `goal:update` | |
-| DELETE | `/goals/:id` | `goal:delete` | soft delete (`deleted_at`) |
-| POST | `/goals/reorder` | `goal:update` | full ordered id list |
-| GET | `/goals/:id/transactions` | `goal:read` | cursor-paginated ledger |
-| POST | `/goals/:id/contributions` | `goal:contribute` | positive amount |
-| POST | `/goals/:id/withdrawals` | `goal:contribute` | positive amount, negated server-side |
-| POST | `/goals/:id/corrections` | `goal:update` | the only signed input |
-| POST | `/goals/:id/milestones` | `goal:update` | |
-| PATCH | `/goals/:id/milestones/:mid` | `goal:update` | |
-| DELETE | `/goals/:id/milestones/:mid` | `goal:update` | hard delete — milestones are not history |
+| Method | Path                         | Permission        | Notes                                                    |
+| ------ | ---------------------------- | ----------------- | -------------------------------------------------------- |
+| GET    | `/goals`                     | `goal:read`       | `?status[]&scope=all\|family\|mine&sort=&cursor=&limit=` |
+| POST   | `/goals`                     | `goal:create`     | optional inline `milestones[]`                           |
+| GET    | `/goals/:id`                 | `goal:read`       | includes `contributors[]`                                |
+| PATCH  | `/goals/:id`                 | `goal:update`     |                                                          |
+| DELETE | `/goals/:id`                 | `goal:delete`     | soft delete (`deleted_at`)                               |
+| POST   | `/goals/reorder`             | `goal:update`     | full ordered id list                                     |
+| GET    | `/goals/:id/transactions`    | `goal:read`       | cursor-paginated ledger                                  |
+| POST   | `/goals/:id/contributions`   | `goal:contribute` | positive amount                                          |
+| POST   | `/goals/:id/withdrawals`     | `goal:contribute` | positive amount, negated server-side                     |
+| POST   | `/goals/:id/corrections`     | `goal:update`     | the only signed input                                    |
+| POST   | `/goals/:id/milestones`      | `goal:update`     |                                                          |
+| PATCH  | `/goals/:id/milestones/:mid` | `goal:update`     |                                                          |
+| DELETE | `/goals/:id/milestones/:mid` | `goal:update`     | hard delete — milestones are not history                 |
 
 There is deliberately **no** `DELETE /goals/:id/transactions/:txnId`. See §2.
 
 ### Shopping — `/shopping`
 
-| Method | Path | Permission | Notes |
-|---|---|---|---|
-| GET | `/shopping/lists` | `shopping:read` | `?includeArchived` |
-| POST | `/shopping/lists` | `shopping:list:manage` | |
-| PATCH | `/shopping/lists/:id` | `shopping:list:manage` | also archive/unarchive |
-| DELETE | `/shopping/lists/:id` | `shopping:list:manage` | cascades to items |
-| GET | `/shopping/lists/:id/items` | `shopping:read` | `?state[]&groupByCategory` |
-| POST | `/shopping/lists/:id/items` | `shopping:write` | idempotent via `clientId` |
-| POST | `/shopping/lists/:id/items/bulk` | `shopping:write` | quick entry, `text` or `items[]` |
-| PATCH | `/shopping/items/:id` | `shopping:write` | incl. moving between lists |
-| POST | `/shopping/items/:id/toggle` | `shopping:write` | the aisle one-tap |
-| DELETE | `/shopping/items/:id` | `shopping:write` | |
-| POST | `/shopping/lists/:id/clear-bought` | `shopping:list:manage` | |
-| POST | `/shopping/lists/:id/reorder` | `shopping:write` | |
-| GET | `/shopping/products/suggest` | `shopping:read` | autocomplete from own history |
-| PATCH | `/shopping/products/:id` | `shopping:list:manage` | favourite / default unit & aisle |
+| Method | Path                               | Permission             | Notes                            |
+| ------ | ---------------------------------- | ---------------------- | -------------------------------- |
+| GET    | `/shopping/lists`                  | `shopping:read`        | `?includeArchived`               |
+| POST   | `/shopping/lists`                  | `shopping:list:manage` |                                  |
+| PATCH  | `/shopping/lists/:id`              | `shopping:list:manage` | also archive/unarchive           |
+| DELETE | `/shopping/lists/:id`              | `shopping:list:manage` | cascades to items                |
+| GET    | `/shopping/lists/:id/items`        | `shopping:read`        | `?state[]&groupByCategory`       |
+| POST   | `/shopping/lists/:id/items`        | `shopping:write`       | idempotent via `clientId`        |
+| POST   | `/shopping/lists/:id/items/bulk`   | `shopping:write`       | quick entry, `text` or `items[]` |
+| PATCH  | `/shopping/items/:id`              | `shopping:write`       | incl. moving between lists       |
+| POST   | `/shopping/items/:id/toggle`       | `shopping:write`       | the aisle one-tap                |
+| DELETE | `/shopping/items/:id`              | `shopping:write`       |                                  |
+| POST   | `/shopping/lists/:id/clear-bought` | `shopping:list:manage` |                                  |
+| POST   | `/shopping/lists/:id/reorder`      | `shopping:write`       |                                  |
+| GET    | `/shopping/products/suggest`       | `shopping:read`        | autocomplete from own history    |
+| PATCH  | `/shopping/products/:id`           | `shopping:list:manage` | favourite / default unit & aisle |
 
 ### Wall — `/wall`
 
-| Method | Path | Permission | Notes |
-|---|---|---|---|
-| GET | `/wall/posts` | authenticated | pinned first, then `created_at desc` |
-| POST | `/wall/posts` | `post:create` | |
-| PATCH | `/wall/posts/:id` | `post:delete:own` scope rules¹ | author only, unless `post:delete:any` |
-| POST | `/wall/posts/:id/pin` | `post:pin` | body: `{ pinnedUntil }` |
-| DELETE | `/wall/posts/:id` | `post:delete:own` / `:any` | soft delete |
-| GET | `/:entityType/:entityId/comments` | read perm of the **target** | `post\|task\|event\|goal\|poll` |
-| POST | `/:entityType/:entityId/comments` | `comment:create` | |
-| PATCH | `/comments/:id` | author only | |
-| DELETE | `/comments/:id` | `comment:delete:own` / `:any` | soft delete |
-| POST | `/:entityType/:entityId/reactions` | `kudos:give` | idempotent toggle, returns the summary |
-| GET | `/wall/polls` | authenticated | `?status=all\|open\|closed` |
-| POST | `/wall/polls` | `post:create`² | |
-| PATCH | `/wall/polls/:id` | author or `post:delete:any`² | `close: true` is one-way |
-| POST | `/wall/polls/:id/votes` | authenticated² | replaces the caller's selection |
-| GET | `/activity` | authenticated³ | `?verb&entityType&from&to`, `created_at desc` |
+| Method | Path                               | Permission                     | Notes                                         |
+| ------ | ---------------------------------- | ------------------------------ | --------------------------------------------- |
+| GET    | `/wall/posts`                      | authenticated                  | pinned first, then `created_at desc`          |
+| POST   | `/wall/posts`                      | `post:create`                  |                                               |
+| PATCH  | `/wall/posts/:id`                  | `post:delete:own` scope rules¹ | author only, unless `post:delete:any`         |
+| POST   | `/wall/posts/:id/pin`              | `post:pin`                     | body: `{ pinnedUntil }`                       |
+| DELETE | `/wall/posts/:id`                  | `post:delete:own` / `:any`     | soft delete                                   |
+| GET    | `/:entityType/:entityId/comments`  | read perm of the **target**    | `post\|task\|event\|goal\|poll`               |
+| POST   | `/:entityType/:entityId/comments`  | `comment:create`               |                                               |
+| PATCH  | `/comments/:id`                    | author only                    |                                               |
+| DELETE | `/comments/:id`                    | `comment:delete:own` / `:any`  | soft delete                                   |
+| POST   | `/:entityType/:entityId/reactions` | `kudos:give`                   | idempotent toggle, returns the summary        |
+| GET    | `/wall/polls`                      | authenticated                  | `?status=all\|open\|closed`                   |
+| POST   | `/wall/polls`                      | `post:create`²                 |                                               |
+| PATCH  | `/wall/polls/:id`                  | author or `post:delete:any`²   | `close: true` is one-way                      |
+| POST   | `/wall/polls/:id/votes`            | authenticated²                 | replaces the caller's selection               |
+| GET    | `/activity`                        | authenticated³                 | `?verb&entityType&from&to`, `created_at desc` |
 
 ¹ Editing a post is scoped like deleting it: author, or a holder of the `:any`
 variant. There is no separate `post:update` permission in the catalog.
@@ -125,6 +125,7 @@ goal owned by someone else does not exist as far as the API is concerned.
    source of truth that drifts the first time a row is inserted outside the
    service. If the aggregate ever becomes hot — it will not, this is a few
    thousand rows — add a materialized view refreshed on write, not a column.
+
 4. **Sign is authoritative, `kind` is a label.** Contributions and interest are
    positive, withdrawals negative, corrections either. The API never accepts a
    signed number except on `/corrections`; withdrawals are submitted positive
@@ -167,7 +168,7 @@ pointer. Three consequences, all owned by the service layer:
 - **No `ON DELETE CASCADE`.** Deleting a task does not delete its comments.
   Every module that soft-deletes a commentable entity must call the wall
   service (or emit a domain event that it handles) to soft-delete the attached
-  comments and reactions. Cross-module calls go through the *service*, never the
+  comments and reactions. Cross-module calls go through the _service_, never the
   repository (D8). A nightly job sweeping orphans by target existence is the
   cheap backstop; it is not a substitute.
 - **`entity_type` is unvalidated `text` in the DB.** The closed enum lives in
@@ -175,7 +176,7 @@ pointer. Three consequences, all owned by the service layer:
   mirrored as a const in `wall.schema.ts` for documentation. Validation happens
   on write, in the contract.
 - **Reads need the target's permission.** `GET /:entityType/:entityId/comments`
-  must first resolve read access to the *target* (a comment on a private goal is
+  must first resolve read access to the _target_ (a comment on a private goal is
   as private as the goal) before returning anything. This check is the single
   most important line in the comments service.
 
@@ -246,13 +247,13 @@ are on the rejected list (D9).
 
 From the catalog in `packages/shared/src/domain/roles.ts`:
 
-| Role | Moneybox | Shopping | Wall |
-|---|---|---|---|
-| owner / admin | full | full | full, incl. `post:pin`, `*:delete:any` |
-| adult | `goal:read/create/update/delete/contribute` | full, incl. `shopping:list:manage` | full, incl. pin and `:any` deletes |
-| teen | `goal:read` **only** | read + write items | post, comment, react, delete own |
-| child | **none** | read + write items | post, comment, react, delete own |
-| guest | none | none | none (calendar only) |
+| Role          | Moneybox                                    | Shopping                           | Wall                                   |
+| ------------- | ------------------------------------------- | ---------------------------------- | -------------------------------------- |
+| owner / admin | full                                        | full                               | full, incl. `post:pin`, `*:delete:any` |
+| adult         | `goal:read/create/update/delete/contribute` | full, incl. `shopping:list:manage` | full, incl. pin and `:any` deletes     |
+| teen          | `goal:read` **only**                        | read + write items                 | post, comment, react, delete own       |
+| child         | **none**                                    | read + write items                 | post, comment, react, delete own       |
+| guest         | none                                        | none                               | none (calendar only)                   |
 
 - **Children have zero `goal:*` permissions.** Not read, not contribute. A child
   requesting any `/goals` route gets **404** (D4: 404, not 403, outside read

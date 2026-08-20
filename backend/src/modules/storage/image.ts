@@ -54,10 +54,7 @@ export function sniffImageType(bytes: Uint8Array): AllowedImageType | null {
   if (head.subarray(0, JPEG_MAGIC.length).equals(JPEG_MAGIC)) return 'image/jpeg';
   // WebP is a RIFF container: `RIFF` .... `WEBP`. Checking only `RIFF` would
   // also accept WAV and AVI, which are RIFF too.
-  if (
-    head.subarray(0, 4).equals(RIFF_MAGIC) &&
-    head.subarray(8, 12).equals(WEBP_MAGIC)
-  ) {
+  if (head.subarray(0, 4).equals(RIFF_MAGIC) && head.subarray(8, 12).equals(WEBP_MAGIC)) {
     return 'image/webp';
   }
 

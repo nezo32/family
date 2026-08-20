@@ -95,9 +95,7 @@ export async function enqueue<N extends JobName>(
   payload: JobPayloads[N],
   options?: JobsOptions & { jobId?: string },
 ): Promise<void> {
-  const opts = options?.jobId
-    ? { ...options, jobId: safeJobId(options.jobId) }
-    : options;
+  const opts = options?.jobId ? { ...options, jobId: safeJobId(options.jobId) } : options;
   await withTimeout(
     getQueue(QUEUE_FOR_JOB[name]).add(name, payload, opts),
     ENQUEUE_TIMEOUT_MS,

@@ -118,7 +118,9 @@ describe('ineligibleReason', () => {
         {
           active: true,
           weight: 1,
-          blackouts: [{ startsAt: new Date(at.getTime() - DAY), endsAt: new Date(at.getTime() + DAY) }],
+          blackouts: [
+            { startsAt: new Date(at.getTime() - DAY), endsAt: new Date(at.getTime() + DAY) },
+          ],
         },
         at,
       ),
@@ -179,8 +181,18 @@ describe('compareByDebt — the deterministic tie-break chain (D5)', () => {
 
 describe('determinism', () => {
   const roster = [
-    member({ userId: ADULT, position: 0, completed: 12, lastAssignedAt: new Date(T0.getTime() - 3 * DAY) }),
-    member({ userId: TEEN, position: 1, completed: 7, lastAssignedAt: new Date(T0.getTime() - DAY) }),
+    member({
+      userId: ADULT,
+      position: 0,
+      completed: 12,
+      lastAssignedAt: new Date(T0.getTime() - 3 * DAY),
+    }),
+    member({
+      userId: TEEN,
+      position: 1,
+      completed: 7,
+      lastAssignedAt: new Date(T0.getTime() - DAY),
+    }),
     member({ userId: CHILD, position: 2, weight: 0.5, completed: 3, lastAssignedAt: null }),
   ];
 
@@ -323,10 +335,7 @@ describe('weighted_balance', () => {
 
   it('ignores inactive members', () => {
     const pick = pickAssignee(
-      snapshot([
-        member({ userId: ADULT, active: false }),
-        member({ userId: TEEN, completed: 99 }),
-      ]),
+      snapshot([member({ userId: ADULT, active: false }), member({ userId: TEEN, completed: 99 })]),
       T0,
     );
     expect(pick.userId).toBe(TEEN);
@@ -337,7 +346,9 @@ describe('weighted_balance', () => {
       snapshot([
         member({
           userId: ADULT,
-          blackouts: [{ startsAt: new Date(T0.getTime() - DAY), endsAt: new Date(T0.getTime() + DAY) }],
+          blackouts: [
+            { startsAt: new Date(T0.getTime() - DAY), endsAt: new Date(T0.getTime() + DAY) },
+          ],
         }),
       ]),
       T0,

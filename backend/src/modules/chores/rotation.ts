@@ -263,10 +263,13 @@ export class RotationRun {
     // time-dependent, so they are checked per occurrence instead.
     this.walk = this.states
       .filter((s) => s.active && s.weight > 0)
-      .sort((a, b) => (a.position !== b.position ? a.position - b.position : compareIds(a.userId, b.userId)));
+      .sort((a, b) =>
+        a.position !== b.position ? a.position - b.position : compareIds(a.userId, b.userId),
+      );
 
     this.initialCursor = snapshot.cursor;
-    this.cursorIndex = this.walk.length === 0 ? 0 : normalizeCursor(snapshot.cursor, this.walk.length);
+    this.cursorIndex =
+      this.walk.length === 0 ? 0 : normalizeCursor(snapshot.cursor, this.walk.length);
   }
 
   /** The value to persist back onto `rotations.cursor` after the run. */

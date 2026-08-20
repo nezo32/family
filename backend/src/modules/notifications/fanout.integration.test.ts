@@ -345,7 +345,7 @@ describe.skipIf(!hasTestDb)('notification fan-out (integration)', () => {
     // A later `delivered` replay cannot undo the interaction.
     const late = await ack('delivered');
     expectStatus(late, 200);
-    expect((late.json<{ interactedAt: string | null }>()).interactedAt).toBe(
+    expect(late.json<{ interactedAt: string | null }>().interactedAt).toBe(
       interactedBody.interactedAt,
     );
 
@@ -384,7 +384,7 @@ describe.skipIf(!hasTestDb)('notification fan-out (integration)', () => {
       token: adult.accessToken,
     });
     expectStatus(inbox, 200);
-    expect((inbox.json<{ items: unknown[] }>()).items).toHaveLength(1);
+    expect(inbox.json<{ items: unknown[] }>().items).toHaveLength(1);
 
     const unread = await request(h.app, {
       method: 'GET',
@@ -392,7 +392,7 @@ describe.skipIf(!hasTestDb)('notification fan-out (integration)', () => {
       token: adult.accessToken,
     });
     expectStatus(unread, 200);
-    expect((unread.json<{ unread: number }>()).unread).toBe(1);
+    expect(unread.json<{ unread: number }>().unread).toBe(1);
 
     const read = await request(h.app, {
       method: 'POST',
@@ -408,7 +408,7 @@ describe.skipIf(!hasTestDb)('notification fan-out (integration)', () => {
       token: adult.accessToken,
     });
     expectStatus(after, 200);
-    expect((after.json<{ unread: number }>()).unread).toBe(0);
+    expect(after.json<{ unread: number }>().unread).toBe(0);
   });
 
   /* ====================================================================== */

@@ -27,7 +27,6 @@ import { pathToFileURL } from 'node:url';
  * production uses. Seeding occurrences directly would hide materializer bugs.
  */
 
-
 /**
  * Turn the seeded rules into actual occurrences.
  *
@@ -313,7 +312,13 @@ async function seed(db: Db): Promise<void> {
     const lists = await tx
       .insert(shoppingLists)
       .values([
-        { name: 'Продукты', icon: 'shopping-cart', color: '#16a34a', createdById: mama, sortOrder: 0 },
+        {
+          name: 'Продукты',
+          icon: 'shopping-cart',
+          color: '#16a34a',
+          createdById: mama,
+          sortOrder: 0,
+        },
         { name: 'Хозтовары', icon: 'spray-can', color: '#0891b2', createdById: papa, sortOrder: 1 },
         { name: 'Аптека', icon: 'pill', color: '#dc2626', createdById: mama, sortOrder: 2 },
       ])
@@ -323,11 +328,50 @@ async function seed(db: Db): Promise<void> {
     if (!groceries) throw new Error('seed: shopping list insert failed');
 
     await tx.insert(shoppingItems).values([
-      { listId: groceries.id, name: 'Молоко', quantity: '2', unit: 'шт', category: 'молочное', requestedById: mama, sortOrder: 0 },
-      { listId: groceries.id, name: 'Хлеб', quantity: '1', unit: 'шт', category: 'выпечка', requestedById: papa, sortOrder: 1 },
-      { listId: groceries.id, name: 'Картошка', quantity: '3', unit: 'кг', category: 'овощи', requestedById: mama, sortOrder: 2 },
-      { listId: groceries.id, name: 'Яблоки', quantity: '1.5', unit: 'кг', category: 'фрукты', requestedById: sasha, sortOrder: 3 },
-      { listId: groceries.id, name: 'Сыр', category: 'молочное', requestedById: papa, isUrgent: true, sortOrder: 4 },
+      {
+        listId: groceries.id,
+        name: 'Молоко',
+        quantity: '2',
+        unit: 'шт',
+        category: 'молочное',
+        requestedById: mama,
+        sortOrder: 0,
+      },
+      {
+        listId: groceries.id,
+        name: 'Хлеб',
+        quantity: '1',
+        unit: 'шт',
+        category: 'выпечка',
+        requestedById: papa,
+        sortOrder: 1,
+      },
+      {
+        listId: groceries.id,
+        name: 'Картошка',
+        quantity: '3',
+        unit: 'кг',
+        category: 'овощи',
+        requestedById: mama,
+        sortOrder: 2,
+      },
+      {
+        listId: groceries.id,
+        name: 'Яблоки',
+        quantity: '1.5',
+        unit: 'кг',
+        category: 'фрукты',
+        requestedById: sasha,
+        sortOrder: 3,
+      },
+      {
+        listId: groceries.id,
+        name: 'Сыр',
+        category: 'молочное',
+        requestedById: papa,
+        isUrgent: true,
+        sortOrder: 4,
+      },
     ]);
 
     /* ---------------------------------- wall ---------------------------------- */

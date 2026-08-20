@@ -175,9 +175,7 @@ describe('drawCrop', () => {
 
 describe('encodeAvatar', () => {
   it('produces WebP at the first quality when it already fits', async () => {
-    const toBlob = vi.fn(
-      (type: string) => new Blob([new Uint8Array(30 * 1024)], { type }),
-    );
+    const toBlob = vi.fn((type: string) => new Blob([new Uint8Array(30 * 1024)], { type }));
     const result = await encodeAvatar(fakeCanvas(toBlob));
 
     expect(result.type).toBe('image/webp');
@@ -252,9 +250,7 @@ describe('encodeAvatar', () => {
 
 describe('renderAvatarBlob', () => {
   it('crops a portrait photo and returns a 512px WebP inside the budget', async () => {
-    const canvas = fakeCanvas(
-      (type) => new Blob([new Uint8Array(42 * 1024)], { type }),
-    );
+    const canvas = fakeCanvas((type) => new Blob([new Uint8Array(42 * 1024)], { type }));
     const transform = clampTransform(PORTRAIT, VIEWPORT, { zoom: 2, offsetX: 0, offsetY: 200 });
 
     const result = await renderAvatarBlob(IMAGE, PORTRAIT, VIEWPORT, transform, {

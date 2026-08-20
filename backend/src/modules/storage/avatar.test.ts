@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  avatarObjectKey,
-  avatarUrlFor,
-  buildAvatarObjectName,
-  parseAvatarUrl,
-} from './avatar.js';
+import { avatarObjectKey, avatarUrlFor, buildAvatarObjectName, parseAvatarUrl } from './avatar.js';
 
 /**
  * The URL ⇄ object-key mapping.

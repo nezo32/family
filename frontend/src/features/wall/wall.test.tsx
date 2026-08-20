@@ -3,25 +3,34 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { Permission } from '@family/shared';
+import type { Permission, PollResponse, PublicUser } from '@family/shared';
 import { api } from '@/shared/api/client';
 import { ApiError } from '@/shared/api/errors';
 import { meKeys } from '@/shared/auth/use-me';
 import { makeMe } from '@/test/me';
 import { TooltipProvider } from '@/shared/ui/tooltip';
 import { AnnouncementComposer } from './components/AnnouncementComposer';
-import { PollsPanel } from './components/PollsPanel';
+import { BoardComposeButton, BoardComposeProvider } from './components/BoardCompose';
+import { KudosPanel } from './components/KudosPanel';
+import { PollBoard } from './components/PollBoard';
+import { PollCard } from './components/PollCard';
 import { ReactionBar } from './components/ReactionBar';
-import { WallFeed } from './components/WallFeed';
+import { WallStream } from './components/WallStream';
+import type { Roster } from './hooks';
 import { WALL_RU } from './locale';
 
 /**
- * Wall behaviour tests.
+ * Board behaviour tests.
  *
- * These cover the five rules that would silently rot: permission gating goes
- * through `useCan()` and nothing else, optimism is reversible, a closed poll is
- * a result rather than a broken form, single-choice voting replaces rather than
- * accumulates, and the activity `summary` is never re-composed on the client.
+ * These cover the rules that would silently rot: permission gating goes through
+ * `useCan()` and nothing else, optimism is reversible, a closed poll is a
+ * result rather than a broken form, single-choice voting replaces rather than
+ * accumulates, the activity `summary` is never re-composed on the client — and
+ * the two rules this redesign added, which are the two easiest to lose:
+ *
+ * - **the poll result is hidden until you have answered**, so the family's
+ *   loudest voters cannot anchor a ten-year-old's answer, and
+ * - **«Спасибо» never renders a per-person count, out loud or on screen** (D5).
  */
 
 /* -------------------------------------------------------------------------- */
@@ -59,6 +68,16 @@ const ROSTER = {
   ],
   pendingCount: 0,
 };
+
+/** The permission set a `child` actually holds — checked against `ROLE_PERMISSIONS`. */
+const CHILD_PERMISSIONS: Permission[] = [
+  'post:create',
+  'post:delete:own',
+  'comment:create',
+  'comment:delete:own',
+  'kudos:give',
+  'poll:vote',
+];
 
 /** The one sentence the client must never rewrite. */
 const ACTIVITY_SUMMARY = 'Лиза полила цветы и вынесла мусор — 19 августа';
@@ -105,35 +124,40 @@ function feedPayload() {
   };
 }
 
-function pollPayload(overrides: { isClosed: boolean; myOptionIds: string[] }) {
+function poll(overrides: { isClosed: boolean; myOptionIds: string[] }): PollResponse {
   return {
-    items: [
+    id: POLL_ID,
+    question: 'Куда едем на выходных?',
+    allowMultiple: false,
+    closesAt: null,
+    closedAt: overrides.isClosed ? NOW : null,
+    isClosed: overrides.isClosed,
+    createdById: OTHER_ID,
+    options: [
       {
-        id: POLL_ID,
-        question: 'Куда едем на выходных?',
-        allowMultiple: false,
-        closesAt: null,
-        closedAt: overrides.isClosed ? NOW : null,
-        isClosed: overrides.isClosed,
-        createdById: OTHER_ID,
-        options: [
-          {
-            id: OPTION_A,
-            label: 'На дачу',
-            sortOrder: 0,
-            voteCount: 2,
-            voterIds: [ME_ID, OTHER_ID],
-          },
-          { id: OPTION_B, label: 'В город', sortOrder: 1, voteCount: 1, voterIds: [] },
-        ],
-        totalVoters: 3,
-        myOptionIds: overrides.myOptionIds,
-        createdAt: NOW,
+        id: OPTION_A,
+        label: 'На дачу',
+        sortOrder: 0,
+        voteCount: 2,
+        voterIds: [ME_ID, OTHER_ID],
       },
+      { id: OPTION_B, label: 'В город', sortOrder: 1, voteCount: 1, voterIds: [] },
     ],
-    nextCursor: null,
+    totalVoters: 3,
+    myOptionIds: overrides.myOptionIds,
+    createdAt: NOW,
   };
 }
+
+function pollPayload(overrides: { isClosed: boolean; myOptionIds: string[] }) {
+  return { items: [poll(overrides)], nextCursor: null };
+}
+
+const FAKE_ROSTER: Roster = {
+  byId: new Map<string, PublicUser>(),
+  members: [],
+  nameOf: (id) => (id === ME_ID ? 'Мама' : id ? 'Лиза' : WALL_RU.board.systemAuthor),
+};
 
 /* -------------------------------------------------------------------------- */
 /* harness                                                                     */
@@ -159,6 +183,8 @@ function renderWithProviders(ui: ReactNode, permissions: Permission[]) {
   );
 }
 
+const noop = (): void => undefined;
+
 const getSpy = vi.spyOn(api, 'get');
 const postSpy = vi.spyOn(api, 'post');
 
@@ -177,30 +203,80 @@ afterEach(() => {
 });
 
 /* -------------------------------------------------------------------------- */
+/* the one door                                                                */
+/* -------------------------------------------------------------------------- */
+
+describe('the board’s one door', () => {
+  it('offers a child announcements and thanks, and never a poll', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <BoardComposeProvider>
+        <BoardComposeButton />
+      </BoardComposeProvider>,
+      CHILD_PERMISSIONS,
+    );
+
+    await user.click(screen.getByRole('button', { name: WALL_RU.compose.open }));
+
+    // A child holds `post:create` and `kudos:give` but not `poll:create`, so
+    // the third row is absent — not disabled, absent.
+    expect(await screen.findByText(WALL_RU.compose.menuTitle)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Объявление/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Спасибо/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Опрос/ })).not.toBeInTheDocument();
+  });
+
+  it('skips the menu when the reader may put exactly one thing on the board', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <BoardComposeProvider>
+        <BoardComposeButton />
+      </BoardComposeProvider>,
+      ['post:create'],
+    );
+
+    await user.click(screen.getByRole('button', { name: WALL_RU.compose.open }));
+
+    // Straight into the composer: a menu with one item is a tap tax.
+    expect(await screen.findByText(WALL_RU.post.composeTitle)).toBeInTheDocument();
+    expect(screen.queryByText(WALL_RU.compose.menuTitle)).not.toBeInTheDocument();
+  });
+
+  it('renders no door at all for a reader who may not write', () => {
+    renderWithProviders(
+      <BoardComposeProvider>
+        <BoardComposeButton />
+      </BoardComposeProvider>,
+      ['event:read'],
+    );
+
+    expect(screen.queryByRole('button', { name: WALL_RU.compose.open })).not.toBeInTheDocument();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
 /* permissions                                                                 */
 /* -------------------------------------------------------------------------- */
 
 describe('pin control gating', () => {
   it('offers pinning to a holder of post:pin', async () => {
-    const user = userEvent.setup();
-    renderWithProviders(<AnnouncementComposer />, ['post:create', 'post:pin']);
-
-    await user.click(screen.getByRole('button', { name: WALL_RU.post.compose }));
+    renderWithProviders(<AnnouncementComposer open onOpenChange={noop} />, [
+      'post:create',
+      'post:pin',
+    ]);
 
     expect(await screen.findByText(WALL_RU.post.pinFor)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: WALL_RU.post.pinWeek })).toBeInTheDocument();
   });
 
   it('hides every pin control from a user without post:pin', async () => {
-    const user = userEvent.setup();
     // A teenager: may write announcements, may not pin them.
-    renderWithProviders(<AnnouncementComposer />, ['post:create', 'post:delete:own']);
-
-    await user.click(screen.getByRole('button', { name: WALL_RU.post.compose }));
+    renderWithProviders(<AnnouncementComposer open onOpenChange={noop} />, [
+      'post:create',
+      'post:delete:own',
+    ]);
 
     expect(await screen.findByText(WALL_RU.post.composeTitle)).toBeInTheDocument();
     expect(screen.queryByText(WALL_RU.post.pinFor)).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: WALL_RU.post.pinWeek })).not.toBeInTheDocument();
   });
 });
 
@@ -249,28 +325,38 @@ describe('reactions', () => {
 /* -------------------------------------------------------------------------- */
 
 describe('polls', () => {
-  it('renders a closed poll as a result, never as a voting form', async () => {
-    getSpy.mockImplementation((path: string) => {
-      if (path === '/members') return Promise.resolve(ROSTER as never);
-      if (path === '/wall/polls')
-        return Promise.resolve(pollPayload({ isClosed: true, myOptionIds: [OPTION_A] }) as never);
-      return Promise.reject(new Error(`unexpected GET ${path}`));
-    });
+  it('renders a closed poll as a result, never as a voting form', () => {
+    renderWithProviders(
+      <PollCard poll={poll({ isClosed: true, myOptionIds: [OPTION_A] })} roster={FAKE_ROSTER} />,
+      ['poll:vote', 'poll:create'],
+    );
 
-    renderWithProviders(<PollsPanel />, ['poll:vote', 'poll:create']);
-
-    expect(await screen.findByText('Куда едем на выходных?')).toBeInTheDocument();
-    expect(screen.getByText(WALL_RU.polls.closed)).toBeInTheDocument();
+    expect(screen.getByText('Куда едем на выходных?')).toBeInTheDocument();
+    expect(screen.getByText(WALL_RU.polls.closedBadge)).toBeInTheDocument();
 
     // The result is there…
     expect(screen.getByText('На дачу')).toBeInTheDocument();
     expect(screen.getByText('67%')).toBeInTheDocument();
-    expect(screen.getByText(WALL_RU.polls.totalVoters(3))).toBeInTheDocument();
 
     // …and there is nothing to vote with, so nothing can 409.
     expect(screen.queryByRole('radio')).not.toBeInTheDocument();
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: WALL_RU.polls.vote })).not.toBeInTheDocument();
+  });
+
+  it('hides the result until the reader has answered', () => {
+    renderWithProviders(
+      <PollCard poll={poll({ isClosed: false, myOptionIds: [] })} roster={FAKE_ROSTER} />,
+      ['poll:vote'],
+    );
+
+    // Both options are offered…
+    expect(screen.getByRole('radio', { name: /На дачу/ })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /В город/ })).toBeInTheDocument();
+    // …and neither shows how the family is leaning, so the loudest voter in the
+    // house cannot anchor a ten-year-old's answer.
+    expect(screen.queryByText('67%')).not.toBeInTheDocument();
+    expect(screen.queryByText('33%')).not.toBeInTheDocument();
   });
 
   it('replaces the previous choice when voting in a single-choice poll', async () => {
@@ -285,7 +371,7 @@ describe('polls', () => {
     // Never settles: we are asserting the optimistic state, not the response.
     postSpy.mockImplementation(() => new Promise(() => undefined));
 
-    renderWithProviders(<PollsPanel />, ['poll:vote']);
+    renderWithProviders(<PollBoard surface="attention" />, ['poll:vote']);
 
     const first = await screen.findByRole('radio', { name: /На дачу/ });
     const second = screen.getByRole('radio', { name: /В город/ });
@@ -309,9 +395,43 @@ describe('polls', () => {
     expect(
       within(screen.getByRole('radio', { name: /В город/ })).getByText('67%'),
     ).toBeInTheDocument();
-    expect(screen.getByText(WALL_RU.polls.totalVoters(3))).toBeInTheDocument();
 
     expect(postSpy).toHaveBeenCalledWith(`/wall/polls/${POLL_ID}/votes`, { optionIds: [OPTION_B] });
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* kudos — the negative rule                                                   */
+/* -------------------------------------------------------------------------- */
+
+describe('«Спасибо»', () => {
+  it('never renders a per-person count, on screen or to a screen reader', async () => {
+    getSpy.mockImplementation((path: string) => {
+      if (path === '/members') return Promise.resolve(ROSTER as never);
+      if (path === '/wall/kudos/totals')
+        return Promise.resolve({
+          items: [
+            { userId: ME_ID, displayName: 'Мама', received: 7 },
+            { userId: OTHER_ID, displayName: 'Лиза', received: 0 },
+          ],
+        } as never);
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
+
+    const { container } = renderWithProviders(<KudosPanel />, ['kudos:give']);
+
+    expect(await screen.findByText('Мама')).toBeInTheDocument();
+    expect(screen.getByText(WALL_RU.kudos.receivedSome)).toBeInTheDocument();
+    expect(screen.getByText(WALL_RU.kudos.receivedNone)).toBeInTheDocument();
+
+    /*
+      The whole subtree, markup included — `title`, `aria-label` and every text
+      node. A weekly-load bar on Семья once read «40 % (своя доля 33 %)» aloud
+      while drawing no numbers at all; this is the assertion that stops the same
+      leak here. `7` is the count under test; `0` would be trivially present in
+      a uuid, so only the non-trivial one is asserted.
+    */
+    expect(container.innerHTML).not.toMatch(/\b7\b/);
   });
 });
 
@@ -319,7 +439,7 @@ describe('polls', () => {
 /* activity                                                                    */
 /* -------------------------------------------------------------------------- */
 
-describe('activity feed', () => {
+describe('the board stream', () => {
   it('renders the server-rendered summary verbatim', async () => {
     getSpy.mockImplementation((path: string) => {
       if (path === '/members') return Promise.resolve(ROSTER as never);
@@ -327,13 +447,44 @@ describe('activity feed', () => {
       return Promise.reject(new Error(`unexpected GET ${path}`));
     });
 
-    renderWithProviders(<WallFeed />, ['post:create']);
+    renderWithProviders(<WallStream pinnedSurface="card" />, ['post:create']);
 
     // Exact string, not a fragment: the sentence is frozen at write time and the
     // client must not re-compose it from `verb` + entity.
     expect(await screen.findByText(ACTIVITY_SUMMARY)).toBeInTheDocument();
-    // …and the announcement above it is still a card with its own title, so the
-    // two layers of the feed stay visually distinct.
+    // …and the announcement beside it still has its own title, so the two
+    // layers of the board stay visually distinct.
     expect(screen.getByText('В субботу едем к бабушке')).toBeInTheDocument();
+  });
+
+  it('offers a way out of an empty board, and none to a reader who may not write', async () => {
+    getSpy.mockImplementation((path: string) => {
+      if (path === '/members') return Promise.resolve(ROSTER as never);
+      if (path === '/wall/feed')
+        return Promise.resolve({ pinned: [], items: [], nextCursor: null } as never);
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
+
+    const { unmount } = renderWithProviders(
+      <BoardComposeProvider>
+        <WallStream pinnedSurface="card" />
+      </BoardComposeProvider>,
+      ['post:create'],
+    );
+
+    expect(await screen.findByText(WALL_RU.board.empty)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: WALL_RU.compose.open })).toBeInTheDocument();
+    unmount();
+
+    renderWithProviders(
+      <BoardComposeProvider>
+        <WallStream pinnedSurface="card" />
+      </BoardComposeProvider>,
+      ['event:read'],
+    );
+
+    expect(await screen.findByText(WALL_RU.board.empty)).toBeInTheDocument();
+    expect(screen.getByText(WALL_RU.board.emptyReadOnly)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: WALL_RU.compose.open })).not.toBeInTheDocument();
   });
 });

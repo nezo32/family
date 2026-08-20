@@ -317,9 +317,7 @@ export function GoalFormDialog(props: {
               icon={<CalendarDays />}
               label={GOALS_RU.formDeadline}
               value={
-                deadline === ''
-                  ? GOALS_RU.noDeadline
-                  : relativeDateLabel(deadline, todayDateKey())
+                deadline === '' ? GOALS_RU.noDeadline : relativeDateLabel(deadline, todayDateKey())
               }
               onClick={() => {
                 setOpenSheet('deadline');

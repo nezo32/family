@@ -21,7 +21,10 @@ import { users, type UserRow } from '../identity/users.schema.js';
  * referenced again and never deleted — a slow leak that only shows up as a
  * bucket that grows and never shrinks.
  */
-export async function lockAvatarUrl(x: Executor, userId: string): Promise<string | null | undefined> {
+export async function lockAvatarUrl(
+  x: Executor,
+  userId: string,
+): Promise<string | null | undefined> {
   const [row] = await x
     .select({ avatarUrl: users.avatarUrl })
     .from(users)
@@ -32,7 +35,10 @@ export async function lockAvatarUrl(x: Executor, userId: string): Promise<string
 }
 
 /** The avatar URL of any member, for the serving route. `undefined` = no such user. */
-export async function findAvatarUrl(x: Executor, userId: string): Promise<string | null | undefined> {
+export async function findAvatarUrl(
+  x: Executor,
+  userId: string,
+): Promise<string | null | undefined> {
   const [row] = await x
     .select({ avatarUrl: users.avatarUrl })
     .from(users)

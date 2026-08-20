@@ -23,7 +23,7 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "allowImportingTsExtensions": false,
+    "allowImportingTsExtensions": false
 
     // No path aliases on purpose. `tsc` does not rewrite aliases at emit and
     // there is no `imports` field or tsc-alias in the build, so an aliased
@@ -31,6 +31,10 @@
     // inside the container only. Backend code uses relative imports with the
     // explicit `.js` extension (NodeNext).
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "drizzle.config.ts", "vitest.config.ts", "eslint.config.js"],
+  // `eslint.config.js` is deliberately absent: `allowJs` is off, so listing a
+  // `.js` path here drops it from the program silently and then ESLint's
+  // project service cannot find it. It is linted without type information
+  // instead — see the `**/*.js` block in `eslint.config.js`.
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "drizzle.config.ts", "vitest.config.ts"],
   "exclude": ["node_modules", "dist"]
 }

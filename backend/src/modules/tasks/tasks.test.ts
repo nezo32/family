@@ -107,9 +107,7 @@ vi.mock('./tasks.repository.js', () => {
   const overdueOf = (row: Row, series: Row, now: Date | undefined): boolean => {
     if (row.status !== 'scheduled') return false;
     const at = now ?? new Date();
-    return (
-      (row.dueAt as Date).getTime() + (series.graceMinutes as number) * 60_000 < at.getTime()
-    );
+    return (row.dueAt as Date).getTime() + (series.graceMinutes as number) * 60_000 < at.getTime();
   };
 
   const resolve = (row: Row, now: Date | undefined): Row => {
@@ -129,7 +127,10 @@ vi.mock('./tasks.repository.js', () => {
     };
   };
 
-  const visible = (row: Row, viewer: { userId: string; canReadAny: boolean; canSeeRestricted: boolean } | undefined): boolean => {
+  const visible = (
+    row: Row,
+    viewer: { userId: string; canReadAny: boolean; canSeeRestricted: boolean } | undefined,
+  ): boolean => {
     if (!viewer) return true;
     const mine = row.seriesCreatedById === viewer.userId || row.assigneeId === viewer.userId;
     const visibilityGate =
@@ -519,7 +520,7 @@ describe('overdue is derived, never stored', () => {
       fs.readFile(new URL('./tasks.repository.ts', import.meta.url), 'utf8'),
     );
     expect(source).toContain('make_interval(mins =>');
-    expect(source).toContain("task_occurrences_overdue_idx");
+    expect(source).toContain('task_occurrences_overdue_idx');
     // …and nothing anywhere writes it back.
     expect(source).not.toMatch(/set\(\{[^}]*overdue/i);
   });
@@ -581,9 +582,9 @@ describe('completion is idempotent', () => {
   it('refuses to complete a skipped occurrence', async () => {
     const occurrenceId = seedOccurrence(seedSeries(), { status: 'skipped' });
 
-    await expect(taskService().complete(actorFor('adult', ADULT), occurrenceId, {})).rejects.toThrow(
-      AppError,
-    );
+    await expect(
+      taskService().complete(actorFor('adult', ADULT), occurrenceId, {}),
+    ).rejects.toThrow(AppError);
     expect(completionOf(occurrenceId).status).toBe('skipped');
   });
 

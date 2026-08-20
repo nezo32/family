@@ -93,7 +93,11 @@ describe('AvatarCropper', () => {
   });
 
   it('returns to the default framing on reset', () => {
-    render(<Harness initial={clampTransform(PORTRAIT, CROP_VIEWPORT, { zoom: 3, offsetX: 0, offsetY: 90 })} />);
+    render(
+      <Harness
+        initial={clampTransform(PORTRAIT, CROP_VIEWPORT, { zoom: 3, offsetX: 0, offsetY: 90 })}
+      />,
+    );
     expect(stateOf().zoom).toBeCloseTo(3, 5);
 
     fireEvent.click(screen.getByRole('button', { name: 'Вернуть как было' }));
@@ -106,7 +110,9 @@ describe('AvatarCropper', () => {
     // offset that was legal at 3× is off the edge at 1×, and the control has to
     // correct it rather than leave a gap in the circle.
     render(
-      <Harness initial={clampTransform(PORTRAIT, CROP_VIEWPORT, { zoom: 3, offsetX: 0, offsetY: 999 })} />,
+      <Harness
+        initial={clampTransform(PORTRAIT, CROP_VIEWPORT, { zoom: 3, offsetX: 0, offsetY: 999 })}
+      />,
     );
     expect(stateOf().offsetY).toBeGreaterThan(48);
 

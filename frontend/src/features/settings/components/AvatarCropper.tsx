@@ -72,10 +72,7 @@ export function AvatarCropper(props: {
   const pinch = useRef<{ distance: number; zoom: number } | null>(null);
   const [dragging, setDragging] = useState(false);
 
-  const size = useMemo(
-    () => displaySize(source, VIEWPORT, transform),
-    [source, transform],
-  );
+  const size = useMemo(() => displaySize(source, VIEWPORT, transform), [source, transform]);
 
   /** Viewport-centre-relative coordinates for a raw client point. */
   const toLocal = useCallback((clientX: number, clientY: number) => {

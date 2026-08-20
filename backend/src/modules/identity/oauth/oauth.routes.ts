@@ -114,7 +114,12 @@ async function beginAuthorization(
   switch (input.provider) {
     case 'google': {
       const { nonce, codeVerifier } = newGoogleAuthSecrets();
-      const state = await transactions.create({ provider: 'google', nonce, codeVerifier, ...common });
+      const state = await transactions.create({
+        provider: 'google',
+        nonce,
+        codeVerifier,
+        ...common,
+      });
       return {
         state,
         authorizationUrl: await buildGoogleAuthorizationUrl({ state, nonce, codeVerifier }),

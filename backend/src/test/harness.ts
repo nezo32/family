@@ -157,7 +157,7 @@ export function expectStatus(response: LightMyRequestResponse, expected: number)
 
 export function errorCode(response: LightMyRequestResponse): string | undefined {
   try {
-    return (response.json<{ error?: { code?: string } }>()).error?.code;
+    return response.json<{ error?: { code?: string } }>().error?.code;
   } catch {
     return undefined;
   }
@@ -302,7 +302,7 @@ export async function createMember(
     token: approver.accessToken,
   });
   expectStatus(list, 200);
-  const items = (list.json<{ items: { id: string; displayName: string }[] }>()).items;
+  const items = list.json<{ items: { id: string; displayName: string }[] }>().items;
   const target = items.find((m) => m.displayName === displayName);
   if (!target) throw new Error(`registered member ${displayName} is not pending`);
 
@@ -310,7 +310,10 @@ export async function createMember(
     method: 'POST',
     url: `/api/members/${target.id}/approve`,
     token: approver.accessToken,
-    payload: { role, ...(input.choreWeight === undefined ? {} : { choreWeight: input.choreWeight }) },
+    payload: {
+      role,
+      ...(input.choreWeight === undefined ? {} : { choreWeight: input.choreWeight }),
+    },
   });
   expectStatus(approve, 200);
 
@@ -340,7 +343,7 @@ export async function pendingIdOf(
     token: approver.accessToken,
   });
   expectStatus(list, 200);
-  const items = (list.json<{ items: { id: string; displayName: string }[] }>()).items;
+  const items = list.json<{ items: { id: string; displayName: string }[] }>().items;
   const found = items.find((m) => m.displayName === displayName);
   if (!found) throw new Error(`no pending member named ${displayName}`);
   return found.id;

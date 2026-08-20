@@ -176,9 +176,7 @@ export function NotificationItem(props: {
        */
       contentClassName={cn(
         'flex gap-3 px-4 py-3',
-        unread
-          ? 'bg-[color-mix(in_oklab,var(--accent)_40%,var(--background))]'
-          : 'bg-background',
+        unread ? 'bg-[color-mix(in_oklab,var(--accent)_40%,var(--background))]' : 'bg-background',
       )}
     >
       <span

@@ -43,7 +43,7 @@ Read together with `docs/DECISIONS.md` (binding) and `docs/PLAN.md` (context).
    image — `**/e2e`, `**/dist`, `docs`, `.env*` — while `tsc` on a developer's
    machine sees all of it. An import that crosses that line compiles green
    locally and fails only inside the container, with `TS2307: Cannot find
-   module`.
+module`.
 
    The instance: `frontend/playwright.config.ts` imported `RUN_ID` from
    `e2e/helpers.ts`; `frontend/tsconfig.node.json` includes the config, so
@@ -73,7 +73,7 @@ Read together with `docs/DECISIONS.md` (binding) and `docs/PLAN.md` (context).
    the newest `created_at` in `drizzle.__drizzle_migrations` — **timestamps, not
    hashes**. A regenerated baseline carries a newer `when`, so it is treated as
    unapplied and replayed from the top against a database that already has every
-   table, dying on `type "user_role" already exists`. It fails *before* it
+   table, dying on `type "user_role" already exists`. It fails _before_ it
    changes anything, so nothing is corrupted — but the deploy stops dead, and
    the only way forward is hand-reconciling the live schema.
 
@@ -136,6 +136,21 @@ Read together with `docs/DECISIONS.md` (binding) and `docs/PLAN.md` (context).
 ## Definition of done for an agent
 
 - The files you own compile under `pnpm -r typecheck`.
-- `pnpm -r lint` passes for files you own.
+- `pnpm -r lint` passes for files you own. **`eslint .`, not `eslint src`** —
+  that is the command CI runs, and it also covers `eslint.config.js`,
+  `vitest.config.ts`, `drizzle.config.ts` and `e2e/`. A gate that lints `src`
+  cannot see a broken config file, and one sat red in CI for exactly that
+  reason.
+- `bash infra/scripts/verify-ci.sh` is green. It runs seven of CI's eight jobs,
+  in their order, in a few minutes — so "will CI pass?" is answerable without
+  pushing. The eighth is the Playwright suite, which CI does run; that plus both
+  Docker images is `infra/scripts/verify-all.sh`, and you run that before you
+  call a piece of work done.
+- **Do not leave a formatting deviation for someone else.** `format:check` is a
+  required gate. If `prettier --check` flags a file you touched, fix it, even if
+  it was already deviating before you arrived — 106 such files accumulated that
+  way, each one individually reasonable to skip. The local number is only
+  trustworthy through `verify-ci.sh`; see the line-endings note in
+  `docs/TESTING.md` before believing a raw `pnpm run format:check` on Windows.
 - Your final message lists: files created, deps you need, assumptions made, and
   anything you deliberately left for another agent.

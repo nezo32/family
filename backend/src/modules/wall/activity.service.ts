@@ -387,7 +387,9 @@ export function renderActivitySummary<V extends ActivityVerb>(
   payload: ActivityVerbPayloads[V],
 ): string {
   const render = ACTIVITY_VERB_RENDERERS[verb] as VerbRenderer<V>;
-  return render(actor, payload).replace(/[ \t]+/g, ' ').trim();
+  return render(actor, payload)
+    .replace(/[ \t]+/g, ' ')
+    .trim();
 }
 
 /* -------------------------------------------------------------------------- */

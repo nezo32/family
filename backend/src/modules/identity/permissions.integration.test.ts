@@ -167,7 +167,7 @@ describe.skipIf(!hasTestDb)('permissions (integration)', () => {
         },
       });
       expect([200, 201]).toContain(created.statusCode);
-      const goalId = (created.json<{ id: string }>()).id;
+      const goalId = created.json<{ id: string }>().id;
 
       // The author still sees it.
       const mine = await request(h.app, {

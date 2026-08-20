@@ -96,8 +96,20 @@ function installFetch(scenario: Scenario) {
             windowDays: 7,
             imbalance: 0.1,
             members: [
-              { userId: CHILD_ID, doneCount: 7, actualShare: 0.7, fairShare: 0.5, coveredForOthers: 0 },
-              { userId: TEEN_ID, doneCount: 3, actualShare: 0.3, fairShare: 0.5, coveredForOthers: 0 },
+              {
+                userId: CHILD_ID,
+                doneCount: 7,
+                actualShare: 0.7,
+                fairShare: 0.5,
+                coveredForOthers: 0,
+              },
+              {
+                userId: TEEN_ID,
+                doneCount: 3,
+                actualShare: 0.3,
+                fairShare: 0.5,
+                coveredForOthers: 0,
+              },
             ],
           }),
         );

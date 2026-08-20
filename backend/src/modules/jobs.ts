@@ -44,12 +44,10 @@ function registerSharedReminderSweep(
 
     // `allSettled`, not `all`: a failure in one domain must not cost the other
     // its reminders. Both sweeps are idempotent, so the retry is harmless.
-    const [tasks, events] = await Promise.allSettled([
-      runTaskReminders(db),
-      runEventReminders(db),
-    ]);
+    const [tasks, events] = await Promise.allSettled([runTaskReminders(db), runEventReminders(db)]);
 
-    if (tasks.status === 'rejected') logger.error({ err: tasks.reason }, 'task reminder sweep failed');
+    if (tasks.status === 'rejected')
+      logger.error({ err: tasks.reason }, 'task reminder sweep failed');
     if (events.status === 'rejected')
       logger.error({ err: events.reason }, 'event reminder sweep failed');
 

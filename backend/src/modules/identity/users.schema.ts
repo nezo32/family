@@ -27,14 +27,7 @@ import { emptyTextArray, primaryId, timestamps } from '../../db/base.js';
  * is"; anything module-specific belongs in that module's own table.
  */
 
-export const userRole = pgEnum('user_role', [
-  'owner',
-  'admin',
-  'adult',
-  'teen',
-  'child',
-  'guest',
-]);
+export const userRole = pgEnum('user_role', ['owner', 'admin', 'adult', 'teen', 'child', 'guest']);
 
 /**
  * Registration is admin-gated (D3). A `pending_approval` user is created but is

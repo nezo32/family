@@ -17,7 +17,10 @@ const bool = (defaultValue: boolean) =>
 const secret = (name: string, min = 32) =>
   z
     .string({ required_error: `${name} is required` })
-    .min(min, `${name} must be at least ${min} characters — generate one with \`openssl rand -base64 48\``);
+    .min(
+      min,
+      `${name} must be at least ${min} characters — generate one with \`openssl rand -base64 48\``,
+    );
 
 const envSchema = z
   .object({
@@ -95,7 +98,11 @@ const envSchema = z
      */
     S3_FORCE_PATH_STYLE: bool(true),
     /** Hard server-side cap on an uploaded avatar, in bytes. */
-    AVATAR_MAX_BYTES: z.coerce.number().int().positive().default(2 * 1024 * 1024),
+    AVATAR_MAX_BYTES: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(2 * 1024 * 1024),
 
     // --- Bootstrap ---
     /** The first user signing in with this email is auto-approved as `owner`. */

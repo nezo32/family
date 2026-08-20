@@ -78,7 +78,7 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
       },
     });
     expect([200, 201]).toContain(response.statusCode);
-    return (response.json<{ id: string }>()).id;
+    return response.json<{ id: string }>().id;
   }
 
   async function occurrencesOf(seriesId: string) {
@@ -182,10 +182,7 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
     const two = await complete();
     expect(two.statusCode).toBeLessThan(400);
 
-    const [row] = await h.db
-      .select()
-      .from(taskOccurrences)
-      .where(eq(taskOccurrences.id, first.id));
+    const [row] = await h.db.select().from(taskOccurrences).where(eq(taskOccurrences.id, first.id));
     expect(row?.status).toBe('done');
     expect(row?.completedById).toBe(teen.id);
 
@@ -250,15 +247,12 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
       },
     });
     expectStatus(split, 200);
-    const successorId = (split.json<{ id: string }>()).id;
+    const successorId = split.json<{ id: string }>().id;
     expect(successorId).not.toBe(seriesId);
 
     // The successor points back at the closed original, so history stays
     // walkable rather than orphaned.
-    const [successor] = await h.db
-      .select()
-      .from(taskSeries)
-      .where(eq(taskSeries.id, successorId));
+    const [successor] = await h.db.select().from(taskSeries).where(eq(taskSeries.id, successorId));
     expect(successor?.supersedesSeriesId).toBe(seriesId);
     expect(successor?.title).toBe('Мыть посуду и убрать со стола');
 
@@ -307,7 +301,7 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
         },
       });
       expect([200, 201]).toContain(response.statusCode);
-      return (response.json<{ id: string }>()).id;
+      return response.json<{ id: string }>().id;
     }
 
     it('assigns deterministically and freezes the assignment across a second pass', async () => {
@@ -424,7 +418,7 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
         token: adult.accessToken,
       });
       expectStatus(response, 200);
-      expect((response.json<{ items: unknown[] }>()).items).toHaveLength(5);
+      expect(response.json<{ items: unknown[] }>().items).toHaveLength(5);
     });
 
     it('serves GET /tasks/today', async () => {
@@ -445,7 +439,7 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
         token: adult.accessToken,
       });
       expectStatus(response, 200);
-      expect((response.json<{ items: unknown[] }>()).items).toHaveLength(5);
+      expect(response.json<{ items: unknown[] }>().items).toHaveLength(5);
     });
 
     it('derives isOverdue from the clock and the grace window', async () => {
@@ -469,7 +463,7 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
         token: adult.accessToken,
       });
       expectStatus(response, 200);
-      expect((response.json<{ isOverdue: boolean }>()).isOverdue).toBe(true);
+      expect(response.json<{ isOverdue: boolean }>().isOverdue).toBe(true);
     });
   });
 
@@ -501,7 +495,7 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
         },
       });
       expect([200, 201]).toContain(create.statusCode);
-      const rotationId = (create.json<{ id: string }>()).id;
+      const rotationId = create.json<{ id: string }>().id;
 
       const response = await request(h.app, {
         method: 'GET',

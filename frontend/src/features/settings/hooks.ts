@@ -72,7 +72,11 @@ export function useUpdateProfile(): UseMutationResult<SelfUser, Error, UpdatePro
  * survive the change — which is what lets the serving route send a year-long
  * `Cache-Control` without ever showing a stale face.
  */
-export function useUploadAvatar(): UseMutationResult<SelfUser, Error, { blob: Blob; filename: string }> {
+export function useUploadAvatar(): UseMutationResult<
+  SelfUser,
+  Error,
+  { blob: Blob; filename: string }
+> {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ blob, filename }: { blob: Blob; filename: string }) =>

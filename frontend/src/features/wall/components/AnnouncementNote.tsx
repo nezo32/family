@@ -15,7 +15,7 @@ import { useCoarsePointer } from '@/shared/ui/use-coarse-pointer';
 import { useLongPress } from '@/shared/ui/use-long-press';
 import { cn } from '@/shared/lib/utils';
 import { COMMON } from '@/shared/lib/i18n';
-import { formatDateTime } from '@/shared/lib/format';
+import { formatDayMonth } from '@/shared/lib/format';
 import { isoInDays } from '../api';
 import { useDeletePost, useSetPin, type Roster } from '../hooks';
 import { WALL_RU } from '../locale';
@@ -24,48 +24,43 @@ import { ReactionBar } from './ReactionBar';
 import { CommentThread } from './CommentThread';
 
 /**
- * An announcement (§D7).
+ * One announcement, as a note on the board (§D7).
  *
- * The visual hierarchy of the wall lives here and in `ActivityRow`: a pinned
- * announcement from a parent gets the clay `--surface-attention` wash and a
- * full-size title; «Лиза полила цветы» gets a one-line muted row with no card
- * at all. If those two ever start looking alike, the wall stops working as a
- * wall.
+ * ## Why this is a row on a shared surface and not a card
  *
- * Three §D7 rules are enforced here:
+ * It used to be a bordered, padded card, and twelve of them in a column is
+ * twelve boxes of near-identical weight — the same "six equal tiles" failure
+ * §A2 removed from Сегодня, one screen further along. A board holds notes of
+ * different sizes pinned to *one* surface, so the note draws no border and no
+ * ground of its own: the `Section` around it is the board, and the hairline
+ * between rows is what makes twelve of them read as one object.
  *
- * - **Pinned is the attention block.** One per screen, at the top, on the clay
- *   wash, with a 📌 and «закреплено до 25 августа» in `meta`. It is not a
- *   `--primary/6` tint of an ordinary card, which is a card that looks slightly
- *   broken rather than a different kind of surface (§B1).
+ * The three rules that survive from the previous pass, because they were right:
+ *
  * - **A system post is visibly not a person talking.** No author disc at all,
- *   and the sage `--surface-calm` ground. «Семейный бот» with an avatar beside
- *   it is an uncanny fifth family member.
+ *   and the sage `--surface-calm` ground on the row itself. «Семейный бот» with
+ *   a face beside it is an uncanny sixth family member.
  * - **The body clamps at four lines** with «ещё». A single 2000-character post
- *   otherwise owns the whole feed, and on a phone the reader never learns there
- *   was anything under it.
- *
- * The shadow is gone: L1 surfaces do not cast one (§B3), and a stack of
- * shadowed cards is exactly what made the old Сегодня read as six equal tiles.
+ *   otherwise owns the whole board, and on a phone the reader never learns
+ *   there was anything under it.
+ * - **Pinned states its own expiry** — 📌 «закреплено до 25 августа» in `meta`.
+ *   The tinted ground now belongs to the *section* (and only when pinning won
+ *   band 2, §C2), so the note carries the fact in words. Colour is never the
+ *   only signal (§B4), which is exactly why this line is not decoration.
  *
  * ## Gestures (§C-gestures)
  *
- * **No swipe.** §G4 puts a swipe on rows with one reversible action — куплено,
- * сделано, прочитано. A post's only row-level actions are pin and delete: one
- * is not reversible and the other is a *toggle with an expiry date*, which is
- * not a thing a thumb should be able to set by accident.
+ * **No swipe, deliberately.** §G4 puts a swipe on rows with one *reversible*
+ * action — куплено, сделано, прочитано. A note's row-level actions are pin and
+ * delete: one is not reversible, and the other is a toggle *with an expiry
+ * date*, which is not a thing a thumb should be able to set by accident.
  *
- * **Long-press** opens the same menu the visible `⋯` opens — as a bottom sheet
- * on a coarse pointer (§G7) and as the dropdown on a mouse. One list of
- * actions, built once, so the two doors cannot drift apart, and «Удалить» still
- * goes through `ConfirmDialog` from both of them.
+ * **Long-press** opens the same menu the visible `⋯` opens — a bottom sheet on
+ * a coarse pointer (§G7), the dropdown on a mouse. One list of actions, built
+ * once, so the two doors cannot drift apart, and «Снять с доски» goes through
+ * `ConfirmDialog` from both.
  */
-export function AnnouncementCard(props: {
-  post: PostResponse;
-  roster: Roster;
-  /** Rendered in the pinned rail above the stream. */
-  emphasised?: boolean;
-}) {
+export function AnnouncementNote(props: { post: PostResponse; roster: Roster }) {
   const { post } = props;
   const setPin = useSetPin();
   const remove = useDeletePost();
@@ -110,41 +105,33 @@ export function AnnouncementCard(props: {
         // `onContextMenu` would, and swallowing right-click on a desktop is a
         // gesture nobody asked for.
         {...(coarse ? longPress.handlers : {})}
-        className={cn(
-          'max-w-row-measure rounded-xl border p-4 no-callout',
-          props.emphasised
-            ? 'border-surface-attention-foreground/15 bg-surface-attention text-surface-attention-foreground'
-            : isSystem
-              ? 'border-surface-calm-foreground/15 bg-surface-calm text-surface-calm-foreground'
-              : 'border-border bg-card',
-        )}
+        className={cn('no-callout', isSystem && 'bg-surface-calm text-surface-calm-foreground')}
       >
-        {isSystem ? (
-          // No author disc: the app wrote this, and a face beside «Семейный бот»
-          // claims a person did.
-          <div className="flex min-w-0 items-center gap-2">
-            <Sparkles className="size-4 shrink-0 opacity-70" aria-hidden />
-            <span className="min-w-0 flex-1 truncate text-[13px] leading-[18px] font-medium opacity-80">
-              {WALL_RU.feed.systemAuthor}
-            </span>
-            {menu}
-          </div>
-        ) : (
-          <AuthorLine
-            roster={props.roster}
-            authorId={post.authorId}
-            createdAt={post.createdAt}
-            size="sm"
-            trailing={menu}
-          />
-        )}
+        <div className="flex w-full max-w-row-measure flex-col gap-1.5 px-4 py-3">
+          {isSystem ? (
+            // No author disc: the app wrote this, and a face beside «Семейный
+            // бот» claims a person did.
+            <div className="flex min-w-0 items-center gap-2">
+              <Sparkles className="size-4 shrink-0 opacity-70" aria-hidden />
+              <span className="min-w-0 flex-1 truncate text-[15px] leading-[22px] font-medium opacity-80">
+                {WALL_RU.board.systemAuthor}
+              </span>
+              {menu ? <div className="shrink-0">{menu}</div> : null}
+            </div>
+          ) : (
+            <AuthorLine
+              roster={props.roster}
+              authorId={post.authorId}
+              createdAt={post.createdAt}
+              trailing={menu}
+            />
+          )}
 
-        <div className="mt-3 flex flex-col gap-1.5">
           {post.isPinned ? (
             <p className="flex items-center gap-1.5 text-[13px] leading-[18px] font-medium opacity-80">
               <Pin className="size-3.5 shrink-0" aria-hidden />
               {post.pinnedUntil
-                ? WALL_RU.post.pinnedUntil(formatDateTime(post.pinnedUntil))
+                ? WALL_RU.post.pinnedUntil(formatDayMonth(post.pinnedUntil))
                 : WALL_RU.post.pinned}
             </p>
           ) : null}
@@ -159,11 +146,11 @@ export function AnnouncementCard(props: {
             className={cn(
               'wrap-break-word text-[15px] leading-[22px] whitespace-pre-wrap',
               /*
-               * The card is `.no-callout` so a long press opens the sheet
+               * The note is `.no-callout` so a long press opens the sheet
                * instead of iOS's selection bubble — but the *body* is the one
-               * thing on a wall post somebody genuinely wants to copy («адрес»,
-               * «во сколько выезжаем»), so selection is handed back here, and
-               * only here.
+               * thing on a board note somebody genuinely wants to copy
+               * («адрес», «во сколько выезжаем»), so selection is handed back
+               * here, and only here.
                */
               'select-text [-webkit-touch-callout:default]',
               !expanded && 'line-clamp-4',
@@ -175,7 +162,10 @@ export function AnnouncementCard(props: {
           {mightBeClamped(post.body) ? (
             <button
               type="button"
-              className="self-start rounded-sm text-[13px] leading-[18px] font-medium underline-offset-4 hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+              // 44px of target, not 25×18 of text: §F1 applies to a text link on a
+              // coarse pointer exactly as it applies to an icon button. The negative
+              // inline margin keeps the word optically aligned with the body above it.
+              className="-mx-2 -mt-2 flex min-h-11 min-w-11 items-center justify-start self-start rounded-sm px-2 text-[13px] leading-[18px] font-medium underline-offset-4 hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
               aria-expanded={expanded}
               onClick={() => {
                 setExpanded((value) => !value);
@@ -184,26 +174,27 @@ export function AnnouncementCard(props: {
               {expanded ? WALL_RU.post.less : WALL_RU.post.more}
             </button>
           ) : null}
-        </div>
 
-        <div className="mt-3 space-y-1">
-          <ReactionBar
-            target={{ entityType: 'post', entityId: post.id }}
-            reactions={post.reactions}
-          />
+          {/* One 44px line of chrome per note, not two (§A3). */}
           <CommentThread
             target={{ entityType: 'post', entityId: post.id }}
             commentCount={post.commentCount}
+            actions={
+              <ReactionBar
+                target={{ entityType: 'post', entityId: post.id }}
+                reactions={post.reactions}
+              />
+            }
           />
         </div>
       </article>
 
       {/*
-      Both live outside the `<article>`, not inside it. A React portal bubbles
-      its events through the React *tree*, so a sheet rendered under the card
-      would send every tap in it back through the card's own long-press
-      click-suppression — and the tap it swallowed would be the user's answer.
-    */}
+        Both live outside the `<article>`, not inside it. A React portal bubbles
+        its events through the React *tree*, so a sheet rendered under the note
+        would send every tap in it back through the note's own long-press
+        click-suppression — and the tap it swallowed would be the user's answer.
+      */}
       <ActionSheet
         open={menuOpen}
         onOpenChange={setMenuOpen}
@@ -225,7 +216,7 @@ export function AnnouncementCard(props: {
 }
 
 /**
- * The row's actions, built once and rendered by two surfaces.
+ * The note's actions, built once and rendered by two surfaces.
  *
  * Both entries are permission-gated, and the list comes back empty when neither
  * is available — the caller then renders no trigger and no long-press, because
@@ -258,7 +249,7 @@ function usePostActions(
           // The dropdown used to carry «Закрепить на» as a section label above
           // three bare durations. A flat sheet has no section labels, so each
           // row states the whole action.
-          label: `${WALL_RU.post.pinFor} ${duration.label}`,
+          label: `${WALL_RU.post.pin} · ${duration.label}`,
           icon: Pin,
           onSelect: () => {
             handlers.onPin(isoInDays(duration.days));
@@ -286,7 +277,7 @@ function usePostActions(
 /**
  * The visible `⋯`.
  *
- * On a coarse pointer it is a plain button that raises the card's action sheet
+ * On a coarse pointer it is a plain button that raises the note's action sheet
  * (§G7 — every modal is a bottom sheet under a thumb); on a fine pointer it
  * stays the anchored dropdown, which is the right shape for a mouse.
  */
@@ -337,10 +328,10 @@ function PostMenu(props: { actions: readonly ActionSheetItem[]; onOpenSheet: () 
  *
  * Deliberately an estimate over the *content* rather than a `scrollHeight`
  * measurement. A probe has to run after paint, which means the «ещё» link
- * appears one frame late on every post — and on a cold PWA start that reads as
+ * appears one frame late on every note — and on a cold PWA start that reads as
  * the page still loading. ~60 characters per line at this measure × 4 lines is
  * 240; four hard line breaks fill the clamp regardless of length. Showing the
- * link once too often costs one word; hiding it once too often hides a post.
+ * link once too often costs one word; hiding it once too often hides a note.
  */
 function mightBeClamped(body: string): boolean {
   return body.length > 240 || body.split('\n').length > 4;

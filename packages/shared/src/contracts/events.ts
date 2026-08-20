@@ -40,7 +40,11 @@ export const rsvpSchema = z.enum(['pending', 'yes', 'no', 'maybe']);
 export type Rsvp = z.infer<typeof rsvpSchema>;
 
 /** Minutes before start. The set the UI offers; other values are accepted on import. */
-export const reminderOffsetSchema = z.number().int().min(0).max(60 * 24 * 30);
+export const reminderOffsetSchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(60 * 24 * 30);
 
 /* -------------------------------------------------------------------------- */
 /* Event series                                                                */
@@ -52,7 +56,12 @@ const eventSeriesFields = {
   location: z.string().max(200).nullish(),
   visibility: visibilitySchema.default('household'),
   /** Wall-clock minutes. Ignored when `isAllDay`. */
-  durationMinutes: z.number().int().min(0).max(60 * 24 * 30).default(60),
+  durationMinutes: z
+    .number()
+    .int()
+    .min(0)
+    .max(60 * 24 * 30)
+    .default(60),
   isAllDay: z.boolean().default(false),
   reminderOffsets: z.array(reminderOffsetSchema).max(5).default([]),
   color: z
@@ -81,7 +90,12 @@ export const eventSeriesUpdateSchema = z
     description: z.string().max(4000).nullish(),
     location: z.string().max(200).nullish(),
     visibility: visibilitySchema.optional(),
-    durationMinutes: z.number().int().min(0).max(60 * 24 * 30).optional(),
+    durationMinutes: z
+      .number()
+      .int()
+      .min(0)
+      .max(60 * 24 * 30)
+      .optional(),
     isAllDay: z.boolean().optional(),
     reminderOffsets: z.array(reminderOffsetSchema).max(5).optional(),
     color: z
@@ -219,7 +233,12 @@ export const eventOccurrenceUpdateSchema = z.object({
   /** Move this instance. `occurrenceKey` never changes. */
   startsLocal: floatingDateTimeSchema.optional(),
   /** Wall-clock length of this instance only. */
-  durationMinutes: z.number().int().min(0).max(60 * 24 * 30).optional(),
+  durationMinutes: z
+    .number()
+    .int()
+    .min(0)
+    .max(60 * 24 * 30)
+    .optional(),
 });
 export type EventOccurrenceUpdate = z.infer<typeof eventOccurrenceUpdateSchema>;
 

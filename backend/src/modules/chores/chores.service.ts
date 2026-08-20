@@ -214,7 +214,8 @@ export class ChoresService implements RotationPort {
     if (!rotation) throw notFound('Rotation');
 
     const now = options.now ?? this.now();
-    const through = options.through ?? new Date(now.getTime() + DEFAULT_RUN_HORIZON_DAYS * MS_PER_DAY);
+    const through =
+      options.through ?? new Date(now.getTime() + DEFAULT_RUN_HORIZON_DAYS * MS_PER_DAY);
     const candidates = await repo.loadRotationRoster(ex, rotationId, {
       now,
       through,
@@ -459,7 +460,12 @@ export class ChoresService implements RotationPort {
 
   async listBlackouts(
     actor: ChoreActor,
-    query: { limit: number; cursor?: string | undefined; userId?: string | undefined; includePast: boolean },
+    query: {
+      limit: number;
+      cursor?: string | undefined;
+      userId?: string | undefined;
+      includePast: boolean;
+    },
   ): Promise<{ items: BlackoutResponse[]; nextCursor: string | null }> {
     // Without `:any` a caller only ever sees their own windows — 404-by-absence
     // rather than 403 (D4).
@@ -547,11 +553,8 @@ export class ChoresService implements RotationPort {
       };
     });
 
-    const ratios = members
-      .filter((m) => m.fairShare > 0)
-      .map((m) => m.actualShare / m.fairShare);
-    const imbalance =
-      ratios.length < 2 ? 0 : round4(Math.max(...ratios) - Math.min(...ratios));
+    const ratios = members.filter((m) => m.fairShare > 0).map((m) => m.actualShare / m.fairShare);
+    const imbalance = ratios.length < 2 ? 0 : round4(Math.max(...ratios) - Math.min(...ratios));
 
     return {
       windowDays: query.windowDays,
@@ -813,4 +816,3 @@ export async function loadRotationSnapshot(
 
   return { strategy: rotation.strategy, cursor: rotation.cursor, members };
 }
-

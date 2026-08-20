@@ -192,9 +192,7 @@ class S3Storage implements Storage {
   async get(key: string): Promise<StoredObject | null> {
     let result;
     try {
-      result = await this.client.send(
-        new GetObjectCommand({ Bucket: this.bucket, Key: key }),
-      );
+      result = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
     } catch (error) {
       if (isNotFound(error)) return null;
       throw error;

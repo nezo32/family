@@ -25,9 +25,9 @@ import { signOut } from '@/shared/api/refresh';
 import { ROUTES } from '@/shared/lib/routes';
 import { COMMON } from '@/shared/lib/i18n';
 import { cn } from '@/shared/lib/utils';
-import { notify } from '@/shared/lib/toast';
 import { SETTINGS_RU } from '../locale';
 import { PushPrompt } from '../push/PushPrompt';
+import { reportEnableOutcome } from '../push/enable-report';
 import { usePush, type UsePushResult } from '../push/use-push';
 
 const T = SETTINGS_RU.hub;
@@ -152,16 +152,19 @@ export default function SettingsPage() {
 
       {/*
         The soft pre-prompt, reached from the push row above. Its «Разрешить» is
-        the tap that reaches `Notification.requestPermission()`; see `PushPrompt`
-        for why nothing may await in between.
+        the tap that reaches `pushManager.subscribe()`; see `PushPrompt` for why
+        nothing may await in between.
       */}
       <PushPrompt
         open={promptOpen}
         onOpenChange={setPromptOpen}
         onAccept={() => {
-          void push.enable().then((result) => {
-            if (result.outcome === 'enabled') notify.success(SETTINGS_RU.push.enabled);
-          });
+          // Every outcome says something. This handler used to toast only on
+          // success, so an already-`denied` permission — which resolves
+          // instantly on iOS without ever showing the OS prompt — produced
+          // literally nothing on screen. "Я нажимаю, и ничего не происходит"
+          // was an accurate bug report.
+          void push.enable().then(reportEnableOutcome);
         }}
       />
 
@@ -340,6 +343,17 @@ function pushRowState(push: UsePushResult): PushRowState {
       tone: 'warn',
       icon: TriangleAlert,
       status: SETTINGS_RU.push.statusDenied,
+      action: 'link',
+    };
+  }
+  // iOS reports `permission: 'default'` here, so without this branch the row
+  // would cheerfully offer «Включить» to somebody whose phone will never
+  // prompt — the loop the research doc §17 warns about.
+  if (push.blockedInSettings) {
+    return {
+      tone: 'warn',
+      icon: TriangleAlert,
+      status: SETTINGS_RU.push.failureTitle['blocked-in-settings'],
       action: 'link',
     };
   }

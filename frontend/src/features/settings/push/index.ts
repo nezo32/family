@@ -15,8 +15,14 @@ export {
   installReconcileLoop,
   isIos,
   isIosNonSafari,
+  isPushReady,
   isPushSupported,
   isStandalone,
+  clearEnableOutcome,
+  clearPushFailure,
+  lastEnableOutcome,
+  lastPushFailure,
+  recordPushFailure,
   permissionState,
   postSubscription,
   primeRegistration,
@@ -28,15 +34,31 @@ export {
   type EnableOutcome,
   type EnableResult,
   type PushAvailability,
+  type PushFailure,
   type PushPermission,
   type ReconcileOutcome,
 } from './push';
 export { usePush, type PushState, type UsePushResult } from './use-push';
 export {
   PushDeniedCard,
+  PushFailureCard,
   PushInstallCard,
   PushPrompt,
   PushReEnableCard,
   PushSection,
 } from './PushPrompt';
+export { isEnableFailure, reportEnableOutcome, type FailureOutcome } from './enable-report';
+/**
+ * The on-device instrument. Exported from the barrel because it is the thing
+ * we ask the owner to open when push does not work, and it must be findable.
+ */
+export { PushDiagnosticsCard } from './PushDiagnosticsCard';
+export {
+  collectPushDiagnostics,
+  fingerprintEndpoint,
+  formatPushDiagnostics,
+  pushVerdict,
+  type PushDiagnostics,
+  type PushVerdict,
+} from './diagnostics';
 export { useServiceWorkerBridge } from './sw-bridge';

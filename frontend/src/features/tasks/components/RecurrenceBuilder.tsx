@@ -291,7 +291,10 @@ export function RecurrenceBuilder(props: {
         </div>
       ) : null}
 
-      <p className="text-[13px] leading-[18px] text-muted-foreground" data-testid="schedule-summary">
+      <p
+        className="text-[13px] leading-[18px] text-muted-foreground"
+        data-testid="schedule-summary"
+      >
         {describeSchedule(value, dtstartLocal)}
       </p>
     </div>

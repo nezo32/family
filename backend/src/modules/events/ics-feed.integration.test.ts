@@ -74,7 +74,7 @@ describe.skipIf(!hasTestDb)('ICS feed (integration)', () => {
       },
     });
     expect([200, 201]).toContain(response.statusCode);
-    return (response.json<{ id: string }>()).id;
+    return response.json<{ id: string }>().id;
   }
 
   /** A single, non-recurring event — what "I just added something" looks like. */
@@ -225,7 +225,7 @@ describe.skipIf(!hasTestDb)('ICS feed (integration)', () => {
       payload: {},
     });
     expectStatus(rotate, 200);
-    const rotated = (rotate.json<{ token: string }>()).token;
+    const rotated = rotate.json<{ token: string }>().token;
     expect(rotated).not.toBe(original);
 
     // The new link works…
@@ -247,12 +247,7 @@ describe.skipIf(!hasTestDb)('ICS feed (integration)', () => {
   it('refuses a forged, truncated or foreign token with a 404', async () => {
     const { token } = await feedToken(adult);
 
-    const tampered = [
-      'garbage',
-      token.slice(0, -4),
-      `${token}x`,
-      token.replace(/^f1\./, 'f2.'),
-    ];
+    const tampered = ['garbage', token.slice(0, -4), `${token}x`, token.replace(/^f1\./, 'f2.')];
 
     for (const candidate of tampered) {
       const response = await request(h.app, {
@@ -422,9 +417,7 @@ describe.skipIf(!hasTestDb)('ICS feed (integration)', () => {
     expectStatus(adultFeed, 200);
 
     // Compare on the unfolded document so a line break cannot hide the title.
-    const unfolded = parseIcs(adultFeed.body)
-      .entries.get('SUMMARY')
-      ?.join('\n');
+    const unfolded = parseIcs(adultFeed.body).entries.get('SUMMARY')?.join('\n');
     expect(unfolded ?? '').not.toContain('Сюрприз');
   });
 });

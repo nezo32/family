@@ -47,7 +47,9 @@ describe('sniffImageType', () => {
 
   it('rejects HTML, SVG and a bare text file', () => {
     expect(sniffImageType(Buffer.from('<html><script>alert(1)</script></html>'))).toBeNull();
-    expect(sniffImageType(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'))).toBeNull();
+    expect(
+      sniffImageType(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>')),
+    ).toBeNull();
     expect(sniffImageType(Buffer.from('just some text, honestly'))).toBeNull();
   });
 

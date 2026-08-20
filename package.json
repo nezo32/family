@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "packageManager": "pnpm@11.1.1",
   "scripts": {
     "dev": "pnpm --parallel --filter \"@family/backend\" --filter \"@family/frontend\" run dev",
@@ -16,6 +18,8 @@
     "format": "prettier --write \"**/*.{ts,tsx,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,json,md,yml,yaml}\"",
     "test": "pnpm -r run test",
+    "verify:ci": "bash infra/scripts/verify-ci.sh",
+    "verify": "bash infra/scripts/verify-all.sh",
     "db:generate": "pnpm --filter @family/backend run db:generate",
     "db:migrate": "pnpm --filter @family/backend run db:migrate",
     "db:seed": "pnpm --filter @family/backend run db:seed",

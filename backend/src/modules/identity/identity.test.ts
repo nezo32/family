@@ -487,7 +487,10 @@ describe('password hashing', () => {
   });
 
   it('salts, so two hashes of the same password differ', async () => {
-    const [a, b] = await Promise.all([hashPassword('Одинаковый-Пароль-1'), hashPassword('Одинаковый-Пароль-1')]);
+    const [a, b] = await Promise.all([
+      hashPassword('Одинаковый-Пароль-1'),
+      hashPassword('Одинаковый-Пароль-1'),
+    ]);
     expect(a).not.toBe(b);
   });
 
@@ -759,9 +762,9 @@ describe.skipIf(!HAS_DB)('identity (database)', () => {
     for (const id of createdUserIds) {
       // `user_identities` and `refresh_tokens` cascade; `audit_log.actor_id` is
       // ON DELETE SET NULL and deliberately survives.
-      await db.delete((await import('./users.schema.js')).users).where(
-        (await import('drizzle-orm')).eq((await import('./users.schema.js')).users.id, id),
-      );
+      await db
+        .delete((await import('./users.schema.js')).users)
+        .where((await import('drizzle-orm')).eq((await import('./users.schema.js')).users.id, id));
     }
     await app.close();
     await closeDb();

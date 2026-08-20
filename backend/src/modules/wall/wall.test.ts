@@ -134,7 +134,12 @@ describe('entityType validation', () => {
 
   it('refuses to comment on an unknown entityType before any permission check', async () => {
     await expect(
-      addComment(noDb, authFor('adult'), { entityType: 'chore', entityId: randomUUID() }, { body: 'привет' }),
+      addComment(
+        noDb,
+        authFor('adult'),
+        { entityType: 'chore', entityId: randomUUID() },
+        { body: 'привет' },
+      ),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 });
@@ -165,7 +170,12 @@ describe('wall permissions (D4)', () => {
 
   it('refuses a guest commenting', async () => {
     await expect(
-      addComment(noDb, authFor('guest'), { entityType: 'post', entityId: randomUUID() }, { body: 'ой' }),
+      addComment(
+        noDb,
+        authFor('guest'),
+        { entityType: 'post', entityId: randomUUID() },
+        { body: 'ой' },
+      ),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
@@ -217,10 +227,7 @@ describe('a comment on a private goal is exactly as private as the goal', () => 
   const privateGoal = { visibility: 'private', ownerId: OWNER_ID };
   const familyGoal = { visibility: 'household', ownerId: null };
 
-  const canRead = async (
-    auth: AuthContext,
-    row: Record<string, unknown>,
-  ): Promise<boolean> => {
+  const canRead = async (auth: AuthContext, row: Record<string, unknown>): Promise<boolean> => {
     try {
       await assertCanReadEntity(execReturning([row]), goalRef, auth);
       return true;
@@ -290,15 +297,21 @@ describe('poll closure', () => {
   const now = new Date('2026-08-19T12:00:00.000Z');
 
   it('treats a manually closed poll as closed', () => {
-    expect(isPollClosed(pollRow({ closedAt: new Date('2026-08-18T00:00:00.000Z') }), now)).toBe(true);
+    expect(isPollClosed(pollRow({ closedAt: new Date('2026-08-18T00:00:00.000Z') }), now)).toBe(
+      true,
+    );
   });
 
   it('treats a passed deadline as closed without waiting for the sweeper', () => {
-    expect(isPollClosed(pollRow({ closesAt: new Date('2026-08-19T11:59:59.000Z') }), now)).toBe(true);
+    expect(isPollClosed(pollRow({ closesAt: new Date('2026-08-19T11:59:59.000Z') }), now)).toBe(
+      true,
+    );
   });
 
   it('keeps a future deadline open', () => {
-    expect(isPollClosed(pollRow({ closesAt: new Date('2026-08-19T12:00:01.000Z') }), now)).toBe(false);
+    expect(isPollClosed(pollRow({ closesAt: new Date('2026-08-19T12:00:01.000Z') }), now)).toBe(
+      false,
+    );
   });
 
   it('refuses a vote on a closed poll with CONFLICT (409), not 403', () => {
@@ -312,9 +325,9 @@ describe('poll closure', () => {
   });
 
   it('refuses a vote after closesAt', () => {
-    expect(() => assertPollOpen(pollRow({ closesAt: new Date('2026-08-19T09:00:00.000Z') }), now)).toThrowError(
-      AppError,
-    );
+    expect(() =>
+      assertPollOpen(pollRow({ closesAt: new Date('2026-08-19T09:00:00.000Z') }), now),
+    ).toThrowError(AppError);
   });
 });
 
@@ -433,12 +446,7 @@ describe('Russian activity renderer', () => {
   for (const verb of ACTIVITY_VERBS) {
     it(`renders a grammatical sentence for ${verb}`, () => {
       const payload = SAMPLE_PAYLOADS[verb];
-      for (const actor of [
-        { name: 'Паша' },
-        { name: 'Маша' },
-        { name: 'Саша' },
-        { name: null },
-      ]) {
+      for (const actor of [{ name: 'Паша' }, { name: 'Маша' }, { name: 'Саша' }, { name: null }]) {
         const summary = renderActivitySummary(verb, actor, payload);
         expect(summary.length).toBeGreaterThan(0);
         // A sentence, not a fragment: starts with a capital, no stray spacing,
@@ -453,41 +461,45 @@ describe('Russian activity renderer', () => {
   }
 
   it('agrees with a masculine name in the past tense', () => {
-    expect(renderActivitySummary('task.completed', { name: 'Паша' }, { title: 'Вынести мусор' })).toBe(
-      'Паша выполнил задачу „Вынести мусор“',
-    );
+    expect(
+      renderActivitySummary('task.completed', { name: 'Паша' }, { title: 'Вынести мусор' }),
+    ).toBe('Паша выполнил задачу „Вынести мусор“');
   });
 
   it('agrees with a feminine name in the past tense', () => {
-    expect(renderActivitySummary('task.completed', { name: 'Маша' }, { title: 'Вынести мусор' })).toBe(
-      'Маша выполнила задачу „Вынести мусор“',
-    );
+    expect(
+      renderActivitySummary('task.completed', { name: 'Маша' }, { title: 'Вынести мусор' }),
+    ).toBe('Маша выполнила задачу „Вынести мусор“');
   });
 
   it('falls back to a gender-free phrasing when the name is ambiguous', () => {
-    expect(renderActivitySummary('task.completed', { name: 'Саша' }, { title: 'Вынести мусор' })).toBe(
-      'Задача „Вынести мусор“ выполнена — Саша',
-    );
+    expect(
+      renderActivitySummary('task.completed', { name: 'Саша' }, { title: 'Вынести мусор' }),
+    ).toBe('Задача „Вынести мусор“ выполнена — Саша');
   });
 
   it('drops the actor entirely for a system-generated event', () => {
-    expect(renderActivitySummary('task.completed', { name: null }, { title: 'Вынести мусор' })).toBe(
-      'Задача „Вынести мусор“ выполнена',
-    );
+    expect(
+      renderActivitySummary('task.completed', { name: null }, { title: 'Вынести мусор' }),
+    ).toBe('Задача „Вынести мусор“ выполнена');
   });
 
   it('honours an explicit gender over the heuristic', () => {
-    expect(
-      renderActivitySummary('member.joined', { name: 'Саша', gender: 'f' }, {}),
-    ).toBe('Саша присоединилась к семье');
+    expect(renderActivitySummary('member.joined', { name: 'Саша', gender: 'f' }, {})).toBe(
+      'Саша присоединилась к семье',
+    );
   });
 
   it('never inflects a second name — both stay in the nominative', () => {
-    expect(renderActivitySummary('kudos.given', { name: 'Паша' }, { toName: 'Маша', emoji: '👏' })).toBe(
-      'Благодарность 👏: Паша → Маша',
-    );
     expect(
-      renderActivitySummary('task.assigned', { name: 'Маша' }, { title: 'Мусор', assigneeName: 'Паша' }),
+      renderActivitySummary('kudos.given', { name: 'Паша' }, { toName: 'Маша', emoji: '👏' }),
+    ).toBe('Благодарность 👏: Паша → Маша');
+    expect(
+      renderActivitySummary(
+        'task.assigned',
+        { name: 'Маша' },
+        { title: 'Мусор', assigneeName: 'Паша' },
+      ),
     ).toBe('Маша назначила задачу „Мусор“, исполнитель: Паша');
   });
 
@@ -498,7 +510,11 @@ describe('Russian activity renderer', () => {
     expect(formatAmountRu(5)).toBe('0,05 ₽');
     expect(formatAmountRu(123456789)).toBe('1 234 567,89 ₽');
     expect(
-      renderActivitySummary('goal.contributed', { name: 'Паша' }, { title: 'Велосипед', amountMinor: 100000 }),
+      renderActivitySummary(
+        'goal.contributed',
+        { name: 'Паша' },
+        { title: 'Велосипед', amountMinor: 100000 },
+      ),
     ).toBe('Паша пополнил цель „Велосипед“ на 1 000,00 ₽');
   });
 
@@ -555,7 +571,10 @@ describe('cursor pagination', () => {
    */
   it.each([
     ['junk', 'not-a-cursor'],
-    ['the old `iso|id` encoding', Buffer.from('2026-08-19T10:00:00.000Z|abc').toString('base64url')],
+    [
+      'the old `iso|id` encoding',
+      Buffer.from('2026-08-19T10:00:00.000Z|abc').toString('base64url'),
+    ],
     ['valid base64 that is not a cursor', Buffer.from('{"nope":1}').toString('base64url')],
     ['an empty string', ''],
   ])('restarts pagination on %s instead of throwing', (_label, raw) => {
@@ -739,9 +758,9 @@ describe.skipIf(!TEST_DATABASE_URL)('wall (database)', () => {
     expect(second.options.find((o) => o.id === sea.id)?.voteCount).toBe(0);
     expect(second.options.find((o) => o.id === hills.id)?.voteCount).toBe(1);
 
-    await expect(castVote(db, child, poll.id, { optionIds: [sea.id, hills.id] })).rejects.toMatchObject(
-      { code: 'BAD_REQUEST' },
-    );
+    await expect(
+      castVote(db, child, poll.id, { optionIds: [sea.id, hills.id] }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
     await repo.deletePoll(db, poll.id);
   });
@@ -771,7 +790,12 @@ describe.skipIf(!TEST_DATABASE_URL)('wall (database)', () => {
       title: 'Субботник',
     });
 
-    const first = await addComment(db, adult, { entityType: 'post', entityId: post.id }, { body: 'Иду' });
+    const first = await addComment(
+      db,
+      adult,
+      { entityType: 'post', entityId: post.id },
+      { body: 'Иду' },
+    );
     await addComment(db, child, { entityType: 'post', entityId: post.id }, { body: 'И я' });
 
     let hydrated = await hydratePosts(db, [post], adult.userId);

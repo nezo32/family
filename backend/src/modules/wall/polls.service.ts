@@ -278,7 +278,8 @@ export async function updatePoll(
 
   const patch: { question?: string; closesAt?: Date | null } = {};
   if (input.question !== undefined) patch.question = input.question.trim();
-  if (input.closesAt !== undefined) patch.closesAt = input.closesAt ? new Date(input.closesAt) : null;
+  if (input.closesAt !== undefined)
+    patch.closesAt = input.closesAt ? new Date(input.closesAt) : null;
   if (Object.keys(patch).length === 0) return getPoll(exec, auth, pollId);
 
   const updated = await repo.updatePollFields(exec, pollId, patch);
@@ -293,11 +294,7 @@ export async function updatePoll(
  * preserving. Comments attached to it are cleaned up by the caller's
  * `deleteCommentsFor` hook — see `wall.service.ts`.
  */
-export async function deletePoll(
-  exec: Executor,
-  auth: AuthContext,
-  pollId: string,
-): Promise<void> {
+export async function deletePoll(exec: Executor, auth: AuthContext, pollId: string): Promise<void> {
   const poll = await repo.findPollById(exec, pollId);
   if (!poll) throw notFound('Poll');
   const mayDelete = poll.createdById === auth.userId || auth.can('post:delete:any');

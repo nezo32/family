@@ -1,5 +1,6 @@
 import type { PushSubscriptionRequest, PushSubscriptionSummary } from '@family/shared';
 import { api } from '@/shared/api/client';
+import { isApiError } from '@/shared/api/errors';
 import { readQueuedAcks, removeAcks, ackPath, type QueuedAck } from './ack-queue';
 
 /**
@@ -13,16 +14,22 @@ import { readQueuedAcks, removeAcks, ackPath, type QueuedAck } from './ack-queue
  *    `window.Notification` is `undefined`, not `denied` — touching
  *    `Notification.permission` throws a `ReferenceError` and takes the settings
  *    screen down with it.
- * 2. **`Notification.requestPermission()` must run synchronously inside the
- *    click handler.** WebKit's user-activation token does not survive an
- *    `await`, so `enablePush()` is deliberately **not** an `async function`: the
- *    permission call is the first statement, the awaiting happens in a helper.
- *    The VAPID key is read from `import.meta.env` at build time for exactly this
- *    reason — fetching it first would spend the gesture.
+ * 2. **`pushManager.subscribe()` is called straight from the tap, and
+ *    `Notification.requestPermission()` is never called at all.** The platform
+ *    requirement is *transient activation*: five seconds from the tap, consumed
+ *    by the first caller. `subscribe()` raises the OS prompt itself;
+ *    `requestPermission()` would consume the activation first and leave
+ *    `subscribe()` to fail with a gesture error that has nothing to do with the
+ *    gesture. See {@link enablePush} for the full mechanism.
  * 3. **The OS prompt can be shown once, ever.** A soft pre-prompt
  *    (`PushPrompt.tsx`) must gate this call; if the user says "не сейчас" there
  *    we can ask again tomorrow, and if they say "Не разрешать" to the OS the
  *    only way back is iOS Settings.
+ * 3a. **`Notification.permission` is not a reliable reading on iOS.** WebKit bug
+ *    320551: switching notifications off in iOS Settings leaves it reporting
+ *    `'default'` — the same value as "never asked" — while the prompt never
+ *    appears again. `'blocked-in-settings'` is the outcome that names it, and
+ *    only a real subscribe attempt can tell the two states apart.
  * 4. **`pushsubscriptionchange` does not exist on iOS.** `reconcileSubscription()`
  *    on every `visibilitychange -> visible` is the whole repair loop: it
  *    re-POSTs the live subscription (idempotent upsert, refreshes `lastSeenAt`,
@@ -281,78 +288,340 @@ export async function currentEndpoint(): Promise<string | null> {
 }
 
 /* -------------------------------------------------------------------------- */
-/* enable — the gesture-critical path                                          */
+/* the last failure, kept verbatim                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Why the last attempt to turn push on failed — **unparaphrased**.
+ *
+ * This exists because the bug that produced it could only ever be reproduced on
+ * one person's phone. Every catch in this module used to swallow its error and
+ * return a bare `'failed'`, which reached the user as «Не удалось включить
+ * уведомления» and told nobody anything. A `NotAllowedError` (gesture lost), an
+ * `AbortError` (push service refused the key) and a `403` from our own API are
+ * three completely different bugs that all looked identical from the outside.
+ *
+ * `name` and `message` are copied straight off the thrown value. Do not
+ * translate them here — `PushDiagnosticsCard` renders them as-is, on purpose,
+ * so the owner can read them back to us.
+ */
+export interface PushFailure {
+  /** Which step threw. Also the key for the Russian explanation. */
+  stage: 'permission' | 'registration' | 'subscribe' | 'server' | 'unsubscribe';
+  /** `error.name`, verbatim (`NotAllowedError`, `AbortError`, `ApiError`, …). */
+  name: string;
+  /** `error.message`, verbatim. Never translated, never truncated to a phrase. */
+  message: string;
+  /** HTTP status, when the failure came from our API. */
+  status?: number;
+  /** Machine-readable `ErrorCode`, when the failure came from our API. */
+  code?: string;
+  /** ISO timestamp, so a stale error is visibly stale. */
+  at: string;
+}
+
+let lastFailure: PushFailure | null = null;
+
+/** The last recorded failure, or `null` if the last attempt succeeded. */
+export function lastPushFailure(): PushFailure | null {
+  return lastFailure;
+}
+
+export function clearPushFailure(): void {
+  lastFailure = null;
+}
+
+/** Normalise any thrown value into a {@link PushFailure} and store it. */
+export function recordPushFailure(stage: PushFailure['stage'], error: unknown): PushFailure {
+  const failure: PushFailure = {
+    stage,
+    name: 'Error',
+    message: String(error),
+    at: new Date().toISOString(),
+  };
+
+  if (isApiError(error)) {
+    failure.name = 'ApiError';
+    failure.message = error.message;
+    failure.status = error.status;
+    failure.code = error.code;
+  } else if (error instanceof Error) {
+    failure.name = error.name || 'Error';
+    failure.message = error.message || String(error);
+  }
+
+  lastFailure = failure;
+  return failure;
+}
+
+/** `recordPushFailure` + the matching {@link EnableResult}, in one expression. */
+function fail(outcome: EnableOutcome, stage: PushFailure['stage'], error: unknown): EnableResult {
+  return { outcome, error: recordPushFailure(stage, error) };
+}
+
+/* -------------------------------------------------------------------------- */
+/* enable — the activation-critical path                                       */
 /* -------------------------------------------------------------------------- */
 
 export type EnableOutcome =
-  'enabled' | 'denied' | 'dismissed' | 'unsupported' | 'needs-install' | 'misconfigured' | 'failed';
+  /** Subscribed, and the server has the row. */
+  | 'enabled'
+  /** The user really tapped «Не разрешать» in the OS prompt. Permanent. */
+  | 'denied'
+  /**
+   * iOS says `default` but will never prompt — WebKit bug 320551.
+   *
+   * The user turned **Настройки → Уведомления → Семья → Разрешить уведомления**
+   * off at some point. `Notification.permission` then reports `'default'`, not
+   * `'denied'`, so the app believes it may still ask; the prompt never appears.
+   * This is the state that reads as "notifications will not turn on".
+   */
+  | 'blocked-in-settings'
+  /** Chromium only: the prompt was dismissed rather than answered. Retryable. */
+  | 'dismissed'
+  /** No Web Push in this browser at all. */
+  | 'unsupported'
+  /** iOS outside a Home Screen web app: push exists, but not here. */
+  | 'needs-install'
+  /** No usable VAPID application server key — a deployment fault. */
+  | 'misconfigured'
+  /** No **active** service worker yet, so `subscribe()` would `InvalidStateError`. */
+  | 'not-ready'
+  /** WebKit reported no transient activation. See {@link enablePush}. */
+  | 'gesture-lost'
+  /** `pushManager.subscribe()` threw something we could not attribute. */
+  | 'subscribe-rejected'
+  /** We got a subscription; `POST /notifications/subscriptions` refused it. */
+  | 'server-rejected'
+  /** Anything else. `EnableResult.error` still carries it verbatim. */
+  | 'failed';
 
 export interface EnableResult {
   outcome: EnableOutcome;
   subscription?: PushSubscriptionSummary;
+  /** The verbatim cause, when there was one. Also stored in {@link lastPushFailure}. */
+  error?: PushFailure;
+}
+
+/**
+ * The outcome of the last {@link enablePush} call in this session.
+ *
+ * Needed by two callers that must not loop: the soft pre-prompt has to stand
+ * down once we know iOS will never show the OS prompt (`blocked-in-settings`),
+ * and the diagnostics screen has to report that state rather than the
+ * `'default'` permission that hides it.
+ */
+let lastOutcome: EnableOutcome | null = null;
+
+export function lastEnableOutcome(): EnableOutcome | null {
+  return lastOutcome;
+}
+
+export function clearEnableOutcome(): void {
+  lastOutcome = null;
+}
+
+/**
+ * True when a tap could actually succeed: an **active** service worker and a
+ * key to subscribe with.
+ *
+ * `PushManager::subscribe` throws `InvalidStateError: Subscribing for push
+ * requires an active service worker` if the worker is merely installing, which
+ * is the state a user meets on the very first launch after adding the app to
+ * the Home Screen — exactly when they first go looking for notifications. The
+ * enable control stays disabled until this is true, because the alternative is
+ * awaiting `navigator.serviceWorker.ready` *inside* the tap, and on a cold
+ * start that await can outlast the five-second activation window.
+ */
+export function isPushReady(): boolean {
+  if (!isPushSupported()) return false;
+  if (!vapidPublicKey()) return false;
+  return primedRegistration?.active != null;
 }
 
 /**
  * Turn push on for this device.
  *
- * **Do not make this `async`, and do not add anything before the
- * `Notification.requestPermission()` line.** The synchronous call is what keeps
- * the WebKit user-activation token alive; an `await` — any await, including one
- * that resolves immediately — invalidates it and Safari rejects both the
- * permission prompt and the subsequent `subscribe()`.
+ * **Call this straight from the tap handler, and do not put an `await` in
+ * front of it.** What the platform requires is *transient activation*, and the
+ * WebKit rules that govern it are narrow enough to be worth stating exactly
+ * (`LocalDOMWindow.cpp`, `PushManager.cpp`; see `docs/research/ios-pwa-push.md`
+ * §3):
  *
- * The function still returns a promise, so callers can `await` it; the awaiting
- * happens inside `completeSubscribe`, after the gesture has been spent.
+ * - Activation lasts **5 seconds** from the tap and is **consumed once** — the
+ *   first caller wins. An `await` is not fatal in itself; an `await` that can
+ *   outlast five seconds is. That is why the VAPID key and the service-worker
+ *   registration are both resolved before the button is even enabled.
+ * - **`subscribe()` prompts by itself.** `PushManager::subscribe` consumes the
+ *   activation and shows the OS prompt when permission is `default`, and skips
+ *   the activation check entirely when it is already `granted`.
+ * - **Therefore `Notification.requestPermission()` must not be called at all.**
+ *   It consumes the activation *unconditionally*, before it decides whether to
+ *   prompt. In the bug-320551 state below it consumes it, returns without
+ *   prompting, and the follow-up `subscribe()` then finds nothing left and
+ *   throws `NotAllowedError: Push notification prompting can only be done from
+ *   a user gesture.` — dressing a Settings problem up as a code problem, and
+ *   sending whoever debugs it on a long hunt through the click handler.
+ *
+ *   This module used to do exactly that. One tap, one call, one activation.
+ *
+ * The function is deliberately **not** `async`: it returns a promise, but every
+ * statement up to and including `pushManager.subscribe()` runs synchronously
+ * inside the handler.
  */
 export function enablePush(): Promise<EnableResult> {
   if (!isPushSupported()) {
-    return Promise.resolve({ outcome: isIos() ? 'needs-install' : 'unsupported' });
-  }
-  if (!vapidPublicKey()) {
-    // A build without the key can never subscribe; say so rather than firing the
-    // one-shot OS prompt and then failing.
-    return Promise.resolve({ outcome: 'misconfigured' });
+    return Promise.resolve(finish({ outcome: isIos() ? 'needs-install' : 'unsupported' }));
   }
 
-  // ---- the gesture-critical line. Nothing may precede it. ------------------
-  const permission = Notification.requestPermission();
+  const key = vapidPublicKey();
+  if (!key) {
+    return Promise.resolve(
+      finish(fail('misconfigured', 'subscribe', new Error('applicationServerKey is empty'))),
+    );
+  }
 
-  return completeSubscribe(permission);
+  // Must already be primed *and* active — see `isPushReady`. Reading the cached
+  // value is synchronous; awaiting `serviceWorker.ready` here would not be.
+  const registration = primedRegistration;
+  if (!registration?.active) {
+    return Promise.resolve(
+      finish(
+        fail(
+          'not-ready',
+          'registration',
+          new Error('Subscribing for push requires an active service worker'),
+        ),
+      ),
+    );
+  }
+
+  let applicationServerKey: Uint8Array<ArrayBuffer>;
+  try {
+    applicationServerKey = urlBase64ToUint8Array(key);
+  } catch (error) {
+    return Promise.resolve(finish(fail('misconfigured', 'subscribe', error)));
+  }
+
+  // ---- the activation-critical line. Exactly one call may consume it. ------
+  const subscribing = registration.pushManager.subscribe({
+    // HARD RULE: `PushManager.cpp` hard-rejects anything else. No silent push.
+    userVisibleOnly: true,
+    applicationServerKey,
+  });
+
+  return completeSubscribe(subscribing, registration).then(finish);
+}
+
+/** Record the outcome for {@link lastEnableOutcome} and pass it through. */
+function finish(result: EnableResult): EnableResult {
+  lastOutcome = result.outcome;
+  return result;
 }
 
 async function completeSubscribe(
-  permissionPromise: Promise<NotificationPermission>,
+  subscribing: Promise<PushSubscription>,
+  registration: ServiceWorkerRegistration,
 ): Promise<EnableResult> {
-  let permission: NotificationPermission;
+  let subscription: PushSubscription;
   try {
-    permission = await permissionPromise;
-  } catch {
-    return { outcome: 'failed' };
+    subscription = await subscribing;
+  } catch (error) {
+    const rotated = await resubscribeAfterKeyChange(error, registration);
+    if (!rotated) return classifySubscribeFailure(error);
+    subscription = rotated;
   }
 
-  if (permission === 'denied') return { outcome: 'denied' };
-  if (permission !== 'granted') return { outcome: 'dismissed' };
-
-  const registration = await currentRegistration();
-  if (!registration) return { outcome: 'failed' };
-
   try {
-    // Reuse an existing subscription rather than churning the endpoint: a new
-    // endpoint means a new row and a stale one the dispatcher keeps trying.
-    const existing = await registration.pushManager.getSubscription();
-    const subscription =
-      existing ??
-      (await registration.pushManager.subscribe({
-        // HARD RULE: there is no silent push on iOS. `false` is not an option.
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(vapidPublicKey()),
-      }));
-
     const summary = await postSubscription(subscription);
+    clearPushFailure();
     return { outcome: 'enabled', subscription: summary };
-  } catch {
-    return { outcome: 'failed' };
+  } catch (error) {
+    // The subscription exists in the browser but the server has no row, so
+    // nothing will ever be delivered and nothing on the device says so.
+    return fail('server-rejected', 'server', error);
   }
+}
+
+/**
+ * Recover from a rotated VAPID key.
+ *
+ * `subscribe()` throws `InvalidStateError` when a subscription already exists
+ * under a *different* `applicationServerKey`. That can only happen once the
+ * user has already granted permission — and `PushManager::subscribe` skips the
+ * activation check entirely when permission is `granted`, so dropping the stale
+ * subscription and retrying is safe even though the gesture is long gone.
+ *
+ * Returns `null` when this was not that failure, leaving the original error to
+ * be classified normally.
+ */
+async function resubscribeAfterKeyChange(
+  error: unknown,
+  registration: ServiceWorkerRegistration,
+): Promise<PushSubscription | null> {
+  if (!(error instanceof Error) || error.name !== 'InvalidStateError') return null;
+  if (/active service worker/i.test(error.message)) return null;
+  if (permissionState() !== 'granted') return null;
+
+  try {
+    const existing = await registration.pushManager.getSubscription();
+    if (!existing) return null;
+    await deleteSubscription(existing.endpoint).catch(() => undefined);
+    await existing.unsubscribe();
+    return await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(vapidPublicKey()),
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Name the failure from what WebKit actually threw.
+ *
+ * Every branch here corresponds to a distinct, greppable message in
+ * `PushManager.cpp`, and they are genuinely different bugs with genuinely
+ * different remedies. Collapsing them into one «Не удалось включить
+ * уведомления» is what made this undiagnosable in the first place.
+ */
+function classifySubscribeFailure(error: unknown): EnableResult {
+  const name = error instanceof Error ? error.name : '';
+  const message = error instanceof Error ? error.message : String(error);
+  const permission = permissionState();
+
+  // §2.3 — first launch after install; the worker is installing, not active.
+  if (name === 'InvalidStateError' || /active service worker/i.test(message)) {
+    return fail('not-ready', 'registration', error);
+  }
+
+  // §2.6 — our own configuration, not the user's device.
+  if (/applicationServerKey|userVisibleOnly|base64url|P-?256/i.test(message)) {
+    return fail('misconfigured', 'subscribe', error);
+  }
+
+  if (name === 'NotAllowedError') {
+    // §2.4 — the activation was spent or expired. With `requestPermission()`
+    // gone from this path, seeing this means a genuinely slow tap-to-subscribe,
+    // not the self-inflicted version.
+    if (/user gesture/i.test(message)) return fail('gesture-lost', 'permission', error);
+
+    if (permission === 'denied') return fail('denied', 'permission', error);
+
+    if (permission === 'default') {
+      // The deceptive state. On iOS, `default` after a real tap that produced
+      // no prompt is WebKit bug 320551: Allow Notifications is off in the
+      // system settings, and no amount of asking will ever change that.
+      // Chromium reaches the same shape when the user simply dismisses the
+      // prompt, which *is* retryable — so the platform decides the reading.
+      if (isIos()) return fail('blocked-in-settings', 'permission', error);
+      clearPushFailure();
+      return { outcome: 'dismissed' };
+    }
+  }
+
+  if (permission === 'denied') return fail('denied', 'permission', error);
+  return fail('subscribe-rejected', 'subscribe', error);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -369,14 +638,18 @@ async function completeSubscribe(
  */
 export async function disablePush(): Promise<boolean> {
   const registration = await currentRegistration();
-  if (!registration) return false;
+  if (!registration) {
+    recordPushFailure('registration', new Error('navigator.serviceWorker.ready'));
+    return false;
+  }
   try {
     const subscription = await registration.pushManager.getSubscription();
     if (!subscription) return true;
     await deleteSubscription(subscription.endpoint).catch(() => undefined);
     await subscription.unsubscribe();
     return true;
-  } catch {
+  } catch (error) {
+    recordPushFailure('unsubscribe', error);
     return false;
   }
 }
@@ -416,7 +689,8 @@ export async function reconcileSubscription(): Promise<ReconcileOutcome> {
   let subscription: PushSubscription | null;
   try {
     subscription = await registration.pushManager.getSubscription();
-  } catch {
+  } catch (error) {
+    recordPushFailure('subscribe', error);
     return 'failed';
   }
 
@@ -427,7 +701,11 @@ export async function reconcileSubscription(): Promise<ReconcileOutcome> {
   try {
     await postSubscription(subscription);
     return 'reposted';
-  } catch {
+  } catch (error) {
+    // Worth recording even though this path is silent: a reconcile that has
+    // been 403ing on every foreground for a week is invisible until somebody
+    // reads it off the diagnostics screen.
+    recordPushFailure('server', error);
     return 'failed';
   }
 }

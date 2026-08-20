@@ -95,11 +95,7 @@ export function displaySize(
  * the value goes very slightly negative and `clamp(min > max)` snaps the image
  * to a corner.
  */
-export function maxOffset(
-  source: CropSource,
-  viewport: number,
-  transform: CropTransform,
-): Point {
+export function maxOffset(source: CropSource, viewport: number, transform: CropTransform): Point {
   const size = displaySize(source, viewport, transform);
   return {
     x: Math.max(0, (size.width - viewport) / 2),

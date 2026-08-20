@@ -15,5 +15,11 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["vite.config.ts", "vitest.config.ts", "playwright.config.ts", "eslint.config.js"]
+  // `eslint.config.js` is deliberately absent. `allowJs` is off, so a `.js`
+  // path here is dropped from the program silently — it never was typechecked
+  // — and the entry is a trap: the day this config gains a type-aware ESLint
+  // preset, its project service asks for a program containing that file, does
+  // not find one, and `eslint .` dies with a parsing error. That is exactly
+  // what `backend/tsconfig.json` did, and it failed CI on every push.
+  "include": ["vite.config.ts", "vitest.config.ts", "playwright.config.ts"]
 }
