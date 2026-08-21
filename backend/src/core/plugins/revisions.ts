@@ -50,15 +50,24 @@ import { bumpRevisions } from '../revisions.js';
  *   unchanged regardless — a rotation write still bumps `tasks`, because the
  *   assignment it produces is what those screens show.
  * - **Comments and reactions are `wall` wherever they are mounted.**
- *   `wall.routes.ts` mounts the generic discussion routes on five segments —
- *   `posts`, `polls`, `tasks`, `events`, `goals` — and a comment on a task
- *   changes no task: it changes the thread, which the client keys under
+ *   `wall.routes.ts` mounts the generic discussion routes on six segments —
+ *   `posts`, `polls`, `tasks`, `events`, `goals`, `kudos` — and a comment on a
+ *   task changes no task: it changes the thread, which the client keys under
  *   `['wall','comments',…]`. Only wall *posts* carry a `commentCount`, so
  *   nothing else needs bumping alongside. These rows sit above the general
  *   `/api/tasks`, `/api/events` and `/api/goals` entries; without them a
  *   comment posted on a task would invalidate the task list and leave an open
  *   thread on another phone stale. (`/api/posts` and `/api/polls` exist only as
  *   comment/reaction mounts, so they take a plain prefix row.)
+ *
+ *   **`POST /api/comments/:id/reactions`** — a heart on a reply — is covered by
+ *   the plain `/api/comments` row further down, and it must stay covered: a
+ *   reaction on a comment is a change to the thread and to nothing else, so it
+ *   bumps `wall` exactly like the comment it sits on. This is the row that was
+ *   wrong once — comments were mapped to the domain of the thing they hung off,
+ *   which left an open thread stale on every other phone in the house — so it
+ *   is worth restating that the answer is the *thread's* domain, never the
+ *   target's.
  * - **`/media` is classified as changing nothing, and that is the interesting
  *   row.** An upload is a **private draft**: it has no `entity_id` yet, nobody
  *   but its uploader can even fetch it, and no screen in the app lists it. It
@@ -70,7 +79,10 @@ import { bumpRevisions } from '../revisions.js';
  *   reverse and only ever reaches a draft (an attached file is removed by
  *   editing the post, which is a `/wall` write). Media *on* a live post is
  *   changed only through `PATCH /api/wall/posts/:id` and `PATCH
- *   /api/comments/:id`, both already `wall`.
+ *   /api/comments/:id`, both already `wall`. `POST /api/media/:id/ticket` takes
+ *   the same row and for a stronger version of the same reason: it mints a
+ *   short-lived playback URL and writes nothing at all, so there is nothing for
+ *   another client to refetch.
  * - **`/notifications/deliveries/*`** are the D11 acknowledgement endpoints,
  *   written by the service worker on behalf of the device that just received a
  *   push. They change no shared state and must not make every open client

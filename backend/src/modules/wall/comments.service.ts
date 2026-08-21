@@ -2,9 +2,11 @@ import { and, eq, isNull } from 'drizzle-orm';
 
 import {
   COMMENTABLE_ENTITY_TYPES,
+  REACTABLE_ENTITY_TYPES,
   type CommentableEntityType,
   type CommentResponse,
   type MediaAttachment,
+  type ReactableEntityType,
   type ReactionListResponse,
   type ReactionSummary,
 } from '@family/shared';
@@ -44,9 +46,14 @@ import { polls, posts, type CommentRow } from './wall.schema.js';
 /* -------------------------------------------------------------------------- */
 
 const ENTITY_TYPE_SET: ReadonlySet<string> = new Set<string>(COMMENTABLE_ENTITY_TYPES);
+const REACTABLE_TYPE_SET: ReadonlySet<string> = new Set<string>(REACTABLE_ENTITY_TYPES);
 
 export function isCommentableEntityType(value: string): value is CommentableEntityType {
   return ENTITY_TYPE_SET.has(value);
+}
+
+export function isReactableEntityType(value: string): value is ReactableEntityType {
+  return REACTABLE_TYPE_SET.has(value);
 }
 
 /**
@@ -62,8 +69,28 @@ export function assertEntityType(value: string): CommentableEntityType {
   return value;
 }
 
+/**
+ * The same boundary for reactions, over the **wider** set — the commentable
+ * types plus `comment` itself.
+ *
+ * Two functions rather than one widened one, because the difference between the
+ * sets is the deliberate refusal of nested threads. `assertEntityType` is what
+ * the comment endpoints call; anything that reaches them addressed to a
+ * `comment` is a bad request and stays one. See `REACTABLE_ENTITY_TYPES` in
+ * `@family/shared` for why a thread on a thread is not a thing we want to
+ * enable by accident.
+ */
+export function assertReactableEntityType(value: string): ReactableEntityType {
+  if (!isReactableEntityType(value)) {
+    throw badRequest(`Unknown entityType: ${value}`, {
+      entityType: [`Ожидается одно из: ${REACTABLE_ENTITY_TYPES.join(', ')}`],
+    });
+  }
+  return value;
+}
+
 export interface EntityRef {
-  entityType: CommentableEntityType;
+  entityType: ReactableEntityType;
   entityId: string;
 }
 
@@ -89,10 +116,10 @@ export type EntityAccessResolver = (
   auth: AuthContext,
 ) => Promise<boolean>;
 
-const resolvers = new Map<CommentableEntityType, EntityAccessResolver>();
+const resolvers = new Map<ReactableEntityType, EntityAccessResolver>();
 
 export function registerEntityAccessResolver(
-  entityType: CommentableEntityType,
+  entityType: ReactableEntityType,
   resolver: EntityAccessResolver,
 ): void {
   resolvers.set(entityType, resolver);
@@ -222,12 +249,37 @@ const kudosResolver: EntityAccessResolver = async (exec, entityId) => {
   return Boolean(row);
 };
 
+/**
+ * A reaction target in its own right (`REACTABLE_ENTITY_TYPES`), and the only
+ * resolver here that has to take **two** hops.
+ *
+ * A comment carries its own polymorphic pointer, so «может ли этот человек
+ * поставить сердечко на это сообщение» is answered by: the comment exists and
+ * is not deleted, **and** the thing it hangs on is readable. Re-deriving the
+ * second half would let a heart be placed on a reply under a private goal that
+ * the reactor cannot see — the exact leak `assertCanReadEntity` exists to
+ * prevent, arrived at one level down.
+ *
+ * A soft-deleted comment is not reactable. Its own reactions were already hard-
+ * deleted with it (`deleteComment`), and letting a new one land on a row nobody
+ * can see would create a reaction that no screen ever draws and no cascade ever
+ * cleans up.
+ */
+const commentResolver: EntityAccessResolver = async (exec, entityId, auth) => {
+  const comment = await repo.findCommentById(exec, entityId);
+  if (!comment) return false;
+  const resolver = resolvers.get(assertEntityType(comment.entityType));
+  if (!resolver) return false;
+  return resolver(exec, comment.entityId, auth);
+};
+
 registerEntityAccessResolver('post', postResolver);
 registerEntityAccessResolver('poll', pollResolver);
 registerEntityAccessResolver('kudos', kudosResolver);
 registerEntityAccessResolver('task', taskResolver);
 registerEntityAccessResolver('event', eventResolver);
 registerEntityAccessResolver('goal', goalResolver);
+registerEntityAccessResolver('comment', commentResolver);
 
 /**
  * Throws **404** — not 403 — when the target is outside the caller's read
@@ -251,6 +303,8 @@ export async function assertCanReadEntity(
 export function toCommentResponse(
   row: CommentRow,
   attachments: MediaAttachment[] = [],
+  reactions: ReactionSummary[] = [],
+  hiddenAttachments = 0,
 ): CommentResponse {
   return {
     id: row.id,
@@ -258,30 +312,43 @@ export function toCommentResponse(
     entityId: row.entityId,
     authorId: row.authorId,
     body: row.body,
-    // `comment` is not in COMMENTABLE_ENTITY_TYPES, so a comment cannot itself
-    // be reacted to. The field stays in the contract for a future enum entry.
-    reactions: [],
+    reactions,
     attachments,
+    hiddenAttachments,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
 }
 
 /**
- * One extra query for a whole page of comments, never one per row — the same
+ * Two extra queries for a whole page of comments, never one per row — the same
  * discipline `countComments` and `loadReactions` follow.
+ *
+ * It takes the `AuthContext` because the page depends on two things about the
+ * reader: which reactions are theirs, and whether they hold `media:read`
+ * (D15 §4). A reader without it gets the count and none of the descriptors.
  */
 export async function hydrateComments(
   exec: Executor,
+  auth: AuthContext,
   rows: readonly CommentRow[],
 ): Promise<CommentResponse[]> {
   if (rows.length === 0) return [];
-  const attachments = await media.attachmentsForPage(
-    exec,
-    'comment',
-    rows.map((row) => row.id),
-  );
-  return rows.map((row) => toCommentResponse(row, attachments.get(row.id) ?? []));
+  const ids = rows.map((row) => row.id);
+  const [attachments, facts] = await Promise.all([
+    media.attachmentsForPage(exec, 'comment', ids),
+    repo.loadReactions(exec, 'comment', ids),
+  ]);
+  const summaries = repo.buildReactionSummaries(facts, auth.userId);
+  return rows.map((row) => {
+    const visible = media.visibleAttachmentsFor(auth, attachments.get(row.id) ?? []);
+    return toCommentResponse(
+      row,
+      visible.attachments,
+      summaries.get(row.id) ?? [],
+      visible.hiddenAttachments,
+    );
+  });
 }
 
 /**
@@ -326,7 +393,7 @@ export async function listCommentsFor(
   });
 
   const page = repo.toPage(rows, query.limit);
-  return { items: await hydrateComments(exec, page.items), nextCursor: page.nextCursor };
+  return { items: await hydrateComments(exec, auth, page.items), nextCursor: page.nextCursor };
 }
 
 export async function addComment(
@@ -358,7 +425,9 @@ export async function addComment(
     return { row: inserted, attachments: attached.map(media.toMediaAttachment) };
   });
 
-  return toCommentResponse(row, attachments);
+  const visible = media.visibleAttachmentsFor(auth, attachments);
+  // A brand-new comment has no reactions yet; the empty array is the truth.
+  return toCommentResponse(row, visible.attachments, [], visible.hiddenAttachments);
 }
 
 /**
@@ -405,7 +474,9 @@ export async function editComment(
   // bytes cannot be undone.
   await media.removeAllQuietly(removedKeys);
 
-  return toCommentResponse(row, await media.attachmentsOf(exec, 'comment', commentId));
+  const [hydrated] = await hydrateComments(exec, auth, [row]);
+  if (!hydrated) throw notFound('Comment');
+  return hydrated;
 }
 
 /** Soft delete: `comment:delete:own` for your own, `:any` for anybody's. */
@@ -433,6 +504,14 @@ export async function deleteComment(
     // Soft, and the objects stay: a deleted comment is recoverable for as long
     // as the sweep's grace period lasts (`media.service.ts`).
     await media.detachAllFrom(tx, 'comment', commentId);
+    // Hard, and in the same transaction. `(entity_type, entity_id)` has no
+    // foreign key, so nothing cascades and an orphaned reaction is invisible —
+    // it is not attached to anything a query would think to look at. Reactions
+    // are hard-deleted for the same reason they are on every other target: a
+    // reaction carries no content, and its only job was the counter. This is
+    // the third pointer in this file that has to be swept by hand, after the
+    // comments themselves and their media.
+    await repo.deleteReactionsFor(tx, 'comment', commentId);
   });
 }
 
@@ -445,7 +524,7 @@ export async function getReactionSummary(
   auth: AuthContext,
   ref: { entityType: string; entityId: string },
 ): Promise<ReactionListResponse> {
-  const entityType = assertEntityType(ref.entityType);
+  const entityType = assertReactableEntityType(ref.entityType);
   await assertCanReadEntity(exec, { entityType, entityId: ref.entityId }, auth);
 
   const facts = await repo.loadReactions(exec, entityType, [ref.entityId]);
@@ -468,7 +547,7 @@ export async function toggleReaction(
   ref: { entityType: string; entityId: string },
   input: { emoji: string },
 ): Promise<ReactionListResponse> {
-  const entityType = assertEntityType(ref.entityType);
+  const entityType = assertReactableEntityType(ref.entityType);
   // Reacting is a comment-level act, not kudos. `kudos:give` is the deliberate
   // "thank you" to a person; an emoji on a post is the lightweight equivalent
   // of leaving a comment, so it rides on the same permission.
@@ -498,7 +577,7 @@ export async function toggleReaction(
 /** Reaction summaries for a whole page of targets. One query, no N+1. */
 export async function summariesForPage(
   exec: Executor,
-  entityType: CommentableEntityType,
+  entityType: ReactableEntityType,
   entityIds: readonly string[],
   viewerId: string,
 ): Promise<Map<string, ReactionSummary[]>> {
@@ -549,5 +628,12 @@ export async function deleteCommentsFor(
   // comments that just went. Same rule as the comments themselves — soft
   // delete, objects kept until the sweep's grace period runs out.
   await media.detachAllFromMany(tx, 'comment', commentIds);
-  return { comments: commentIds.length, reactions: reactionsDeleted };
+  // …and the fourth, which arrived with reactions on comments: hearts on the
+  // replies that just went. Same argument as `media` above — there is no FK to
+  // cascade through, and an orphaned reaction is invisible rather than merely
+  // wrong, because nothing left in the database points at it. Hard-deleted, and
+  // counted with the rest: from the caller's point of view "how many reactions
+  // did this take with it" is one number.
+  const nestedReactions = await repo.deleteReactionsForMany(tx, 'comment', commentIds);
+  return { comments: commentIds.length, reactions: reactionsDeleted + nestedReactions };
 }

@@ -97,6 +97,31 @@ export const PERMISSIONS = [
   'poll:vote',
   'poll:close',
 
+  /**
+   * **Reading the *bytes* of a photo, a video or a voice message** on the wall
+   * — not the card that carries it (D15 §4, §D7.14.10).
+   *
+   * Granted from `child` upwards and deliberately **withheld from `guest`**.
+   * `guest` holds `member:read` and reads Стена, and that was scoped when Стена
+   * was text. Photographs of children are the most sensitive content this app
+   * will ever hold, and `guest` is by construction the role handed to whoever
+   * is least inside the family — a babysitter, a relative passing through, an
+   * account somebody made and forgot. Letting media inherit "may read the wall"
+   * silently widens what that sentence means, and it is **not recoverable if
+   * wrong**: bytes that have been served are served. Granting it later to a
+   * particular person is one `permission_grants` entry.
+   *
+   * A reader without it still sees the card, and sees that something is
+   * attached (`hiddenAttachments`), so the PWA can draw «Фото — только для
+   * семьи» in place of the box. The delivery route answers **404** — never 403
+   * — so the id itself cannot be used to find out what exists (D4).
+   *
+   * Attaching needs no new permission: it rides on `comment:create`, because a
+   * permission that must always be granted alongside another is a permission
+   * somebody will forget to grant.
+   */
+  'media:read',
+
   // personal
   'notification:manage:own',
   'profile:update:own',
@@ -133,6 +158,7 @@ const CHILD: Permission[] = [
   'comment:delete:own',
   'kudos:give',
   'poll:vote',
+  'media:read',
 ];
 
 const TEEN: Permission[] = [

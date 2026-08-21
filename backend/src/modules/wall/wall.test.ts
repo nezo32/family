@@ -1,10 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { COMMENTABLE_ENTITY_TYPES, effectivePermissions, type Role } from '@family/shared';
+import {
+  COMMENTABLE_ENTITY_TYPES,
+  REACTABLE_ENTITY_TYPES,
+  effectivePermissions,
+  type Role,
+} from '@family/shared';
 
 import { buildAuthContext, type AuthContext } from '../../core/auth/context.js';
 import { createDbClient, type Db, type Executor } from '../../core/db.js';
+import { domainsForRoute } from '../../core/plugins/revisions.js';
+import { collectRouteAccess } from '../../test/access.js';
 import { AppError } from '../../core/errors.js';
 import type { UserRow } from '../identity/users.schema.js';
 import {
@@ -20,9 +27,12 @@ import {
   addComment,
   assertCanReadEntity,
   assertEntityType,
+  assertReactableEntityType,
   deleteComment,
   deleteCommentsFor,
+  getReactionSummary,
   listCommentsFor,
+  toggleReaction,
 } from './comments.service.js';
 import {
   assertPollOpen,
@@ -173,6 +183,82 @@ describe('entityType validation', () => {
         authFor('adult'),
         { entityType: 'chore', entityId: randomUUID() },
         { body: 'привет' },
+      ),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Reactions on comments — and the thread-on-a-thread we refuse                */
+/* -------------------------------------------------------------------------- */
+
+describe('the reactable set is wider than the commentable one, deliberately', () => {
+  it('is the commentable set plus `comment`, and nothing else', () => {
+    for (const type of COMMENTABLE_ENTITY_TYPES) {
+      expect(REACTABLE_ENTITY_TYPES as readonly string[]).toContain(type);
+      expect(assertReactableEntityType(type)).toBe(type);
+    }
+    expect(assertReactableEntityType('comment')).toBe('comment');
+    expect(REACTABLE_ENTITY_TYPES).toHaveLength(COMMENTABLE_ENTITY_TYPES.length + 1);
+  });
+
+  it('has an access resolver for `comment` as well', async () => {
+    const outcome: unknown = await assertCanReadEntity(
+      execReturning([]),
+      { entityType: 'comment', entityId: randomUUID() },
+      authFor('owner'),
+    ).catch((error: unknown) => error);
+    expect(String((outcome as Error | undefined)?.message ?? '')).not.toContain(
+      'No access resolver',
+    );
+  });
+
+  /**
+   * The point of keeping two enums. A comment is a reaction target and is
+   * **not** a comment target: Стена's discussion is a flat list under a card
+   * (§D7), and nested threads are a different product with their own depth
+   * limit, indentation and moderation rules. Widening one enum would have
+   * enabled them silently.
+   */
+  it('still refuses a comment on a comment, at the entity-type boundary', () => {
+    expect(() => assertEntityType('comment')).toThrowError(AppError);
+    try {
+      assertEntityType('comment');
+      expect.unreachable('should have thrown');
+    } catch (error) {
+      expect((error as AppError).code).toBe('BAD_REQUEST');
+    }
+  });
+
+  it('refuses to write a comment addressed to a comment', async () => {
+    await expect(
+      addComment(
+        noDb,
+        authFor('adult'),
+        { entityType: 'comment', entityId: randomUUID() },
+        { body: 'ответ на ответ' },
+      ),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('refuses to list comments addressed to a comment', async () => {
+    await expect(
+      listCommentsFor(
+        noDb,
+        authFor('adult'),
+        { entityType: 'comment', entityId: randomUUID() },
+        { limit: 20 },
+      ),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('refuses a reaction on a type in neither set', async () => {
+    await expect(
+      toggleReaction(
+        noDb,
+        authFor('adult'),
+        { entityType: 'recipe', entityId: randomUUID() },
+        { emoji: '❤️' },
       ),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
@@ -773,6 +859,30 @@ describe('route registration', () => {
     await app.close();
   });
 
+  it('mounts reactions on a comment, and refuses to mount comments on one', async () => {
+    const wallRoutes = (await import('./wall.routes.js')).default;
+    const collected = await collectRouteAccess(wallRoutes);
+    const keys = collected.map((route) => route.key);
+
+    // The owner's request: «добавлять реакции на сообщения в обсуждениях».
+    expect(keys).toContain('GET /comments/:id/reactions');
+    expect(keys).toContain('POST /comments/:id/reactions');
+
+    // …and the thing that would have come along for free had `comment` simply
+    // been added to `COMMENT_MOUNTS`. A thread on a thread is refused on
+    // purpose, and this is the assertion that keeps it refused.
+    expect(keys).not.toContain('GET /comments/:id/comments');
+    expect(keys).not.toContain('POST /comments/:id/comments');
+  });
+
+  it('classifies a reaction on a comment as a wall write, like the thread itself', async () => {
+    // `(entity_type, entity_id)` is polymorphic, so the domain has to be
+    // decided by hand — and it has been decided wrong once, which left an open
+    // thread stale on every other phone.
+    expect(domainsForRoute('/api/comments/:id/reactions')).toEqual(['wall']);
+    expect(domainsForRoute('/api/comments/:id')).toEqual(['wall']);
+  });
+
   it('answers 401 rather than 403 to an unauthenticated caller', async () => {
     const { buildApp } = await import('../../app.js');
 
@@ -823,6 +933,17 @@ describe.skipIf(!TEST_DATABASE_URL)('wall (database)', () => {
   afterAll(async () => {
     if (close) await close();
   });
+
+  /** Counts the rows nothing can cascade, straight from the table. */
+  async function countReactionsOn(entityType: string, entityId: string): Promise<number> {
+    const { reactions } = await import('./wall.schema.js');
+    const { and, count, eq } = await import('drizzle-orm');
+    const [row] = await db
+      .select({ total: count() })
+      .from(reactions)
+      .where(and(eq(reactions.entityType, entityType), eq(reactions.entityId, entityId)));
+    return row?.total ?? 0;
+  }
 
   it('replaces the previous vote in a single-choice poll', async () => {
     const poll = await repo.insertPoll(db, {
@@ -881,7 +1002,7 @@ describe.skipIf(!TEST_DATABASE_URL)('wall (database)', () => {
     );
     await addComment(db, child, { entityType: 'post', entityId: post.id }, { body: 'И я' });
 
-    let hydrated = await hydratePosts(db, [post], adult.userId);
+    let hydrated = await hydratePosts(db, [post], adult);
     expect(hydrated[0]?.commentCount).toBe(2);
 
     await deleteComment(db, adult, first.id);
@@ -895,16 +1016,144 @@ describe.skipIf(!TEST_DATABASE_URL)('wall (database)', () => {
     expect(listed.items.map((c) => c.id)).not.toContain(first.id);
     expect(listed.items).toHaveLength(1);
 
-    hydrated = await hydratePosts(db, [post], adult.userId);
+    hydrated = await hydratePosts(db, [post], adult);
     expect(hydrated[0]?.commentCount).toBe(1);
 
     // The delete hook takes the rest with it.
     const cleaned = await deleteCommentsFor(db, 'post', post.id);
     expect(cleaned.comments).toBe(1);
-    hydrated = await hydratePosts(db, [post], adult.userId);
+    hydrated = await hydratePosts(db, [post], adult);
     expect(hydrated[0]?.commentCount).toBe(0);
 
     await repo.softDeletePost(db, post.id);
+  });
+
+  it('carries a heart on a reply, and takes it with the reply when it goes', async () => {
+    const post = await repo.insertPost(db, {
+      authorId: adult.userId,
+      type: 'announcement',
+      body: 'Кто едет на дачу?',
+      title: null,
+    });
+
+    const reply = await addComment(
+      db,
+      adult,
+      { entityType: 'post', entityId: post.id },
+      { body: 'Я еду' },
+    );
+
+    // The owner's request, end to end: a heart on a message inside a thread.
+    const after = await toggleReaction(
+      db,
+      child,
+      { entityType: 'comment', entityId: reply.id },
+      { emoji: '❤️' },
+    );
+    expect(after.entityType).toBe('comment');
+    expect(after.reactions).toEqual([
+      { emoji: '❤️', count: 1, reacted: true, userIds: [child.userId] },
+    ]);
+
+    // …and it reaches the thread the client actually renders, in the same
+    // query the comments came from rather than one request per reply.
+    const listed = await listCommentsFor(
+      db,
+      child,
+      { entityType: 'post', entityId: post.id },
+      { limit: 50 },
+    );
+    expect(listed.items.find((c) => c.id === reply.id)?.reactions).toEqual([
+      { emoji: '❤️', count: 1, reacted: true, userIds: [child.userId] },
+    ]);
+    // `reacted` is per reader: the adult never pressed it.
+    const forAdult = await getReactionSummary(db, adult, {
+      entityType: 'comment',
+      entityId: reply.id,
+    });
+    expect(forAdult.reactions[0]?.reacted).toBe(false);
+
+    // Idempotent toggle, exactly as on every other target.
+    const removed = await toggleReaction(
+      db,
+      child,
+      { entityType: 'comment', entityId: reply.id },
+      { emoji: '❤️' },
+    );
+    expect(removed.reactions).toEqual([]);
+
+    // Now the cleanup that has no foreign key to do it: deleting the reply
+    // must take its hearts with it, or they become rows nothing points at.
+    await toggleReaction(db, child, { entityType: 'comment', entityId: reply.id }, { emoji: '❤️' });
+    await deleteComment(db, adult, reply.id);
+    expect(await countReactionsOn('comment', reply.id)).toBe(0);
+
+    await repo.softDeletePost(db, post.id);
+  });
+
+  it('takes the hearts on a thread with the post the thread hangs under', async () => {
+    const post = await repo.insertPost(db, {
+      authorId: adult.userId,
+      type: 'announcement',
+      body: 'Субботник',
+      title: null,
+    });
+    const first = await addComment(
+      db,
+      adult,
+      { entityType: 'post', entityId: post.id },
+      { body: 'Приду' },
+    );
+    const second = await addComment(
+      db,
+      child,
+      { entityType: 'post', entityId: post.id },
+      { body: 'И я' },
+    );
+
+    await toggleReaction(db, child, { entityType: 'comment', entityId: first.id }, { emoji: '❤️' });
+    await toggleReaction(
+      db,
+      adult,
+      { entityType: 'comment', entityId: second.id },
+      { emoji: '👍' },
+    );
+    await toggleReaction(db, adult, { entityType: 'post', entityId: post.id }, { emoji: '❤️' });
+
+    // The delete hook every module calls inside its own delete transaction.
+    const cleaned = await deleteCommentsFor(db, 'post', post.id);
+    expect(cleaned.comments).toBe(2);
+    // One on the post itself plus one on each reply — the count is the whole
+    // sweep, because a caller cannot cascade what it cannot see.
+    expect(cleaned.reactions).toBe(3);
+    expect(await countReactionsOn('comment', first.id)).toBe(0);
+    expect(await countReactionsOn('comment', second.id)).toBe(0);
+    expect(await countReactionsOn('post', post.id)).toBe(0);
+
+    await repo.softDeletePost(db, post.id);
+  });
+
+  it('refuses a heart on a reply the reader cannot see the thread of', async () => {
+    // Two hops: the comment resolves, and then its own target has to. A
+    // deleted post is unreadable, so its replies are unreactable — 404, never
+    // 403, because a 403 would confirm the reply exists (D4).
+    const post = await repo.insertPost(db, {
+      authorId: adult.userId,
+      type: 'announcement',
+      body: 'Скоро удалю',
+      title: null,
+    });
+    const reply = await addComment(
+      db,
+      adult,
+      { entityType: 'post', entityId: post.id },
+      { body: 'ок' },
+    );
+    await repo.softDeletePost(db, post.id);
+
+    await expect(
+      toggleReaction(db, child, { entityType: 'comment', entityId: reply.id }, { emoji: '❤️' }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
   /**

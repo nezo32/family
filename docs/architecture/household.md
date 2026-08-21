@@ -65,23 +65,25 @@ There is deliberately **no** `DELETE /goals/:id/transactions/:txnId`. See §2.
 
 ### Wall — `/wall`
 
-| Method | Path                               | Permission                     | Notes                                         |
-| ------ | ---------------------------------- | ------------------------------ | --------------------------------------------- |
-| GET    | `/wall/posts`                      | authenticated                  | pinned first, then `created_at desc`          |
-| POST   | `/wall/posts`                      | `post:create`                  |                                               |
-| PATCH  | `/wall/posts/:id`                  | `post:delete:own` scope rules¹ | author only, unless `post:delete:any`         |
-| POST   | `/wall/posts/:id/pin`              | `post:pin`                     | body: `{ pinnedUntil }`                       |
-| DELETE | `/wall/posts/:id`                  | `post:delete:own` / `:any`     | soft delete                                   |
-| GET    | `/:entityType/:entityId/comments`  | read perm of the **target**    | `post\|task\|event\|goal\|poll`               |
-| POST   | `/:entityType/:entityId/comments`  | `comment:create`               |                                               |
-| PATCH  | `/comments/:id`                    | author only                    |                                               |
-| DELETE | `/comments/:id`                    | `comment:delete:own` / `:any`  | soft delete                                   |
-| POST   | `/:entityType/:entityId/reactions` | `kudos:give`                   | idempotent toggle, returns the summary        |
-| GET    | `/wall/polls`                      | authenticated                  | `?status=all\|open\|closed`                   |
-| POST   | `/wall/polls`                      | `post:create`²                 |                                               |
-| PATCH  | `/wall/polls/:id`                  | author or `post:delete:any`²   | `close: true` is one-way                      |
-| POST   | `/wall/polls/:id/votes`            | authenticated²                 | replaces the caller's selection               |
-| GET    | `/activity`                        | authenticated³                 | `?verb&entityType&from&to`, `created_at desc` |
+| Method | Path                               | Permission                     | Notes                                                |
+| ------ | ---------------------------------- | ------------------------------ | ---------------------------------------------------- |
+| GET    | `/wall/posts`                      | authenticated                  | pinned first, then `created_at desc`                 |
+| POST   | `/wall/posts`                      | `post:create`                  |                                                      |
+| PATCH  | `/wall/posts/:id`                  | `post:delete:own` scope rules¹ | author only, unless `post:delete:any`                |
+| POST   | `/wall/posts/:id/pin`              | `post:pin`                     | body: `{ pinnedUntil }`                              |
+| DELETE | `/wall/posts/:id`                  | `post:delete:own` / `:any`     | soft delete                                          |
+| GET    | `/:entityType/:entityId/comments`  | read perm of the **target**    | `post\|task\|event\|goal\|poll`                      |
+| POST   | `/:entityType/:entityId/comments`  | `comment:create`               |                                                      |
+| PATCH  | `/comments/:id`                    | author only                    |                                                      |
+| DELETE | `/comments/:id`                    | `comment:delete:own` / `:any`  | soft delete                                          |
+| POST   | `/:entityType/:entityId/reactions` | `comment:create`               | idempotent toggle, returns the summary               |
+| GET    | `/comments/:id/reactions`          | read perm of the **thread**    | a heart on a reply — see §3                          |
+| POST   | `/comments/:id/reactions`          | `comment:create`               | same toggle; `comment` is reactable, not commentable |
+| GET    | `/wall/polls`                      | authenticated                  | `?status=all\|open\|closed`                          |
+| POST   | `/wall/polls`                      | `post:create`²                 |                                                      |
+| PATCH  | `/wall/polls/:id`                  | author or `post:delete:any`²   | `close: true` is one-way                             |
+| POST   | `/wall/polls/:id/votes`            | authenticated²                 | replaces the caller's selection                      |
+| GET    | `/activity`                        | authenticated³                 | `?verb&entityType&from&to`, `created_at desc`        |
 
 ¹ Editing a post is scoped like deleting it: author, or a holder of the `:any`
 variant. There is no separate `post:update` permission in the catalog.
@@ -154,8 +156,34 @@ that is the one place `numeric` is correct in this domain.
 ## 3. Polymorphic comments and reactions
 
 `comments` and `reactions` point at their target with `(entity_type, entity_id)`
-instead of one nullable FK per commentable table. Allowed types:
-`post | task | event | goal | poll`.
+instead of one nullable FK per commentable table.
+
+There are **two** allowed sets, and the difference between them is a deliberate
+refusal:
+
+| Set                        | Members                                          | Mounted on                 |
+| -------------------------- | ------------------------------------------------ | -------------------------- |
+| `COMMENTABLE_ENTITY_TYPES` | `post \| task \| event \| goal \| poll \| kudos` | comments **and** reactions |
+| `REACTABLE_ENTITY_TYPES`   | the above **plus `comment`**                     | reactions only             |
+
+The owner asked for a heart on a message inside a thread («в обсуждениях должна
+быть возможность… добавлять реакции на сообщения в обсуждениях»). Adding
+`comment` to the _commentable_ set would have answered that — and would also
+have mounted `POST /comments/:id/comments`, because the generic endpoints are
+mounted once per member of that enum. That is threads on threads: a different
+product, with its own depth limit, indentation, notification and moderation
+rules, none of which exist, and §D7 is explicit that a discussion is a flat list
+under a card.
+
+So the two reaction routes a comment needs are mounted **by hand** in
+`wall.routes.ts`, outside the `COMMENT_MOUNTS` loop, and `assertEntityType`
+(commentable) and `assertReactableEntityType` stay separate functions. The extra
+cost of keeping the refusal is those two mounts; `wall.test.ts` asserts that
+`/comments/:id/comments` is _not_ registered.
+
+A reaction on a comment resolves in **two hops** — the comment must exist and
+not be deleted, and then the comment's own target must be readable — so a heart
+on a reply under a private goal needs exactly the permission the goal does.
 
 **What it buys.** Discussion and emoji on tasks, events and goals for zero extra
 tables and zero migrations per new commentable entity. One service, one set of
@@ -171,10 +199,21 @@ pointer. Three consequences, all owned by the service layer:
   comments and reactions. Cross-module calls go through the _service_, never the
   repository (D8). A nightly job sweeping orphans by target existence is the
   cheap backstop; it is not a substitute.
-- **`entity_type` is unvalidated `text` in the DB.** The closed enum lives in
-  `packages/shared/src/contracts/wall.ts` (`COMMENTABLE_ENTITY_TYPES`) and is
-  mirrored as a const in `wall.schema.ts` for documentation. Validation happens
-  on write, in the contract.
+
+  `deleteCommentsFor` now sweeps **four** pointers, not two, and each was added
+  because the one before it was found missing: the comments themselves (soft),
+  the reactions on the target (hard), the **media** on those comments
+  (`detachAllFromMany`), and the **reactions on those comments**
+  (`deleteReactionsForMany`). `deleteComment` carries the same obligation for a
+  single reply. An orphaned reaction is not merely wrong — it is _invisible_,
+  because nothing left in the database points at it.
+
+- **`entity_type` is unvalidated `text` in the DB.** The closed enums live in
+  `packages/shared/src/contracts/wall.ts` (`COMMENTABLE_ENTITY_TYPES`,
+  `REACTABLE_ENTITY_TYPES`) and are mirrored as a const in `wall.schema.ts` for
+  documentation. Validation happens on write, in the contract — comment writes
+  through `assertEntityType`, reaction writes through
+  `assertReactableEntityType`.
 - **Reads need the target's permission.** `GET /:entityType/:entityId/comments`
   must first resolve read access to the _target_ (a comment on a private goal is
   as private as the goal) before returning anything. This check is the single

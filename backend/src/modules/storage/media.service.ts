@@ -427,6 +427,36 @@ export async function attachmentsOf(
   return map.get(entityId) ?? [];
 }
 
+/**
+ * What a card is allowed to say about its media, for **this** reader.
+ *
+ * The permission check lives here — one function, called by every mapper on
+ * both sides of the wall — rather than in each of the six places that build a
+ * `PostResponse` or a `CommentResponse`. Five of those would stay correct and
+ * the sixth is the one that ships a photo to a `guest`.
+ *
+ * Without `media:read` the reader gets the **count and nothing else**: no id,
+ * no `/api/media/…` url, no content type, no dimensions. The count is what lets
+ * the card draw «Фото — только для семьи» in place of the box (§D7.14.10)
+ * instead of rendering a note that looks like it was written empty. Everything
+ * that would let the reader go and ask for the bytes is withheld — and the
+ * delivery route refuses them anyway, with a 404 (D4). Both halves, because the
+ * response shape is not a security boundary on its own and the route is not a
+ * product decision on its own.
+ */
+export interface VisibleAttachments {
+  readonly attachments: MediaAttachment[];
+  readonly hiddenAttachments: number;
+}
+
+export function visibleAttachmentsFor(
+  auth: Pick<AuthContext, 'can'>,
+  attachments: MediaAttachment[],
+): VisibleAttachments {
+  if (auth.can('media:read')) return { attachments, hiddenAttachments: 0 };
+  return { attachments: [], hiddenAttachments: attachments.length };
+}
+
 export async function findAttachment(
   exec: Executor,
   id: string,

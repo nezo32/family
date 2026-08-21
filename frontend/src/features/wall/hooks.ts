@@ -54,6 +54,7 @@ import {
   type KudosListResponse,
   type KudosTotals,
   type PollStatusFilter,
+  type ReactionRef,
   type WallFeedPage,
 } from './api';
 import { WALL_RU } from './locale';
@@ -330,6 +331,20 @@ export function useCreatePost(): UseMutationResult<PostResponse, Error, CreatePo
           instead of an omitted field.
         */
         attachments: [],
+        /*
+          Zero, and it is a statement rather than a placeholder: the writer of
+          this note holds `media:read` by construction — `post:create` is not
+          granted to anybody who does not — so there is nothing on their own
+          card they are being kept from. The «Фото — только для семьи» line is
+          a thing a *reader* sees on somebody else's note, never a thing the
+          author of a note sees on it while it is going up.
+
+          Setting it is also what let `hiddenAttachments` be promoted from
+          `.optional()` to `.default(0)` in the contract: a `.default()` makes
+          the field required in the inferred type, so this literal and that
+          promotion had to move together (`docs/architecture/media.md` §8).
+        */
+        hiddenAttachments: 0,
         createdAt: now,
         updatedAt: now,
       };
@@ -582,6 +597,9 @@ export function useAddComment(
         // Empty for the same reason a post's optimistic draft is — the
         // dimensions that reserve the box are the server's to state.
         attachments: [],
+        // Zero for the same reason the post draft's is: you cannot be blocked
+        // from the reply you are in the middle of writing.
+        hiddenAttachments: 0,
         createdAt: now,
         updatedAt: now,
       };
@@ -712,7 +730,7 @@ export function applyReactionToggle(
  * its own — `enabled: false` — because the data is already on screen; the
  * fetcher exists for an explicit refetch.
  */
-export function useReactionState(ref: EntityRef, server: readonly ReactionSummary[]) {
+export function useReactionState(ref: ReactionRef, server: readonly ReactionSummary[]) {
   const queryClient = useQueryClient();
   // Keyed on the two primitives, not on `ref`: callers pass an inline object, and
   // a fresh identity every render would re-seed over an in-flight toggle.
@@ -752,7 +770,7 @@ interface ReactionSnapshot {
 }
 
 export function useToggleReaction(
-  ref: EntityRef,
+  ref: ReactionRef,
 ): UseMutationResult<ReactionSummary[], Error, string, ReactionSnapshot> {
   const queryClient = useQueryClient();
   const { userId } = useCan();

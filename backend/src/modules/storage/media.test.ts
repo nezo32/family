@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { COMMENTABLE_ENTITY_TYPES, MEDIA_LIMITS } from '@family/shared';
+import {
+  COMMENTABLE_ENTITY_TYPES,
+  MEDIA_LIMITS,
+  MEDIA_TICKET_TTL_SECONDS,
+  ROLES,
+  effectivePermissions,
+} from '@family/shared';
 
 import { AppError } from '../../core/errors.js';
 import {
@@ -27,6 +33,7 @@ import {
 } from './media.js';
 import { bufferSource, probeMedia } from './media.probe.js';
 import { ATTACHABLE_ENTITY_TYPES, mediaObjectKey, mediaUrlFor } from './media.service.js';
+import { mintMediaTicket, parseMediaTicket } from './media.ticket.js';
 
 /**
  * The media gate, without a database, a bucket or an HTTP request.
@@ -367,5 +374,121 @@ describe('what may hold media', () => {
       if (type === 'comment') continue;
       expect(COMMENTABLE_ENTITY_TYPES as readonly string[]).toContain(type);
     }
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* `media:read` — the permission that keeps a guest out of the photographs     */
+/* -------------------------------------------------------------------------- */
+
+describe('media:read (D15 §4)', () => {
+  it('is held from `child` upwards and by no `guest`', () => {
+    // Written against the matrix rather than against a list of role names, so
+    // a future role inherits the rule instead of quietly missing it.
+    expect(effectivePermissions('guest')).not.toContain('media:read');
+    for (const role of ROLES) {
+      if (role === 'guest') continue;
+      expect(effectivePermissions(role), role).toContain('media:read');
+    }
+  });
+
+  it('is a real narrowing: `guest` still reads the wall', () => {
+    // The whole point. A guest keeps `member:read` — they see the card, the
+    // body, the author and the thread — and loses only the bytes.
+    const guest = effectivePermissions('guest');
+    expect(guest).toContain('member:read');
+    expect(guest).not.toContain('media:read');
+  });
+
+  it('is grantable to one person without touching the role', () => {
+    // The reversibility that makes the safe default safe to take now: the
+    // babysitter who genuinely should see the holiday photos is one row.
+    expect(effectivePermissions('guest', ['media:read'])).toContain('media:read');
+    // …and revocable from an adult, which is what a role-shaped check misses.
+    expect(effectivePermissions('adult', [], ['media:read'])).not.toContain('media:read');
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Playback tickets                                                            */
+/* -------------------------------------------------------------------------- */
+
+const MEDIA_ID = '11111111-2222-4333-8444-555555555555';
+const USER_ID = '99999999-8888-4777-8666-555555555555';
+
+describe('playback tickets', () => {
+  it('round-trips the object, the member and the expiry', () => {
+    const now = new Date('2026-08-21T10:00:00.000Z');
+    const ticket = mintMediaTicket(MEDIA_ID, USER_ID, now);
+    expect(ticket).not.toBeNull();
+
+    const parsed = parseMediaTicket(ticket?.token ?? '', now);
+    expect(parsed?.mediaId).toBe(MEDIA_ID);
+    expect(parsed?.userId).toBe(USER_ID);
+    // Second precision, so the base36 payload stays short.
+    expect(parsed?.expiresAt.getTime()).toBe(now.getTime() + MEDIA_TICKET_TTL_SECONDS * 1000);
+  });
+
+  it('hands the client a same-origin path, never a bucket URL', () => {
+    const ticket = mintMediaTicket(MEDIA_ID, USER_ID);
+    expect(ticket?.url.startsWith(`/api/media/${MEDIA_ID}/stream?t=`)).toBe(true);
+  });
+
+  it('refuses a tampered payload', () => {
+    const now = new Date('2026-08-21T10:00:00.000Z');
+    const token = mintMediaTicket(MEDIA_ID, USER_ID, now)?.token ?? '';
+    const parts = token.split('.');
+
+    // Point it at another object, keeping the signature.
+    const otherMedia = [parts[0], 'a'.repeat(32), parts[2], parts[3], parts[4]].join('.');
+    expect(parseMediaTicket(otherMedia, now)).toBeNull();
+
+    // Claim to be somebody else.
+    const otherUser = [parts[0], parts[1], 'b'.repeat(32), parts[3], parts[4]].join('.');
+    expect(parseMediaTicket(otherUser, now)).toBeNull();
+
+    // Extend your own expiry.
+    const later = [parts[0], parts[1], parts[2], 'zzzzzzz', parts[4]].join('.');
+    expect(parseMediaTicket(later, now)).toBeNull();
+
+    // Flip one character of the signature.
+    const signature = parts[4] ?? '';
+    const flipped = [
+      parts[0],
+      parts[1],
+      parts[2],
+      parts[3],
+      (signature[0] === 'A' ? 'B' : 'A') + signature.slice(1),
+    ].join('.');
+    expect(parseMediaTicket(flipped, now)).toBeNull();
+  });
+
+  it('expires, and the expiry is what a stale `<video>` hits', () => {
+    const minted = new Date('2026-08-21T10:00:00.000Z');
+    const token = mintMediaTicket(MEDIA_ID, USER_ID, minted)?.token ?? '';
+
+    const justBefore = new Date(minted.getTime() + (MEDIA_TICKET_TTL_SECONDS - 1) * 1000);
+    expect(parseMediaTicket(token, justBefore)).not.toBeNull();
+
+    const justAfter = new Date(minted.getTime() + (MEDIA_TICKET_TTL_SECONDS + 1) * 1000);
+    expect(parseMediaTicket(token, justAfter)).toBeNull();
+  });
+
+  it('outlives the longest file the limits allow, so a playthrough never stalls', () => {
+    // Audio is capped at ten minutes; a ticket that expired inside one would
+    // break playback in the middle for no security gain anybody can name.
+    const longest = Math.max(MEDIA_LIMITS.video.maxDurationMs, MEDIA_LIMITS.audio.maxDurationMs);
+    expect(MEDIA_TICKET_TTL_SECONDS * 1000).toBeGreaterThan(longest);
+  });
+
+  it('refuses anything that is not one of ours, without throwing', () => {
+    for (const junk of ['', 'nope', 'm1.a.b.c', `m2.${'a'.repeat(32)}.x.y.z`, 'x'.repeat(600)]) {
+      expect(parseMediaTicket(junk)).toBeNull();
+    }
+  });
+
+  it('will not mint for something that is not a uuid', () => {
+    expect(mintMediaTicket('not-a-uuid', USER_ID)).toBeNull();
+    expect(mintMediaTicket(MEDIA_ID, 'not-a-uuid')).toBeNull();
   });
 });

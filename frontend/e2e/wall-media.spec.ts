@@ -7,7 +7,7 @@ import zlib from 'node:zlib';
 import type { Locator, Page } from '@playwright/test';
 
 import { test, expect } from './fixtures';
-import { assertClean, watch } from './helpers';
+import { ANONYMOUS, API, RUN_ID, assertClean, watch } from './helpers';
 
 /**
  * Вложения on Стена — the measurements, not the pixels (§D7.14).
@@ -486,4 +486,351 @@ test('a refused upload says the server’s own sentence, and the note is still p
   // that point (§D7.14.7).
   await expect(page.getByRole('button', { name: 'Повесить' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Ещё раз' })).toBeVisible();
+});
+
+/* ========================================================================== */
+/* the playback ticket                                                        */
+/* ========================================================================== */
+
+/**
+ * `<video src>` is `/api/media/<id>/stream?t=…`, minted on the tap.
+ *
+ * What this can prove here and what it cannot, stated rather than implied: the
+ * seeded row points at an object that does not exist, so no browser is going to
+ * decode anything. What *is* observable — and is the whole of the change — is
+ * **which URL the element is given, and when**. A clip nobody has tapped costs
+ * no mint at all; the tap costs exactly one; and the URL that lands in `src`
+ * carries a capability rather than nothing, which is what puts the range
+ * requests back in the browser's own media stack.
+ *
+ * Seeking through a real file was verified by hand against a 15 MB clip and is
+ * recorded in the report: a drag to 150 s of a 170 s clip issued
+ * `Range: bytes=13434880-` and was answered `206 bytes 13434880-15308316/…`.
+ * Committing that would mean committing a 15 MB fixture or an ffmpeg
+ * dependency, and CI has neither.
+ */
+/**
+ * Every `src` a `<video>` on this page is ever given, in order.
+ *
+ * Read out of the DOM rather than off the network, and both halves of that are
+ * deliberate. **Off the network** would be the more direct assertion, and it is
+ * the one that does not survive WebKit: `page.on('request')` reports this app's
+ * ticket POST there but never the media element's own load, so a
+ * network-shaped test passes on Chromium and asserts nothing at all on
+ * mobile-safari — the same failure mode `seedPostWithMedia` was written to
+ * avoid. **A `MutationObserver` rather than reading the attribute afterwards**
+ * because the seeded row points at an object that was never written: the
+ * request fails, the card re-mints and gives up inside a few hundred
+ * milliseconds, and by the time a poll could look, `src` is gone and so is the
+ * element. A record of what it *was* given cannot be raced.
+ */
+declare global {
+  interface Window {
+    __mediaSrcs?: string[];
+  }
+}
+
+async function recordVideoSources(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    window.__mediaSrcs = [];
+    const note = (node: Node): void => {
+      if (!(node instanceof HTMLVideoElement) && !(node instanceof HTMLAudioElement)) return;
+      const src = node.getAttribute('src');
+      if (src) window.__mediaSrcs?.push(src);
+    };
+    new MutationObserver((records) => {
+      for (const record of records) {
+        if (record.type === 'attributes') note(record.target);
+        for (const added of record.addedNodes) note(added);
+      }
+    }).observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['src'],
+    });
+  });
+}
+
+const videoSources = (page: Page): Promise<string[]> =>
+  page.evaluate(() => window.__mediaSrcs ?? []);
+
+/**
+ * `<video src>` is `/api/media/<id>/stream?t=…`, minted on the tap.
+ *
+ * What this can prove here and what it cannot, stated rather than implied: the
+ * seeded row points at an object that does not exist, so no browser is going to
+ * decode anything. What *is* observable — and is the whole of the change — is
+ * **which URL the element is given, and when**. A clip nobody has tapped costs
+ * no mint at all; the tap costs exactly one; and the URL that lands in `src`
+ * carries a capability rather than nothing, which is what puts the range
+ * requests back into the browser's own media stack.
+ *
+ * Seeking through a real file was verified by hand against a 15 MB clip and is
+ * recorded in the report: a drag to 150 s of a 170 s clip issued
+ * `Range: bytes=13434880-` and was answered `206 bytes 13434880-15308316/…`,
+ * on both engines. Committing that would mean committing a 15 MB fixture or an
+ * ffmpeg dependency, and CI has neither.
+ */
+test('a clip is minted a ticket on the tap, and not one moment before', async ({ page }) => {
+  const problems = watch(page);
+  const { body, ids } = seedPostWithMedia([
+    { kind: 'video', contentType: 'video/mp4', width: 1920, height: 1080, durationMs: 42_000 },
+  ]);
+  const id = ids[0] ?? '';
+
+  const mints: string[] = [];
+  page.on('request', (request) => {
+    if (request.url().includes(`/media/${id}/ticket`)) mints.push(request.method());
+  });
+
+  await openWall(page);
+  const card = seededCard(page, body);
+  const play = card.getByRole('button', { name: /^Видео —/ });
+  await expect(play).toBeVisible({ timeout: 15_000 });
+  await recordVideoSources(page);
+
+  // A feed of four clips is not four round trips, because it is not any round
+  // trips: nothing is minted for a clip nobody has asked to watch, and there is
+  // no element on the card to want any.
+  expect(mints).toEqual([]);
+  await expect(card.locator('video')).toHaveCount(0);
+
+  await play.click();
+
+  await expect.poll(() => videoSources(page), { timeout: 15_000 }).not.toEqual([]);
+  const sources = await videoSources(page);
+
+  // The whole change, in one assertion: the element was pointed at the stream
+  // route carrying a capability, so the browser's own media stack issues the
+  // range requests — with no service worker and no object URL in the way.
+  expect(sources[0]).toMatch(new RegExp(`^/api/media/${id}/stream\\?t=m1\\.`));
+
+  /*
+    And the app itself never says the token out loud.
+
+    `core/logger.ts` cuts the query string off every request line because the
+    ICS feed token was once written out in full, and a `console.log` of the src
+    — or an error message that interpolated it — would walk straight around
+    that. `problems.console` is everything this page said, warnings included.
+
+    Worth knowing and deliberately **not** asserted here: `watch()` records
+    failing requests by their full URL, ticket and all, and `assertClean` prints
+    those into the report on failure. That is the harness rather than the app;
+    see the note in the report.
+  */
+  for (const line of problems.console) {
+    expect(line).not.toContain('t=m1.');
+  }
+});
+
+test('a clip whose bytes will not come re-mints once, and then stops asking', async ({ page }) => {
+  const { body, ids } = seedPostWithMedia([
+    { kind: 'video', contentType: 'video/mp4', width: 1920, height: 1080, durationMs: 42_000 },
+  ]);
+  const id = ids[0] ?? '';
+
+  let mints = 0;
+  page.on('request', (request) => {
+    if (request.url().includes(`/media/${id}/ticket`)) mints += 1;
+  });
+
+  await openWall(page);
+  const card = seededCard(page, body);
+  await card.getByRole('button', { name: /^Видео —/ }).click();
+  await expect(card.locator('video')).toHaveAttribute('src', /\/stream\?t=/, { timeout: 15_000 });
+
+  /*
+    The object behind this row was never written, so every request for its bytes
+    fails. That is the shape of a file the browser cannot use, and an unbounded
+    "on error, mint again" would be an infinite request loop against the API —
+    a `<video>` raises `error` on **every** source it is handed. One re-mint is
+    the bound: it is enough to fix the one thing a re-mint can fix (a ticket
+    that aged out while the clip sat paused), and after it the mint has already
+    proved that access is fine, so a second failure is the bytes.
+  */
+  await expect(card.getByText('Вложение не открылось')).toBeVisible({ timeout: 20_000 });
+  await page.waitForTimeout(2_000);
+  expect(mints).toBeLessThanOrEqual(2);
+});
+
+/* ========================================================================== */
+/* the heart on a reply                                                       */
+/* ========================================================================== */
+
+/** One comment on the seeded post, straight into the database. */
+function seedComment(postId: string, body: string): string {
+  const id = psql(
+    `insert into comments (entity_type, entity_id, author_id, body)` +
+      ` select 'post', '${postId}', id, '${body}' from users` +
+      ` where status = 'active' order by created_at limit 1 returning id`,
+  )
+    .split(/\r?\n/)[0]
+    ?.trim();
+  expect(id, 'seeded a comment').toMatch(/^[0-9a-f-]{36}$/);
+  return id ?? '';
+}
+
+test('a reply takes a heart, at the 44px floor and with no digit on it', async ({ page }) => {
+  const { body } = seedPostWithMedia([]);
+  const postId =
+    psql(`select id from posts where body = '${body}'`).split(/\r?\n/)[0]?.trim() ?? '';
+  seedComment(postId, 'E2E reply');
+
+  await page.setViewportSize({ width: 320, height: 720 });
+  await openWall(page);
+
+  const card = seededCard(page, body);
+  await expect(card).toBeVisible({ timeout: 15_000 });
+  await card.getByRole('button', { name: /Обсуждение|Обсудить/ }).click();
+  await expect(card.getByText('E2E reply')).toBeVisible({ timeout: 15_000 });
+
+  /*
+    Two hearts on screen now — the card's own and the reply's — and the reply's
+    is the second. `POST /api/comments/:id/reactions` is mounted, so it is a
+    real control rather than a drawing.
+  */
+  const hearts = card.getByRole('button', { name: /Нравится|^❤️/ });
+  await expect(hearts).toHaveCount(2);
+  const heart = hearts.last();
+  await expect(heart).toHaveAttribute('aria-pressed', 'false');
+
+  // §F1 at the width where a row is most likely to have been squeezed. This is
+  // where the empty chip once measured 43.97px — one emoji plus `px-2.5`, and
+  // an emoji is not reliably 24px.
+  const box = await heart.boundingBox();
+  expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+  expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
+
+  await heart.click();
+  await expect(heart).toHaveAttribute('aria-pressed', 'true', { timeout: 15_000 });
+
+  // Faces, never digits — on the chip, in its `title`, and in the name a screen
+  // reader reads out (§D7.7b). The last of those is how this crept back before.
+  expect(await heart.getAttribute('aria-label')).not.toMatch(/\d/);
+  expect(await heart.getAttribute('title')).toBeNull();
+  expect(await heart.textContent()).not.toMatch(/\d/);
+
+  /*
+    And **no thread on a thread.** The backend widened reactions to `comment`
+    and pointedly did not widen comments — `GET /api/comments/:id/comments`
+    answers 404 by construction — so there must be no affordance suggesting
+    otherwise. Exactly one expanded toggle: the post's own, which opened this
+    list.
+  */
+  await expect(page.getByRole('button', { expanded: true })).toHaveCount(1);
+  // §D7.8a: no `☺+` on a comment. The card above it still has one.
+  await expect(card.getByRole('button', { name: 'Добавить реакцию' })).toHaveCount(1);
+
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
+});
+
+/* ========================================================================== */
+/* what a `guest` sees, which is the path nobody can see by accident          */
+/* ========================================================================== */
+
+/**
+ * A second account, because a `guest` is the one reader this suite cannot
+ * borrow.
+ *
+ * `media:read` is granted from `child` up and withheld from `guest`, and the
+ * fixture's session is an `owner` — so the redaction path is invisible to every
+ * other test in this file. Demoting the shared account instead would reach into
+ * whatever else is running against this stack: the run's owner is one account
+ * shared by every worker, and two projects run in parallel.
+ *
+ * So: one extra account, per run, swept by age exactly as `helpers.ts` sweeps
+ * its own. ASCII throughout — these predicates travel through a shell into
+ * `docker exec psql`, and a Cyrillic literal that survives one machine's
+ * console codepage can arrive mangled on another's.
+ */
+const GUEST_EMAIL = `e2e-guest-${RUN_ID}@example.test`;
+const GUEST_PASSWORD = 'E2ePassw0rd!2345';
+
+test.describe('a reader without media:read', () => {
+  test.use({ storageState: ANONYMOUS });
+
+  test('is told there are photographs, how many, and nothing else at all', async ({
+    page,
+    request,
+  }) => {
+    /*
+      Two attachments, so the line has to be the plural one — which is the whole
+      reason `hiddenAttachments` is a count and not a boolean.
+
+      `video`, not `image`, and the reason is other people's tests: these rows
+      point at objects that were never written, and an `image` row is fetched by
+      **every** card that draws it. The owner sessions running the rest of this
+      file would then collect a 404 apiece and `assertClean` would fail in a
+      test that has nothing to do with this one. A clip fetches nothing until it
+      is tapped. The reader under test sees neither either way — the placeholder
+      says «фото» whatever the kind, because the kind is one more thing that
+      does not cross the wire to them.
+    */
+    const { body, ids } = seedPostWithMedia([
+      { kind: 'video', contentType: 'video/mp4', width: 1920, height: 1080, durationMs: 12_000 },
+      { kind: 'video', contentType: 'video/mp4', width: 1920, height: 1080, durationMs: 8_000 },
+    ]);
+
+    psql(
+      `delete from users where email like 'e2e-guest-%@example.test'` +
+        ` and created_at < now() - interval '6 hours'`,
+    );
+    if (psql(`select 1 from users where email = '${GUEST_EMAIL}'`) !== '1') {
+      const res = await request.post(`${API}/api/auth/register`, {
+        data: { email: GUEST_EMAIL, password: GUEST_PASSWORD, displayName: 'Гость' },
+      });
+      expect(
+        res.ok() || res.status() === 409,
+        `guest registration failed: ${res.status()} ${await res.text()}`,
+      ).toBeTruthy();
+    }
+    psql(`update users set status='active', role='guest' where email='${GUEST_EMAIL}'`);
+
+    await page.setViewportSize({ width: 320, height: 720 });
+    await page.goto('/login');
+    await page.getByLabel('Почта', { exact: true }).fill(GUEST_EMAIL);
+    await page.getByLabel('Пароль', { exact: true }).fill(GUEST_PASSWORD);
+    await page.getByRole('button', { name: 'Войти', exact: true }).click();
+    await expect(page).toHaveURL(/\/($|\?)/, { timeout: 20_000 });
+
+    const asked: string[] = [];
+    page.on('request', (req) => {
+      if (ids.some((id) => req.url().includes(id))) asked.push(req.url());
+    });
+
+    await openWall(page);
+    const card = seededCard(page, body);
+    await expect(card).toBeVisible({ timeout: 15_000 });
+
+    // §D7.14.10 — one quiet line, and it counts. Not a lock-shaped hole, not a
+    // blur, and above all not a blurred copy of the actual photograph.
+    await expect(card.getByText('2 фото — только для семьи')).toBeVisible();
+
+    /*
+      And the reader is holding nothing they could take to the delivery route.
+      No id crosses the wire for them, so no element on this page can ask for
+      one — which is the half of D15 §4 that is drawn. The route answers them
+      404 regardless; this is the half that means they never find out.
+    */
+    expect(asked).toEqual([]);
+    await expect(card.locator('img, video, audio')).toHaveCount(0);
+
+    // A quiet line is still a line: it clears the 44px floor, and nothing about
+    // it moves, because nothing is ever going to arrive in it.
+    const line = card.getByText('2 фото — только для семьи');
+    const first = await line.boundingBox();
+    expect(first?.height ?? 0).toBeGreaterThanOrEqual(44);
+    await page.waitForTimeout(1_500);
+    const second = await line.boundingBox();
+    expect(Math.abs((second?.y ?? 0) - (first?.y ?? 0))).toBeLessThanOrEqual(1);
+
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(0);
+  });
 });

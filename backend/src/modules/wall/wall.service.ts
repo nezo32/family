@@ -54,6 +54,7 @@ export function toPostResponse(
   reactions: PostResponse['reactions'],
   now: Date = new Date(),
   attachments: MediaAttachment[] = [],
+  hiddenAttachments = 0,
 ): PostResponse {
   return {
     id: row.id,
@@ -66,6 +67,7 @@ export function toPostResponse(
     commentCount,
     reactions,
     attachments,
+    hiddenAttachments,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -103,11 +105,18 @@ export function toKudosResponse(row: KudosRow): KudosResponse {
  * `countComments`, `loadReactions` and `attachmentsForPage` all take an array of
  * ids: a feed of twenty cards costs four round trips whether or not any of them
  * carries a photo.
+ *
+ * It takes the whole `AuthContext` rather than a bare `viewerId` because the
+ * page depends on two things about the reader, not one: which reactions are
+ * theirs, and whether they hold `media:read` (D15 §4). A reader without it gets
+ * `attachments: []` and a `hiddenAttachments` count — the card can still say
+ * «Фото — только для семьи», and nothing that would let them go and ask for the
+ * bytes crosses the wire.
  */
 export async function hydratePosts(
   exec: Executor,
   rows: readonly PostRow[],
-  viewerId: string,
+  viewer: AuthContext,
   now: Date = new Date(),
 ): Promise<PostResponse[]> {
   if (rows.length === 0) return [];
@@ -117,16 +126,18 @@ export async function hydratePosts(
     repo.loadReactions(exec, 'post', ids),
     media.attachmentsForPage(exec, 'post', ids),
   ]);
-  const summaries = repo.buildReactionSummaries(facts, viewerId);
-  return rows.map((row) =>
-    toPostResponse(
+  const summaries = repo.buildReactionSummaries(facts, viewer.userId);
+  return rows.map((row) => {
+    const visible = media.visibleAttachmentsFor(viewer, attachments.get(row.id) ?? []);
+    return toPostResponse(
       row,
       repo.commentCountOf(counts, row.id),
       summaries.get(row.id) ?? [],
       now,
-      attachments.get(row.id) ?? [],
-    ),
-  );
+      visible.attachments,
+      visible.hiddenAttachments,
+    );
+  });
 }
 
 /**
@@ -229,7 +240,12 @@ export async function createAnnouncement(
   });
 
   await dispatchAfterCommit([dispatch]);
-  return toPostResponse(post, 0, [], new Date(), attachments);
+  // The author almost always holds `media:read` — they just uploaded these —
+  // but the redaction runs through the one helper regardless. A per-user deny
+  // is the only way an author would not, and a special case here would be the
+  // one place that forgot about it.
+  const visible = media.visibleAttachmentsFor(auth, attachments);
+  return toPostResponse(post, 0, [], new Date(), visible.attachments, visible.hiddenAttachments);
 }
 
 /**
@@ -295,7 +311,7 @@ export async function updateAnnouncement(
   // rule as replacing an avatar.
   await media.removeAllQuietly(removedKeys);
 
-  const [hydrated] = await hydratePosts(db, [updated], auth.userId);
+  const [hydrated] = await hydratePosts(db, [updated], auth);
   if (!hydrated) throw notFound('Post');
   return hydrated;
 }
@@ -337,7 +353,7 @@ export async function setPin(
     return row;
   });
 
-  const [hydrated] = await hydratePosts(db, [updated], auth.userId);
+  const [hydrated] = await hydratePosts(db, [updated], auth);
   if (!hydrated) throw notFound('Post');
   return hydrated;
 }
@@ -372,7 +388,7 @@ export async function deletePost(db: Db, auth: AuthContext, postId: string): Pro
 export async function getPost(db: Db, auth: AuthContext, postId: string): Promise<PostResponse> {
   const row = await repo.findPostById(db, postId);
   if (!row) throw notFound('Post');
-  const [hydrated] = await hydratePosts(db, [row], auth.userId);
+  const [hydrated] = await hydratePosts(db, [row], auth);
   if (!hydrated) throw notFound('Post');
   return hydrated;
 }
@@ -400,7 +416,7 @@ export async function listPosts(
   });
 
   const page = repo.toPage(rows, query.limit);
-  const items = await hydratePosts(db, [...pinned, ...page.items], auth.userId, now);
+  const items = await hydratePosts(db, [...pinned, ...page.items], auth, now);
   return { items, nextCursor: page.nextCursor };
 }
 
@@ -794,7 +810,7 @@ export async function getWallFeed(
     .filter((row): row is KudosRow => row !== undefined);
 
   const [hydratedPosts, hydratedPolls, hydratedKudos] = await Promise.all([
-    hydratePosts(db, [...pinnedRows, ...postsInPage], auth.userId, now),
+    hydratePosts(db, [...pinnedRows, ...postsInPage], auth, now),
     hydratePolls(db, [...openPollRows, ...pollsInPage], auth.userId, now),
     hydrateKudos(db, kudosInPage, auth.userId),
   ]);

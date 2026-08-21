@@ -31,6 +31,37 @@ export const COMMENTABLE_ENTITY_TYPES = ['post', 'task', 'event', 'goal', 'poll'
 export const entityTypeSchema = z.enum(COMMENTABLE_ENTITY_TYPES);
 export type CommentableEntityType = z.infer<typeof entityTypeSchema>;
 
+/**
+ * What may carry **reactions** — the commentable set plus `comment` itself.
+ *
+ * The owner asked for it in as many words: «в обсуждениях должна быть
+ * возможность… добавлять реакции на сообщения в обсуждениях». A heart on a
+ * reply is the lightest thing the app can offer, and it is the natural answer
+ * to a reply that does not need one of its own.
+ *
+ * ## Why this is a second enum rather than one more member of the first
+ *
+ * Because the two sets are not the same set, and merging them would enable a
+ * feature nobody asked for **by accident**. `COMMENTABLE_ENTITY_TYPES` is what
+ * the generic comment endpoints are mounted on, so adding `comment` there would
+ * silently mount `POST /api/comments/:id/comments` and give Стена nested
+ * threads — a different product, with its own depth limit, its own indentation
+ * design, its own notification rules and its own moderation story, none of
+ * which exist. §D7 is explicit that a discussion is a flat list under a card.
+ *
+ * So the refusal is deliberate and it is expressed structurally: reactions widen
+ * to `comment`, comments do not. `reactableEntityTypeSchema` is the integrity
+ * boundary for the reaction routes exactly as `entityTypeSchema` is for the
+ * comment routes.
+ *
+ * A reaction on a comment carries the same polymorphic-pointer obligation as
+ * every other row here: nothing cascades, so deleting a comment (or the thing
+ * it hangs on) must delete its reactions in the same transaction.
+ */
+export const REACTABLE_ENTITY_TYPES = [...COMMENTABLE_ENTITY_TYPES, 'comment'] as const;
+export const reactableEntityTypeSchema = z.enum(REACTABLE_ENTITY_TYPES);
+export type ReactableEntityType = z.infer<typeof reactableEntityTypeSchema>;
+
 export const entityRefSchema = z.object({
   entityType: entityTypeSchema,
   entityId: idSchema,
@@ -191,6 +222,58 @@ export type MediaAttachment = z.infer<typeof mediaAttachmentSchema>;
  */
 export const attachmentIdsSchema = z.array(idSchema).max(MAX_ATTACHMENTS);
 
+/**
+ * A **playback ticket** — the credential a `<video>` or an `<audio>` can
+ * actually carry.
+ *
+ * ## The problem it exists to solve
+ *
+ * `GET /api/media/:id` is bearer-authenticated, and a media element sends no
+ * `Authorization` header. There is no attribute for it, no hook, and no way to
+ * add one. So the PWA had to `fetch()` the whole file and hand the element an
+ * object URL — which works, and throws away the two things that matter most on
+ * exactly the files where they matter most: **seeking** and **partial
+ * playback**. A three-minute clip downloads in full before the first frame, and
+ * dragging the scrubber re-reads bytes the browser already has. The backend's
+ * `Range` support is complete and correct; it is simply unreachable.
+ *
+ * ## The shape
+ *
+ * `POST /api/media/:id/ticket` mints a short-lived capability for **one object
+ * and one member**, and `GET /api/media/:id/stream?t=…` accepts it in place of
+ * a bearer. That URL goes straight into `<video src>`, so the browser's own
+ * media stack issues the range requests, unmediated — no service worker in the
+ * byte path, no object URL, no buffering.
+ *
+ * ## What a leaked ticket costs, which is the question that chose this
+ *
+ * Nearly nothing, and deliberately so:
+ *
+ * - it names **one** attachment — not the wall, not the member's session;
+ * - it is bound to the member who minted it, and the stream route re-runs their
+ *   full authorisation on **every** request, so it is a *credential* and never
+ *   a bypass: suspend them, revoke `media:read`, delete the post, and the next
+ *   range request is a 404;
+ * - it expires in {@link MEDIA_TICKET_TTL_SECONDS} — comfortably longer than
+ *   the longest file the limits allow, and short enough that a URL in somebody
+ *   else's history is worthless by the time they look at it.
+ *
+ * The signing key is derived from `COOKIE_SECRET` through its own info string,
+ * so a ticket can never be replayed as a session credential — the same rule the
+ * ICS feed token follows. That token's lesson is recorded too: it was once
+ * logged in full, which is why `core/logger.ts` strips query strings from every
+ * request line. Tickets ride in `?t=` and are covered by that already.
+ */
+export const MEDIA_TICKET_TTL_SECONDS = 900;
+
+export const mediaTicketResponseSchema = z.object({
+  /** `/api/media/<id>/stream?t=<ticket>` — put it straight in `src`. */
+  url: z.string(),
+  /** When the ticket stops working. Re-mint before this, or on a 404. */
+  expiresAt: isoDateTimeSchema,
+});
+export type MediaTicketResponse = z.infer<typeof mediaTicketResponseSchema>;
+
 /* -------------------------------------------------------------------------- */
 /* Posts                                                                       */
 /* -------------------------------------------------------------------------- */
@@ -283,6 +366,37 @@ export const postResponseSchema = z.object({
    * and a reader would have to look up which of the two was which.
    */
   attachments: z.array(mediaAttachmentSchema).default([]),
+  /**
+   * How many attachments this card carries that **you** may not open (D15 §4).
+   *
+   * `0` for everybody who holds `media:read`, which is every role from `child`
+   * up. For a `guest` it is the count, and `attachments` is empty — no id, no
+   * url, no content type, no dimensions. That asymmetry is the whole design:
+   * the card must be able to say «Фото — только для семьи» in place of the box
+   * (§D7.14.10) instead of drawing a note that silently looks like it has
+   * nothing in it, and the reader must not come away holding an object id they
+   * could probe the delivery route with.
+   *
+   * A count rather than a boolean because the placeholder is a real element in
+   * a real layout — one line for one photo reads differently from one line
+   * standing in for four — and because the count is derived from rows the
+   * reader may already see the card for. It is the *only* thing about the media
+   * that crosses the wire to somebody without `media:read`.
+   *
+   * **`.default(0)` now, promoted from `.optional()`** — the same move
+   * `attachments` made just above it, and made for the same reason. The server
+   * has always sent this field, so `optional()` was never describing the wire;
+   * what it was protecting was the PWA's optimistic
+   * `const draft: PostResponse = {…}`, which a `.default()` forces to set it.
+   * Those drafts now set `hiddenAttachments: 0` — the truth about a note being
+   * written by somebody who is watching it appear — and in exchange every card
+   * reads a plain `number` with no `?? 0` guarding a case the server cannot
+   * produce.
+   *
+   * Branch on `> 0`, never on an empty `attachments` array — that is also what
+   * a note with no photos at all looks like.
+   */
+  hiddenAttachments: z.number().int().nonnegative().default(0),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
 });
@@ -324,6 +438,8 @@ export const commentResponseSchema = z.object({
    * note there. The two fields were promoted in one change on purpose.
    */
   attachments: z.array(mediaAttachmentSchema).default([]),
+  /** Same field, same rule and the same `.default(0)` — see the note there. */
+  hiddenAttachments: z.number().int().nonnegative().default(0),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
 });
@@ -375,7 +491,8 @@ export const toggleReactionSchema = z.object({
 export type ToggleReaction = z.infer<typeof toggleReactionSchema>;
 
 export const reactionListResponseSchema = z.object({
-  entityType: entityTypeSchema,
+  /** The **reactable** set, which includes `comment` — see `REACTABLE_ENTITY_TYPES`. */
+  entityType: reactableEntityTypeSchema,
   entityId: idSchema,
   reactions: z.array(reactionSummarySchema),
 });

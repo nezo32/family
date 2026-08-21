@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
@@ -10,12 +10,15 @@ import {
   type PublicUser,
 } from '@family/shared';
 
+import { api } from '@/shared/api/client';
+import { ApiError } from '@/shared/api/errors';
 import { meKeys } from '@/shared/auth/use-me';
 import { makeMe } from '@/test/me';
 import { TooltipProvider } from '@/shared/ui/tooltip';
 
 import { AnnouncementComposer } from './components/AnnouncementComposer';
 import { AnnouncementNote } from './components/AnnouncementNote';
+import { CommentThread } from './components/CommentThread';
 import { MediaBlock } from './components/MediaBlock';
 import { ReactionBar } from './components/ReactionBar';
 import type { Roster } from './hooks';
@@ -133,7 +136,13 @@ function photos(n: number): MediaAttachment[] {
   );
 }
 
-function post(overrides: { body?: string; attachments?: MediaAttachment[] } = {}) {
+function post(
+  overrides: {
+    body?: string;
+    attachments?: MediaAttachment[];
+    hiddenAttachments?: number;
+  } = {},
+) {
   return {
     id: POST_ID,
     authorId: ME_ID,
@@ -145,6 +154,7 @@ function post(overrides: { body?: string; attachments?: MediaAttachment[] } = {}
     commentCount: 0,
     reactions: [],
     attachments: overrides.attachments ?? [],
+    hiddenAttachments: overrides.hiddenAttachments ?? 0,
     createdAt: NOW,
     updatedAt: NOW,
   };
@@ -168,9 +178,37 @@ function renderWithProviders(ui: ReactNode, permissions: Permission[]) {
   );
 }
 
+const getSpy = vi.spyOn(api, 'get');
+const postSpy = vi.spyOn(api, 'post');
+
+/*
+  jsdom implements no media pipeline: `play()` raises "Not implemented" into the
+  virtual console and returns `undefined`, so the `.catch()` every call site has
+  would itself throw. Stubbing the two methods **once, at module scope** is what
+  lets the decisions around playback be tested — which src the element is given,
+  and what happens when it errors — without pretending jsdom can decode
+  anything. Not in `beforeEach`, and never restored: a `restoreAllMocks` would
+  also detach the two `api` spies above from the module they are spying on, and
+  every later test in this file would then hit the real fetch wrapper.
+*/
+const playSpy = vi
+  .spyOn(HTMLMediaElement.prototype, 'play')
+  .mockImplementation(() => Promise.resolve());
+vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+
 beforeEach(() => {
   uploadMock.mockReset();
   uploadMock.mockImplementation((_file: Blob) => Promise.resolve(attachment()));
+  getSpy.mockReset();
+  postSpy.mockReset();
+  getSpy.mockImplementation((path: string) => {
+    if (path === '/members') return Promise.resolve({ items: MEMBERS } as never);
+    return Promise.reject(new Error(`unexpected GET ${path}`));
+  });
+  postSpy.mockImplementation((path: string) =>
+    Promise.reject(new Error(`unexpected POST ${path}`)),
+  );
+  playSpy.mockClear();
   // Every media element resolves its bytes through `fetch` with a bearer token
   // (there is no cookie fallback on `GET /api/media/:id`). Refuse them all: what
   // is under test is the box that is reserved *before* they arrive.
@@ -658,5 +696,366 @@ describe('the composer', () => {
       expect(element.getAttribute('aria-label') ?? '').not.toMatch(/\d/);
       expect(element.getAttribute('aria-valuenow')).toBeNull();
     }
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* what a reader without `media:read` gets instead                             */
+/* -------------------------------------------------------------------------- */
+
+describe('a note whose photographs are not for this reader', () => {
+  it('says so in place of the box, and the line knows how many', () => {
+    renderWithProviders(
+      <AnnouncementNote
+        post={post({ body: 'В субботу едем к бабушке', hiddenAttachments: 3 })}
+        roster={ROSTER}
+      />,
+      ['kudos:give'],
+    );
+
+    // §D7.14.10. One quiet line on `--muted` ground — not a lock-shaped hole,
+    // not a blur, and above all not a blurred copy of the actual photograph.
+    expect(screen.getByText('3 фото — только для семьи')).toBeInTheDocument();
+    // The note itself is still a note. A guest reads the wall.
+    expect(screen.getByText('В субботу едем к бабушке')).toBeInTheDocument();
+  });
+
+  it('reads differently for one photograph than for four — which is why it is a count', () => {
+    // The whole reason `hiddenAttachments` is a number and not a boolean. A
+    // line standing in for one photo must not be the same line that stands in
+    // for four; at one the sentence is the design's own, verbatim.
+    expect(WALL_RU.media.blocked(1)).toBe('Фото — только для семьи');
+    expect(WALL_RU.media.blocked(4)).toBe('4 фото — только для семьи');
+    expect(WALL_RU.media.blocked(1)).not.toBe(WALL_RU.media.blocked(4));
+  });
+
+  it('hands the reader nothing they could probe the delivery route with', () => {
+    const { container } = renderWithProviders(
+      <MediaBlock attachments={[]} hiddenCount={2} authorName="Мама" />,
+      ['kudos:give'],
+    );
+
+    // No id, no url, no element that would go and ask for one. The route
+    // answers them 404 anyway — this is the half of that which is drawn.
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('video')).toBeNull();
+    expect(container.querySelector('audio')).toBeNull();
+    expect(container.innerHTML).not.toContain('/media/');
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+    expect(postSpy).not.toHaveBeenCalled();
+  });
+
+  it('draws nothing at all on a note that simply has no photographs', () => {
+    /*
+      The trap this rule exists for. `attachments: []` is *also* what a note of
+      plain words looks like, so a card that branched on the array being empty
+      would put «только для семьи» under every text note in the feed. The
+      branch is on the count, and only on the count.
+    */
+    const { container } = renderWithProviders(
+      <AnnouncementNote post={post({ body: 'Купила молоко' })} roster={ROSTER} />,
+      ['kudos:give'],
+    );
+    expect(container.textContent).not.toContain('только для семьи');
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* playback tickets — the seek that was unreachable                            */
+/* -------------------------------------------------------------------------- */
+
+describe('playback tickets', () => {
+  const VIDEO_ID = 'bbbbbbb1-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const clip = attachment({
+    id: VIDEO_ID,
+    kind: 'video',
+    contentType: 'video/quicktime',
+    width: 1920,
+    height: 1080,
+    durationMs: 42_000,
+  });
+
+  const TICKET = `/api/media/${VIDEO_ID}/stream?t=m1.first`;
+  const SECOND = `/api/media/${VIDEO_ID}/stream?t=m1.second`;
+
+  function serveTickets(...urls: string[]) {
+    let call = 0;
+    postSpy.mockImplementation((path: string) => {
+      if (path !== `/media/${VIDEO_ID}/ticket`) {
+        return Promise.reject(new Error(`unexpected POST ${path}`));
+      }
+      const url = urls[call] ?? urls[urls.length - 1];
+      call += 1;
+      if (url === '404') {
+        return Promise.reject(new ApiError({ code: 'NOT_FOUND', status: 404 }) as never);
+      }
+      return Promise.resolve({
+        url,
+        expiresAt: new Date(Date.now() + 900_000).toISOString(),
+      } as never);
+    });
+  }
+
+  async function tapPlay(): Promise<void> {
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /Смотреть/ }));
+  }
+
+  it('mints nothing until somebody taps play, then puts the ticket straight in `src`', async () => {
+    serveTickets(TICKET);
+    const { container } = renderWithProviders(
+      <MediaBlock attachments={[clip]} authorName="Павел" />,
+      ['kudos:give'],
+    );
+
+    // §D7.14.5. A feed of four clips costs four *nothing* — the objection that
+    // per-clip minting is four round trips before anything plays never arises,
+    // because nothing is minted for a clip nobody has asked to watch.
+    expect(postSpy).not.toHaveBeenCalled();
+
+    await tapPlay();
+
+    await waitFor(() => {
+      expect(container.querySelector('video')?.getAttribute('src')).toBe(TICKET);
+    });
+    expect(postSpy).toHaveBeenCalledTimes(1);
+    /*
+      And it was **asked to play**, unconditionally.
+
+      This assertion is not ceremony: `preload="none"` means the element loads
+      nothing until something asks it to, so an arrangement that waited for
+      `loadedmetadata` before calling `play()` deadlocks — `readyState` stays 0,
+      no request is ever issued, and the card sits on a spinner for ever. That
+      was a real bug in this file's first draft, and Chromium at 1440 was where
+      it showed: WebKit loaded metadata of its own accord and hid it entirely.
+    */
+    expect(playSpy).toHaveBeenCalled();
+    /*
+      And the bytes did **not** come through `fetch`. That is the whole change:
+      the URL is in `src`, so the browser's own media stack issues the range
+      requests and a seek costs the part seeked to rather than the whole file.
+    */
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it('re-mints once when playback stops, and resumes where the reader was', async () => {
+    serveTickets(TICKET, SECOND);
+    const { container } = renderWithProviders(
+      <MediaBlock attachments={[clip]} authorName="Павел" />,
+      ['kudos:give'],
+    );
+    await tapPlay();
+
+    const video = await waitFor(() => {
+      const element = container.querySelector('video');
+      expect(element?.getAttribute('src')).toBe(TICKET);
+      return element as HTMLVideoElement;
+    });
+
+    // Twelve seconds in, the ticket ages out — or the range request is refused
+    // for one of the three reasons the stream route re-checks every time.
+    Object.defineProperty(video, 'currentTime', { value: 12, writable: true });
+    fireEvent.error(video);
+
+    await waitFor(() => {
+      expect(container.querySelector('video')?.getAttribute('src')).toBe(SECOND);
+    });
+    expect(postSpy).toHaveBeenCalledTimes(2);
+
+    // The seek waits for metadata, because `currentTime` on an element that
+    // does not know its duration is silently dropped.
+    fireEvent.loadedMetadata(video);
+    expect(video.currentTime).toBe(12);
+    expect(playSpy).toHaveBeenCalled();
+  });
+
+  it('says the recording is gone when the re-mint itself answers 404', async () => {
+    serveTickets(TICKET, '404');
+    const { container } = renderWithProviders(
+      <MediaBlock attachments={[clip]} authorName="Павел" />,
+      ['kudos:give'],
+    );
+    await tapPlay();
+
+    const video = await waitFor(() => {
+      const element = container.querySelector('video');
+      expect(element).not.toBeNull();
+      return element as HTMLVideoElement;
+    });
+    fireEvent.error(video);
+
+    /*
+      The mint runs the same authorisation chain the stream route re-runs on
+      every range request, so a 404 there is authoritative: the member was
+      suspended, `media:read` was revoked, or the note was deleted while they
+      watched. Different words from «Вложение не открылось», deliberately — it
+      opened; it stopped.
+    */
+    expect(await screen.findByText(WALL_RU.media.playbackLost)).toBeInTheDocument();
+    expect(screen.queryByText(WALL_RU.media.unavailable)).toBeNull();
+  });
+
+  it('stops after one re-mint, so an undecodable file is not a request loop', async () => {
+    serveTickets(TICKET, SECOND);
+    const { container } = renderWithProviders(
+      <MediaBlock attachments={[clip]} authorName="Павел" />,
+      ['kudos:give'],
+    );
+    await tapPlay();
+
+    const video = await waitFor(() => {
+      const element = container.querySelector('video');
+      expect(element?.getAttribute('src')).toBe(TICKET);
+      return element as HTMLVideoElement;
+    });
+
+    fireEvent.error(video);
+    await waitFor(() => {
+      expect(container.querySelector('video')?.getAttribute('src')).toBe(SECOND);
+    });
+    // A file the browser cannot decode raises `error` on every source it is
+    // given. The second one is reported rather than minted against for ever.
+    fireEvent.error(video);
+
+    expect(await screen.findByText(WALL_RU.media.unavailable)).toBeInTheDocument();
+    expect(postSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a photograph on the plain immutable path, with no ticket anywhere', async () => {
+    serveTickets(TICKET);
+    renderWithProviders(<MediaBlock attachments={[attachment()]} authorName="Мама" />, [
+      'kudos:give',
+    ]);
+
+    // A photo is not ranged, and `private, max-age=31536000, immutable` is
+    // exactly what a fifteen-minute credential in the URL would spoil.
+    await waitFor(() => {
+      expect(vi.mocked(fetch)).toHaveBeenCalled();
+    });
+    expect(postSpy).not.toHaveBeenCalled();
+    const requested = vi.mocked(fetch).mock.calls.map(([input]) => String(input));
+    expect(requested.some((url) => url.includes('/stream'))).toBe(false);
+    expect(requested.some((url) => url.includes('t='))).toBe(false);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* the heart on a reply                                                        */
+/* -------------------------------------------------------------------------- */
+
+describe('the heart on a comment', () => {
+  const COMMENT_ID = 'ccccccc1-cccc-4ccc-8ccc-cccccccccccc';
+
+  function comment(overrides: Record<string, unknown> = {}) {
+    return {
+      id: COMMENT_ID,
+      entityType: 'post' as const,
+      entityId: POST_ID,
+      authorId: OTHER_ID,
+      body: 'и я тоже так думаю',
+      reactions: [],
+      attachments: [],
+      hiddenAttachments: 0,
+      createdAt: NOW,
+      updatedAt: NOW,
+      ...overrides,
+    };
+  }
+
+  function serveThread(...comments: unknown[]) {
+    getSpy.mockImplementation((path: string) => {
+      if (path === '/members') return Promise.resolve({ items: MEMBERS } as never);
+      if (path === `/posts/${POST_ID}/comments`) {
+        return Promise.resolve({ items: comments, nextCursor: null } as never);
+      }
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
+  }
+
+  async function openThread(permissions: Permission[]) {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <CommentThread target={{ entityType: 'post', entityId: POST_ID }} commentCount={1} />,
+      permissions,
+    );
+    await user.click(screen.getByRole('button', { name: /Обсуждение|Обсудить/ }));
+    return user;
+  }
+
+  it('draws the heart on a reply nobody has touched, exactly as a card does', async () => {
+    serveThread(comment());
+    await openThread(['kudos:give']);
+
+    // §D7.8a. `POST /api/comments/:id/reactions` is mounted now, so the chip is
+    // a real control: drawn before anybody has used it, `aria-pressed`, first
+    // position, at the same x on every row.
+    const heart = await screen.findByRole('button', { name: WALL_RU.reactions.like });
+    expect(heart).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('toggles against the comment’s own route, and never against a nested thread', async () => {
+    serveThread(comment());
+    postSpy.mockImplementation((path: string) => {
+      if (path === `/comments/${COMMENT_ID}/reactions`) {
+        return Promise.resolve({
+          entityType: 'comment',
+          entityId: COMMENT_ID,
+          reactions: [{ emoji: '❤️', count: 1, reacted: true, userIds: [ME_ID] }],
+        } as never);
+      }
+      return Promise.reject(new Error(`unexpected POST ${path}`));
+    });
+
+    const user = await openThread(['kudos:give']);
+    await user.click(await screen.findByRole('button', { name: WALL_RU.reactions.like }));
+
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith(`/comments/${COMMENT_ID}/reactions`, { emoji: '❤️' });
+    });
+  });
+
+  it('puts no digit on the chip, in its title, or in its accessible name', async () => {
+    serveThread(
+      comment({
+        reactions: [{ emoji: '❤️', count: 2, reacted: false, userIds: [ME_ID, OTHER_ID] }],
+      }),
+    );
+    await openThread(['kudos:give']);
+    await screen.findByText('и я тоже так думаю');
+
+    // Same rule as §D7.7b, same test. Two faces, and nothing that says «2».
+    for (const chip of document.body.querySelectorAll('[aria-pressed]')) {
+      expect(chip.getAttribute('aria-label') ?? '').not.toMatch(/\d/);
+      expect(chip.getAttribute('title') ?? '').not.toMatch(/\d/);
+      expect(chip.textContent ?? '').not.toMatch(/\d/);
+    }
+  });
+
+  it('offers a reply no thread of its own, and no picker', async () => {
+    serveThread(comment());
+    await openThread(['kudos:give', 'comment:create']);
+    await screen.findByText('и я тоже так думаю');
+
+    /*
+      The backend widened reactions to `comment` and pointedly did not widen
+      comments — `GET /api/comments/:id/comments` answers 404 by construction.
+      A discussion on Стена is a flat list under a card, so there must be no
+      affordance suggesting otherwise: exactly one thread toggle on screen (the
+      post's own, which opened this list), and no second one under the reply.
+    */
+    expect(screen.getAllByRole('button', { expanded: true })).toHaveLength(1);
+    // §D7.8a — no `☺+` on a comment: the post's full foot line under every
+    // message is 44px of chrome per row.
+    expect(screen.queryByRole('button', { name: WALL_RU.reactions.addAria })).toBeNull();
+  });
+
+  it('gives a reader who may not react no control row at all', async () => {
+    serveThread(comment());
+    await openThread([]);
+    await screen.findByText('и я тоже так думаю');
+
+    // A control that can be focused and pressed to no effect is worse than no
+    // control (§D7.7d), and a thread of five plain messages stays five rows.
+    expect(screen.queryByRole('button', { name: WALL_RU.reactions.like })).toBeNull();
   });
 });

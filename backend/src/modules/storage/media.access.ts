@@ -1,6 +1,9 @@
-import type { AuthContext } from '../../core/auth/context.js';
+import { eq } from 'drizzle-orm';
+
+import { buildAuthContext, type AuthContext } from '../../core/auth/context.js';
 import type { Executor } from '../../core/db.js';
 import { notFound } from '../../core/errors.js';
+import { users } from '../identity/users.schema.js';
 import { assertCanReadEntity, assertEntityType } from '../wall/comments.service.js';
 import { findCommentById } from '../wall/wall.repository.js';
 import type { MediaAttachmentRow } from '../wall/wall.schema.js';
@@ -61,4 +64,28 @@ export async function assertCanReadAttachment(
   // A pointer to a type nothing can resolve is corruption, and corruption is
   // not something to serve bytes out of.
   throw notFound('Attachment');
+}
+
+/**
+ * The member a playback ticket names, resolved against the database **now**.
+ *
+ * This is what makes a ticket a credential rather than a signed permission.
+ * The token says who minted it and nothing more; every question that could have
+ * changed since — is this member still active, do they still hold `media:read`,
+ * is the note still there — is answered here and in `assertCanReadAttachment`,
+ * on every single range request. A suspended member's outstanding tickets stop
+ * working on their next seek.
+ *
+ * `null` for anybody who is not `active`, which the caller turns into a 404:
+ * a rejected or suspended account must not learn from this endpoint that the
+ * object exists (D4).
+ *
+ * The users table is read directly rather than through the identity module's
+ * repository, which is the same rule `comments.service.ts` follows for its
+ * access resolvers (D8: a module never imports another module's repository).
+ */
+export async function ticketActor(exec: Executor, userId: string): Promise<AuthContext | null> {
+  const [user] = await exec.select().from(users).where(eq(users.id, userId)).limit(1);
+  if (!user || user.status !== 'active') return null;
+  return buildAuthContext(user);
 }

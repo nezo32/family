@@ -5,8 +5,7 @@ import { refreshAccessToken } from '@/shared/api/refresh';
 import { getAccessToken, onAccessTokenChange } from '@/shared/api/token-store';
 
 /**
- * Turning `/api/media/<id>` into something an `<img>`, a `<video>` or an
- * `<audio>` can actually load.
+ * Turning `/api/media/<id>` into something an `<img>` can actually load.
  *
  * ## The problem, stated plainly, because it is a real gap and not a detail
  *
@@ -15,40 +14,35 @@ import { getAccessToken, onAccessTokenChange } from '@/shared/api/token-store';
  * fallback (`extractBearer` in `backend/src/core/plugins/auth.ts`). This app's
  * access token lives in JS memory by design (D3). A media element sends no
  * headers it was not given, and it cannot be given any. So
- * `<video src="/api/media/…">` 401s, silently, and renders as an element that
- * never starts.
+ * `<img src="/api/media/…">` 401s, silently, and renders as a broken image.
  *
- * The consequence is worth naming because the backend paid for the thing it
- * defeats: `media.routes.ts` implements **`Range` end to end** — a real `206`
- * with `Content-Range`, so a scrubber drag costs one request for the part you
- * dragged to. Nothing in this PWA can currently ask for a range, because every
- * byte arrives through the fetch below. The 206 path is correct, tested and
- * unreachable from this client.
+ * The bytes are therefore fetched once with the token and handed over as an
+ * object URL — the same trick `shared/api/authed-image.ts` plays for avatars,
+ * which is why this reads like it.
  *
- * ## What is done instead, and what it costs
+ * ## This is the **photo** transport, and only the photo transport
  *
- * The bytes are fetched once with the token and handed over as an object URL —
- * the same trick `shared/api/authed-image.ts` plays for avatars, which is why
- * this reads like it. The costs, so nobody discovers them later:
+ * Video and audio used to come through here too, and that was the whole of what
+ * was wrong with playback: the backend's `Range` support is complete and
+ * correct — a real `206` with `Content-Range` — and every byte arriving through
+ * the `fetch()` below made it unreachable. A three-minute clip downloaded in
+ * full before the first frame and a scrubber drag re-read bytes the browser
+ * already had.
  *
- * - **No range requests and no partial playback.** A video plays when it has
- *   finished downloading, not while it downloads.
- * - **The whole object is resident** while its element is mounted. The contract
- *   caps video at 100 MiB.
- * - **`preload="none"` stops being the mechanism and becomes the intent.**
- *   Nothing is fetched until somebody taps, which is what §D7.14.5 actually
- *   wanted; the attribute stays on the element for every other browser in the
- *   house.
+ * That is fixed, and not here: `media/ticket.ts` mints a short-lived capability
+ * for one object and one member, and the URL goes straight into `<video src>`
+ * so the browser's own media stack issues the range requests. **Do not route
+ * video or audio back through this file.**
  *
- * ## The fix, which is one rule in the service worker
+ * A photograph stays, and it should:
  *
- * `src/sw.ts` already intercepts every same-origin `GET`. A rule that matched
- * `/api/media/` and re-issued the request with the token — forwarding `Range`
- * and the `206` untouched — would make `<video src>` work natively, restore
- * seeking, and delete most of this file. It needs the token inside the worker
- * (a `postMessage` on every `setAccessToken`, which `sw-bridge.ts` already has
- * the shape for). It is **out of this change's scope** and is the single
- * highest-value follow-up in the media feature.
+ * - it is **not ranged** — an `<img>` asks for the whole object once;
+ * - the response is `private, max-age=31536000, immutable`, and a URL carrying
+ *   a fifteen-minute credential would give every photo a cache key that changes
+ *   on every mint, which is precisely what that header exists to prevent;
+ * - a feed page is fifteen cards and up to sixty photographs, and sixty
+ *   mint round trips to draw a feed would be a worse trade than the one this
+ *   cache already makes.
  *
  * ## Why not `authed-image.ts` itself
  *
@@ -59,8 +53,8 @@ import { getAccessToken, onAccessTokenChange } from '@/shared/api/token-store';
  * URL of a photo the reader is looking at and blank it. This cache is
  * **reference-counted**: an object URL is released when the last element using
  * it unmounts, never because a newer one arrived. Second, it is `<img>`-shaped
- * (it returns a string and swallows failure into "show the initials"), and a
- * video that failed to load needs to say so.
+ * in the wrong way — it swallows failure into "show the initials", and a photo
+ * that failed to load needs to say so.
  */
 
 interface Entry {
@@ -181,10 +175,11 @@ export type MediaSourceState =
 /**
  * Resolve one attachment's bytes, or don't.
  *
- * `active: false` is the whole of `preload="none"` on this transport: a video
- * card passes `false` until the reader taps play, so fifteen cards of video
- * cost fifteen *nothing*. A photo passes `true` — a feed of photos that has to
- * be tapped to appear is not a feed of photos.
+ * `active` is what lets a caller hold off: a composer tile that is not on
+ * screen yet passes `false`. Every photo in the feed passes `true`, because a
+ * feed of photos that has to be tapped to appear is not a feed of photos.
+ *
+ * Video and audio do not come through here at all any more — see the header.
  */
 export function useMediaSource(url: string, active: boolean): MediaSourceState {
   const [state, setState] = useState<MediaSourceState>({ status: 'idle', src: null });

@@ -5,6 +5,7 @@ import {
   idSchema,
   kudosListResponseSchema,
   kudosResponseSchema,
+  mediaTicketResponseSchema,
   pollListResponseSchema,
   pollResponseSchema,
   postResponseSchema,
@@ -21,10 +22,12 @@ import {
   type EntityRef,
   type KudosCreate,
   type KudosResponse,
+  type MediaTicketResponse,
   type PollListResponse,
   type PollResponse,
   type PostResponse,
   type PublicUser,
+  type ReactableEntityType,
   type ReactionListResponse,
   type WallClearResponse,
   type WallFeedResponse,
@@ -63,7 +66,7 @@ export const wallKeys = {
   post: (id: string) => [...wallKeys.all, 'post', id] as const,
   comments: (ref: EntityRef) =>
     [...wallKeys.all, 'comments', ref.entityType, ref.entityId] as const,
-  reactions: (ref: EntityRef) =>
+  reactions: (ref: { entityType: ReactableEntityType; entityId: string }) =>
     [...wallKeys.all, 'reactions', ref.entityType, ref.entityId] as const,
   polls: (status: PollStatusFilter) => [...wallKeys.all, 'polls', status] as const,
   kudos: () => [...wallKeys.all, 'kudos'] as const,
@@ -128,6 +131,36 @@ export const ENTITY_SEGMENTS: Record<CommentableEntityType, string> = {
 
 export function entityPath(ref: EntityRef, suffix: string): string {
   return `/${ENTITY_SEGMENTS[ref.entityType]}/${ref.entityId}/${suffix}`;
+}
+
+/**
+ * What may carry a **reaction** — the commentable set plus `comment` itself.
+ *
+ * A second map rather than one more member of `ENTITY_SEGMENTS`, and the
+ * duplication is the point: `ENTITY_SEGMENTS` is what the *comment* fetchers
+ * address their target through, so a `comment` entry there would make
+ * `POST /api/comments/:id/comments` expressible from this client — threads on
+ * threads, which §D7 refuses and which the backend deliberately never mounted
+ * (it answers 404). The contract draws the same line with two enums for the
+ * same reason; this mirrors it.
+ */
+export const REACTION_SEGMENTS: Record<ReactableEntityType, string> = {
+  ...ENTITY_SEGMENTS,
+  comment: 'comments',
+};
+
+/**
+ * A reaction's target. Every {@link EntityRef} is one of these; `comment` is
+ * the member that is not an `EntityRef`, so existing callers pass through
+ * untouched and only a comment row has to name the wider type.
+ */
+export interface ReactionRef {
+  entityType: ReactableEntityType;
+  entityId: string;
+}
+
+export function reactionPath(ref: ReactionRef): string {
+  return `/${REACTION_SEGMENTS[ref.entityType]}/${ref.entityId}/reactions`;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -209,24 +242,49 @@ export async function deleteComment(id: string): Promise<void> {
 }
 
 /* -------------------------------------------------------------------------- */
+/* playback tickets                                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `POST /api/media/:id/ticket` — the credential a `<video>` can actually carry.
+ *
+ * The response's `url` is already `/api/media/<id>/stream?t=<token>`, relative
+ * and same-origin, and it goes straight into `src`. Nothing here logs it, and
+ * nothing downstream may either: the token rides in the query string precisely
+ * because `backend/src/core/logger.ts` strips query strings from every request
+ * line — a discipline the ICS feed token paid for once already.
+ *
+ * A **404 is the meaningful answer**, not an outage. The mint runs the same
+ * authorisation chain the stream route re-runs on every range request — the
+ * member's status, their `media:read`, and the attachment's own target — so a
+ * refusal here means the member was suspended, the permission was revoked, or
+ * the note was deleted. `media/ticket.ts` turns exactly that into the line the
+ * reader sees.
+ */
+export async function mintPlaybackTicket(mediaId: string): Promise<MediaTicketResponse> {
+  return mediaTicketResponseSchema.parse(await api.post<unknown>(`/media/${mediaId}/ticket`, null));
+}
+
+/* -------------------------------------------------------------------------- */
 /* reactions                                                                   */
 /* -------------------------------------------------------------------------- */
 
 export async function fetchReactions(
-  ref: EntityRef,
+  ref: ReactionRef,
   signal?: AbortSignal,
 ): Promise<ReactionListResponse> {
-  const raw = await api.get<unknown>(entityPath(ref, 'reactions'), {
+  const raw = await api.get<unknown>(reactionPath(ref), {
     ...(signal ? { signal } : {}),
   });
   return reactionListResponseSchema.parse(raw);
 }
 
 /** Idempotent toggle. Answers with the fresh summary, so we never have to guess. */
-export async function toggleReaction(ref: EntityRef, emoji: string): Promise<ReactionListResponse> {
-  return reactionListResponseSchema.parse(
-    await api.post<unknown>(entityPath(ref, 'reactions'), { emoji }),
-  );
+export async function toggleReaction(
+  ref: ReactionRef,
+  emoji: string,
+): Promise<ReactionListResponse> {
+  return reactionListResponseSchema.parse(await api.post<unknown>(reactionPath(ref), { emoji }));
 }
 
 /* -------------------------------------------------------------------------- */

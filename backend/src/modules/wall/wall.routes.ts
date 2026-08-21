@@ -94,6 +94,13 @@ const pinBodySchema = z.object({
  * per commentable type instead of behind a `/:entityType/` wildcard: a wildcard
  * at the root would swallow every other module's routes, and the closed enum is
  * the whole point of the polymorphic design.
+ *
+ * **A `comment` is deliberately not in this table**, even though it *is* a
+ * reaction target (`REACTABLE_ENTITY_TYPES`). Every entry here mounts four
+ * routes, two of which are comments — so adding one would hand Стена nested
+ * threads by accident, and §D7 is explicit that a discussion is a flat list
+ * under a card. The two reaction routes a comment does need are mounted by hand
+ * below, which is the whole extra cost of keeping the refusal.
  */
 const COMMENT_MOUNTS: ReadonlyArray<{ segment: string; entityType: CommentableEntityType }> = [
   { segment: 'posts', entityType: 'post' },
@@ -355,6 +362,65 @@ const wallRoutes: FastifyPluginAsync = async (fastify) => {
         ),
     );
   }
+
+  /* ------------------ reactions on a comment (not comments) ---------------- */
+
+  /**
+   * «в обсуждениях должна быть возможность… добавлять реакции на сообщения в
+   * обсуждениях» — the owner's request, and the smallest thing that answers it.
+   *
+   * Mounted by hand rather than through `COMMENT_MOUNTS` above, because that
+   * loop would also mount `GET`/`POST /comments/:id/comments` and give the app
+   * threads on threads. That is a different product — depth limits, indentation,
+   * its own notification and moderation rules — and it is refused here on
+   * purpose rather than arrived at by adding one word to a list.
+   *
+   * Everything else is the generic path: `comments.service` resolves the
+   * comment, then the comment's own target, so a heart on a reply under a
+   * private goal needs exactly the permission the goal does. Both routes land
+   * on `/api/comments`, which `core/plugins/revisions.ts` already classifies as
+   * `wall` — the same domain the thread itself invalidates under.
+   */
+  app.get(
+    '/comments/:id/reactions',
+    {
+      config: { authenticated: true },
+      schema: {
+        tags: ['wall'],
+        summary: 'Reactions on one comment',
+        params: idParams,
+        response: { 200: reactionListResponseSchema },
+      },
+    },
+    async (request) =>
+      comments.getReactionSummary(getDb(), callerOf(request), {
+        entityType: 'comment',
+        entityId: request.params.id,
+      }),
+  );
+
+  app.post(
+    '/comments/:id/reactions',
+    {
+      // Same permission as reacting to anything else: reacting is a
+      // comment-level act. See comments.service.ts.
+      config: { permission: 'comment:create' },
+      schema: {
+        tags: ['wall'],
+        summary: 'Idempotent toggle; returns the fresh summary',
+        params: idParams,
+        body: toggleReactionSchema,
+        response: { 200: reactionListResponseSchema },
+      },
+    },
+    async (request) =>
+      comments.toggleReaction(
+        getDb(),
+        callerOf(request),
+        { entityType: 'comment', entityId: request.params.id },
+        request.body,
+      ),
+  );
 
   app.patch(
     '/comments/:id',

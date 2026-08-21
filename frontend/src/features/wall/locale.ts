@@ -209,6 +209,25 @@ export const WALL_RU = {
     pause: 'Пауза',
     /** The bytes would not come. Quiet, in place of the box — never a toast. */
     unavailable: 'Вложение не открылось',
+    /**
+     * A clip that was playing and then could not be (§D7.14.5).
+     *
+     * A playback ticket lasts fifteen minutes and the stream route re-runs the
+     * whole authorisation chain on **every** range request, so a mid-playback
+     * 404 is never «the network hiccupped». It means one of four things has
+     * become true since the tap: the ticket aged out, the member was suspended,
+     * `media:read` was revoked, or the note was deleted. The player re-mints
+     * once — which silently fixes the first of those and resumes where the
+     * reader was — and only when the mint *itself* comes back 404 is this
+     * drawn, because at that point the answer is authoritative.
+     *
+     * It says «больше не открывается», not «ошибка»: the reader did nothing
+     * wrong, there is nothing for them to retry, and the note around the clip
+     * is still worth reading. Quiet and in place, never a toast — the same
+     * treatment as `unavailable` above, and deliberately different wording, so
+     * "it never started" and "it stopped" are not the same sentence.
+     */
+    playbackLost: 'Запись больше не открывается',
 
     /* --- the viewer ------------------------------------------------------- */
     open: 'Открыть во весь экран',
@@ -246,6 +265,29 @@ export const WALL_RU = {
      * and reads consistently across the whole foot line. Deliberate deviation
      * from the design's wording; the meaning is identical.
      */
+    /**
+     * What a reader without `media:read` gets in place of the box (§D7.14.10).
+     *
+     * Not a lock icon, not a blur, and **not a blurred version of the actual
+     * image** — a blur is a client-side effect over bytes that were already
+     * sent, and the whole point is that they were not. One quiet line on
+     * `--muted` ground, which is also all the card *can* draw: the count is the
+     * only thing about the media that crosses the wire, with no id, no url, no
+     * content type and no dimensions to reserve a box from.
+     *
+     * **The count is used, and this is why it is a count and not a boolean.**
+     * One line standing in for one photograph must not read the same as one
+     * line standing in for four — a reader who cannot see them is at least told
+     * how much of the note they are missing. The number is drawn as a digit
+     * only from two upwards; at one the sentence is the design's own, verbatim.
+     *
+     * The digit passes D7.2's test for the same reasons «Обсуждение · 3» does:
+     * it describes the object rather than a person, nothing sorts by it, and
+     * there is no other way to say the thing. It is emphatically **not** the
+     * digit §D7.7b forbids — that rule is about a like, and this is not one.
+     */
+    blocked: (count: number): string =>
+      count > 1 ? `${String(count)} фото — только для семьи` : 'Фото — только для семьи',
     photoFrom: (author: string): string => `Фото — ${author}`,
     photoFromNumbered: (author: string, index: number, total: number): string =>
       `Фото ${String(index)} из ${String(total)} — ${author}`,

@@ -2603,6 +2603,18 @@ recoverable if it turns out to be wrong.
   `body` line on `--muted` ground: «Фото — только для семьи». Not a lock icon,
   not a blur, and **not a blurred version of the actual image** — a blur is a
   client-side effect over bytes that were already sent.
+- **What the card reads to know that.** `postResponseSchema` and
+  `commentResponseSchema` carry **`hiddenAttachments: number`** next to
+  `attachments`. For a reader who holds `media:read` it is `0` and `attachments`
+  is the real array; for a reader who does not, `attachments` is `[]` and
+  `hiddenAttachments` is the count. The count is the only thing about the media
+  that crosses the wire — no id, no url, no content type, no dimensions — so the
+  placeholder can be drawn without handing the reader anything to probe the
+  delivery route with. Draw on `hiddenAttachments > 0`, never on an empty
+  `attachments` array, which is also what a note with no photos looks like.
+  It is `.optional()` in the contract for now — read it as `?? 0` — so that the
+  optimistic post and comment drafts in `features/wall/hooks.ts` keep compiling
+  until they set `hiddenAttachments: 0` and it is promoted to `.default(0)`.
 - The delivery route enforces it server-side with `notFoundOnDeny`, so a guest
   requesting an object id gets a **404**, exactly as D4 requires: a 403 confirms
   the object exists.

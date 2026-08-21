@@ -775,3 +775,381 @@ describe.skipIf(!hasTestDb || !hasStorage)('media (integration, real object stor
     );
   });
 });
+
+/* ========================================================================== */
+/* `media:read` — a guest reads the wall and not the photographs (D15 §4)     */
+/* ========================================================================== */
+
+describe.skipIf(!hasTestDb || !hasStorage)('media:read, over real HTTP', () => {
+  let h: Harness;
+  let owner: TestUser;
+  let child: TestUser;
+  let guest: TestUser;
+
+  beforeAll(async () => {
+    h = await startHarness();
+  });
+
+  afterAll(async () => {
+    await closeHarness();
+  });
+
+  beforeEach(async () => {
+    await resetDatabase();
+    owner = await createOwner(h.app);
+    child = await createMember(h.app, owner, 'child', { displayName: 'Ребёнок' });
+    guest = await createMember(h.app, owner, 'guest', { displayName: 'Гость' });
+  });
+
+  async function upload(user: TestUser, body: Buffer): Promise<UploadedMedia> {
+    const response = await request(h.app, {
+      method: 'POST',
+      url: '/api/media',
+      token: user.accessToken,
+      headers: { 'content-type': `multipart/form-data; boundary=${BOUNDARY}` },
+      payload: multipartBody([
+        { name: 'file', filename: 'photo.png', contentType: 'image/png', body },
+      ]),
+    });
+    expectStatus(response, 201);
+    return response.json<UploadedMedia>();
+  }
+
+  async function postWithPhoto(): Promise<{ postId: string; media: UploadedMedia }> {
+    const media = await upload(owner, buildPng(64, 48));
+    const posted = await request(h.app, {
+      method: 'POST',
+      url: '/api/wall/posts',
+      token: owner.accessToken,
+      payload: { body: 'Вчера на даче', attachmentIds: [media.id] },
+    });
+    expectStatus(posted, 201);
+    return { postId: posted.json<{ id: string }>().id, media };
+  }
+
+  /**
+   * The one that matters, and the reason it is asserted over real HTTP rather
+   * than against a matrix entry: the guard, the row lookup and the entity
+   * resolver all have to agree, and a matrix assertion would have passed
+   * throughout the window in which a guest could read every photograph on the
+   * wall.
+   */
+  it('serves a child the bytes and answers a guest 404', async () => {
+    const { media } = await postWithPhoto();
+
+    const forChild = await request(h.app, {
+      method: 'GET',
+      url: media.url,
+      token: child.accessToken,
+    });
+    expectStatus(forChild, 200);
+    expect(forChild.rawPayload.length).toBe(media.byteSize);
+
+    const forGuest = await request(h.app, {
+      method: 'GET',
+      url: media.url,
+      token: guest.accessToken,
+    });
+    // 404, never 403: a 403 would confirm the object exists to the one caller
+    // forbidden from knowing (D4).
+    expect(forGuest.statusCode).toBe(404);
+    // A JSON refusal, not the PNG — asserted against the bytes rather than the
+    // status alone, because "404 with the file attached" is a shape a careless
+    // `reply.code()` can produce.
+    expect(errorCode(forGuest)).toBe('NOT_FOUND');
+    expect(forGuest.headers['content-type']).toContain('application/json');
+  });
+
+  it('refuses a guest a ranged read too, which is how a `<video>` asks', async () => {
+    const { media } = await postWithPhoto();
+    const ranged = await request(h.app, {
+      method: 'GET',
+      url: media.url,
+      token: guest.accessToken,
+      headers: { range: 'bytes=0-1' },
+    });
+    expect(ranged.statusCode).toBe(404);
+  });
+
+  it('still shows a guest the note, and tells the card how many photos it may not open', async () => {
+    const { postId } = await postWithPhoto();
+
+    const feed = await request(h.app, {
+      method: 'GET',
+      url: '/api/wall/posts',
+      token: guest.accessToken,
+    });
+    expectStatus(feed, 200);
+    const [card] = feed.json<{
+      items: { body: string; attachments: UploadedMedia[]; hiddenAttachments: number }[];
+    }>().items;
+
+    // The wall is still readable — a guest is not being hidden from the family,
+    // only from the photographs.
+    expect(card?.body).toBe('Вчера на даче');
+    // Nothing that names the object crosses the wire: no id, no url, no type.
+    expect(card?.attachments).toEqual([]);
+    // …but the card knows to draw «Фото — только для семьи» (§D7.14.10).
+    expect(card?.hiddenAttachments).toBe(1);
+
+    // Sanity: the same feed, for somebody who may look.
+    const forChild = await request(h.app, {
+      method: 'GET',
+      url: '/api/wall/posts',
+      token: child.accessToken,
+    });
+    const mine = forChild.json<{
+      items: { attachments: UploadedMedia[]; hiddenAttachments: number }[];
+    }>().items[0];
+    expect(mine?.attachments).toHaveLength(1);
+    expect(mine?.hiddenAttachments).toBe(0);
+
+    // And a single post read, which is a different code path to the feed.
+    const single = await request(h.app, {
+      method: 'GET',
+      url: `/api/wall/posts/${postId}`,
+      token: guest.accessToken,
+    });
+    expectStatus(single, 200);
+    expect(single.json<{ attachments: unknown[]; hiddenAttachments: number }>()).toMatchObject({
+      attachments: [],
+      hiddenAttachments: 1,
+    });
+  });
+
+  it('redacts a photo on a comment for a guest as well', async () => {
+    const { postId } = await postWithPhoto();
+    const media = await upload(child, buildPng(20, 20));
+    const commented = await request(h.app, {
+      method: 'POST',
+      url: `/api/posts/${postId}/comments`,
+      token: child.accessToken,
+      payload: { body: 'И вот ещё', attachmentIds: [media.id] },
+    });
+    expectStatus(commented, 201);
+
+    const listed = await request(h.app, {
+      method: 'GET',
+      url: `/api/posts/${postId}/comments`,
+      token: guest.accessToken,
+    });
+    expectStatus(listed, 200);
+    const [reply] = listed.json<{
+      items: { body: string; attachments: unknown[]; hiddenAttachments: number }[];
+    }>().items;
+    expect(reply?.body).toBe('И вот ещё');
+    expect(reply?.attachments).toEqual([]);
+    expect(reply?.hiddenAttachments).toBe(1);
+
+    const forGuest = await request(h.app, {
+      method: 'GET',
+      url: media.url,
+      token: guest.accessToken,
+    });
+    expect(forGuest.statusCode).toBe(404);
+  });
+
+  it('opens for one guest who was granted it, without moving the role', async () => {
+    // The reversibility that makes the closed default safe to ship while the
+    // owner is still deciding: the babysitter who genuinely should see the
+    // holiday photos is one `permission_grants` entry, not a role change.
+    const { media } = await postWithPhoto();
+
+    const granted = await request(h.app, {
+      method: 'PATCH',
+      url: `/api/members/${guest.id}`,
+      token: owner.accessToken,
+      payload: { permissionGrants: ['media:read'] },
+    });
+    expectStatus(granted, 200);
+
+    const forGuest = await request(h.app, {
+      method: 'GET',
+      url: media.url,
+      token: guest.accessToken,
+    });
+    expectStatus(forGuest, 200);
+  });
+});
+
+/* ========================================================================== */
+/* Playback tickets — the credential a `<video>` can carry                    */
+/* ========================================================================== */
+
+describe.skipIf(!hasTestDb || !hasStorage)('playback tickets', () => {
+  let h: Harness;
+  let owner: TestUser;
+  let child: TestUser;
+  let guest: TestUser;
+
+  beforeAll(async () => {
+    h = await startHarness();
+  });
+
+  afterAll(async () => {
+    await closeHarness();
+  });
+
+  beforeEach(async () => {
+    await resetDatabase();
+    owner = await createOwner(h.app);
+    child = await createMember(h.app, owner, 'child', { displayName: 'Ребёнок' });
+    guest = await createMember(h.app, owner, 'guest', { displayName: 'Гость' });
+  });
+
+  async function postedVideo(): Promise<{ media: UploadedMedia; bytes: Buffer }> {
+    const bytes = buildMp4({ durationMs: 5000, padding: 64 * 1024 });
+    const uploaded = await request(h.app, {
+      method: 'POST',
+      url: '/api/media',
+      token: owner.accessToken,
+      headers: { 'content-type': `multipart/form-data; boundary=${BOUNDARY}` },
+      payload: multipartBody([
+        { name: 'file', filename: 'clip.mp4', contentType: 'video/mp4', body: bytes },
+      ]),
+    });
+    expectStatus(uploaded, 201);
+    const media = uploaded.json<UploadedMedia>();
+
+    const posted = await request(h.app, {
+      method: 'POST',
+      url: '/api/wall/posts',
+      token: owner.accessToken,
+      payload: { body: 'Первый велосипед', attachmentIds: [media.id] },
+    });
+    expectStatus(posted, 201);
+    return { media, bytes };
+  }
+
+  async function mint(user: TestUser, mediaId: string) {
+    return request(h.app, {
+      method: 'POST',
+      url: `/api/media/${mediaId}/ticket`,
+      token: user.accessToken,
+    });
+  }
+
+  it('mints a URL a media element can use, and honours Range on it', async () => {
+    const { media, bytes } = await postedVideo();
+
+    const minted = await mint(child, media.id);
+    expectStatus(minted, 200);
+    const ticket = minted.json<{ url: string; expiresAt: string }>();
+    expect(ticket.url.startsWith(`/api/media/${media.id}/stream?t=`)).toBe(true);
+    expect(new Date(ticket.expiresAt).getTime()).toBeGreaterThan(Date.now());
+
+    // No Authorization header anywhere below — that is the entire point.
+    const probe = await request(h.app, {
+      method: 'GET',
+      url: ticket.url,
+      headers: { range: 'bytes=0-1' },
+    });
+    expect(probe.statusCode).toBe(206);
+    expect(probe.headers['content-range']).toBe(`bytes 0-1/${String(bytes.length)}`);
+    expect(probe.headers['accept-ranges']).toBe('bytes');
+    // Same security headers as the bearer route — one sender, so they cannot
+    // drift apart.
+    expect(probe.headers['x-content-type-options']).toBe('nosniff');
+    expect(probe.headers['content-security-policy']).toContain("default-src 'none'");
+
+    const seek = await request(h.app, {
+      method: 'GET',
+      url: ticket.url,
+      headers: { range: 'bytes=1000-1999' },
+    });
+    expect(seek.statusCode).toBe(206);
+    expect(Buffer.compare(seek.rawPayload, bytes.subarray(1000, 2000))).toBe(0);
+
+    const whole = await request(h.app, { method: 'GET', url: ticket.url });
+    expectStatus(whole, 200);
+    expect(Buffer.compare(whole.rawPayload, bytes)).toBe(0);
+    expect(whole.headers['content-type']).toBe('video/mp4');
+  });
+
+  it('answers 404 to a forged, truncated or absent ticket', async () => {
+    const { media } = await postedVideo();
+    const good = (await mint(child, media.id)).json<{ url: string }>().url;
+    const token = good.slice(good.indexOf('t=') + 2);
+
+    for (const url of [
+      `/api/media/${media.id}/stream?t=nonsense`,
+      `/api/media/${media.id}/stream?t=${token.slice(0, -4)}AAAA`,
+    ]) {
+      const response = await request(h.app, { method: 'GET', url });
+      expect(response.statusCode).toBe(404);
+    }
+
+    // Missing entirely is a validation failure, not a leak either way.
+    const bare = await request(h.app, {
+      method: 'GET',
+      url: `/api/media/${media.id}/stream`,
+    });
+    expect(bare.statusCode).toBeGreaterThanOrEqual(400);
+    expect(bare.statusCode).toBeLessThan(500);
+  });
+
+  it('will not open a different object with a valid ticket', async () => {
+    const first = await postedVideo();
+    const second = await postedVideo();
+    const ticket = (await mint(child, first.media.id)).json<{ url: string }>().url;
+    const token = ticket.slice(ticket.indexOf('t=') + 2);
+
+    const crossed = await request(h.app, {
+      method: 'GET',
+      url: `/api/media/${second.media.id}/stream?t=${token}`,
+    });
+    expect(crossed.statusCode).toBe(404);
+  });
+
+  it('refuses a guest the ticket, so the credential cannot outflank the permission', async () => {
+    const { media } = await postedVideo();
+    const minted = await mint(guest, media.id);
+    expect(minted.statusCode).toBe(404);
+  });
+
+  /**
+   * The property that makes a URL-borne credential acceptable at all: it is a
+   * credential, not a frozen authorisation. Everything is re-evaluated on the
+   * next range request.
+   */
+  it('stops working the moment its member loses access', async () => {
+    const { media } = await postedVideo();
+    const ticket = (await mint(child, media.id)).json<{ url: string }>().url;
+    expectStatus(await request(h.app, { method: 'GET', url: ticket }), 200);
+
+    const denied = await request(h.app, {
+      method: 'PATCH',
+      url: `/api/members/${child.id}`,
+      token: owner.accessToken,
+      payload: { permissionDenies: ['media:read'] },
+    });
+    expectStatus(denied, 200);
+
+    const after = await request(h.app, { method: 'GET', url: ticket });
+    expect(after.statusCode).toBe(404);
+  });
+
+  it('stops working when the note it hangs on is deleted', async () => {
+    const { media } = await postedVideo();
+    const ticket = (await mint(child, media.id)).json<{ url: string }>().url;
+    expectStatus(await request(h.app, { method: 'GET', url: ticket }), 200);
+
+    const feed = await request(h.app, {
+      method: 'GET',
+      url: '/api/wall/posts',
+      token: owner.accessToken,
+    });
+    const postId = feed.json<{ items: { id: string }[] }>().items[0]?.id;
+    expectStatus(
+      await request(h.app, {
+        method: 'DELETE',
+        url: `/api/wall/posts/${postId ?? ''}`,
+        token: owner.accessToken,
+      }),
+      200,
+    );
+
+    const after = await request(h.app, { method: 'GET', url: ticket });
+    expect(after.statusCode).toBe(404);
+  });
+});

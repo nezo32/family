@@ -231,6 +231,14 @@ export function AnnouncementNote(props: {
           */}
           <MediaBlock
             attachments={post.attachments}
+            /*
+              D15 §4. For a reader without `media:read` the array above is
+              empty and this is the count, and the block draws «Фото — только
+              для семьи» in place of the box. Passed rather than derived,
+              because an empty `attachments` is also what a note of plain words
+              looks like.
+            */
+            hiddenCount={post.hiddenAttachments}
             authorName={authorName}
             tone={isSystem || props.tone === 'attention' ? 'inset' : 'plain'}
           />

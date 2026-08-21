@@ -149,6 +149,7 @@ function postItem() {
       commentCount: 0,
       reactions: [],
       attachments: [],
+      hiddenAttachments: 0,
       createdAt: NOW,
       updatedAt: NOW,
     },
@@ -509,6 +510,7 @@ describe('the floating head', () => {
     commentCount: 0,
     reactions: [],
     attachments: [],
+    hiddenAttachments: 0,
     createdAt: NOW,
     updatedAt: NOW,
   };

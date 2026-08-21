@@ -303,24 +303,65 @@ candidate row every night.
 
 ## 5. The API
 
-| Method   | Path             | Access                           | Notes                                                            |
-| -------- | ---------------- | -------------------------------- | ---------------------------------------------------------------- |
-| `POST`   | `/api/media`     | `comment:create`                 | multipart, one part named `file`. 201 → `MediaAttachment`        |
-| `DELETE` | `/api/media/:id` | `comment:create`                 | your own **draft** only; 409 if attached, 404 if somebody else's |
-| `GET`    | `/api/media/:id` | `member:read` + `notFoundOnDeny` | streams; `Range`, `If-None-Match`                                |
+| Method   | Path                    | Access                                 | Notes                                                            |
+| -------- | ----------------------- | -------------------------------------- | ---------------------------------------------------------------- |
+| `POST`   | `/api/media`            | `comment:create`                       | multipart, one part named `file`. 201 → `MediaAttachment`        |
+| `DELETE` | `/api/media/:id`        | `comment:create`                       | your own **draft** only; 409 if attached, 404 if somebody else's |
+| `GET`    | `/api/media/:id`        | `media:read` + `notFoundOnDeny`        | streams; `Range`, `If-None-Match`                                |
+| `POST`   | `/api/media/:id/ticket` | `media:read` + `notFoundOnDeny`        | mints a 15-minute playback URL. 200 → `MediaTicketResponse`      |
+| `GET`    | `/api/media/:id/stream` | `public` — the **ticket** is the guard | identical bytes and headers; what a `<video src>` points at      |
 
 `comment:create` for the write: it is the broadest "may add something to the
 family's shared space" permission — everyone from `child` up, no `guest` —
 and a photo on a reply is the same act as a photo on a note.
 
-### Read access: a photo is exactly as private as the thing it hangs on
+### Read access: two gates, and both are needed
 
-`media.access.ts` delegates to `assertCanReadEntity`, so a photo on a comment on
-a private goal is readable exactly when that goal is, and if the goal's rule
-changes this follows it for free. A comment resolves in two hops (comment exists
-→ comment's own target readable). A draft is uploader-only. **Every refusal is a
-404**, never a 403 — this is a `GET`, and a 403 answers the question it refused
-to answer (D4).
+**`media:read` first** (D15 §4). It is granted from `child` up and **withheld
+from `guest`**, and it is checked by the route guard before the row is even
+looked up. The delivery route used to ask for `member:read`, which every role
+holds — so the only thing standing between a guest and every photograph on Стена
+was the post's own readability, and a guest reads the wall. That was scoped when
+the wall was text. This is the change that is not recoverable if it goes the
+other way: bytes that have been served are served.
+
+**Then the attachment's own target.** `media.access.ts` delegates to
+`assertCanReadEntity`, so a photo on a comment on a private goal is readable
+exactly when that goal is, and if the goal's rule changes this follows it for
+free. A comment resolves in two hops (comment exists → comment's own target
+readable). A draft is uploader-only. Holding `media:read` says you may see
+family photographs, not that you may see _this_ one.
+
+**Every refusal is a 404**, never a 403 — this is a `GET`, and a 403 answers the
+question it refused to answer (D4).
+
+### What a reader without `media:read` is told
+
+Not nothing, and not the object either. `postResponseSchema` and
+`commentResponseSchema` carry **`hiddenAttachments: number`** alongside
+`attachments`:
+
+| Reader             | `attachments`  | `hiddenAttachments` |
+| ------------------ | -------------- | ------------------- |
+| holds `media:read` | the real array | `0`                 |
+| does not hold it   | `[]`           | the count           |
+
+The count is the _only_ thing about the media that crosses the wire: no id, no
+`/api/media/…` url, no content type, no dimensions. That is what lets the card
+draw «Фото — только для семьи» in place of the box (§D7.14.10) instead of
+rendering a note that looks like it was written empty, without handing the
+reader an id they could probe the delivery route with. A count rather than a
+boolean because the placeholder is a real element in a real layout — one line
+standing in for one photo reads differently from one standing in for four.
+
+The redaction runs through one function, `media.service.visibleAttachmentsFor`,
+called by every mapper on both sides of the wall. Six call sites doing it
+individually is five that stay correct and one that ships a photograph to a
+`guest`.
+
+**Attaching gained no new permission**: it still rides on `comment:create`,
+because a permission that must always be granted alongside another is a
+permission somebody will forget to grant.
 
 ### Serving headers
 
@@ -328,6 +369,56 @@ Same shape as avatars: `private, max-age=31536000, immutable` (the id never
 changes content), the store's `ETag`, `X-Content-Type-Options: nosniff`,
 `Content-Security-Policy: default-src 'none'; sandbox`, `Vary: authorization`,
 and a **generated** `Content-Disposition: inline; filename="<id>.<ext>"`.
+
+### `Range` needs a credential a `<video>` can carry
+
+`Range` support here is complete and correct, and until the ticket route existed
+it was **unreachable from the client**. `GET /api/media/:id` is bearer-only, and
+a `<video>` or `<audio>` element sends no `Authorization` header — there is no
+attribute for it and no hook to add one. The PWA's only option was to `fetch()`
+the whole file and hand the element an object URL, which throws away seeking and
+partial playback on exactly the files where they matter: a three-minute clip
+downloads in full before the first frame.
+
+`POST /api/media/:id/ticket` mints a signed capability for **one object and one
+member**; `GET /api/media/:id/stream?t=…` accepts it in place of a bearer. That
+URL goes straight into `src`, so the browser's own media stack issues the range
+requests, unmediated.
+
+**What a leaked URL costs, which is the question that chose this.** Nearly
+nothing, deliberately:
+
+- it names **one** attachment — not the wall, not the member's session;
+- it is a _credential_, not a bypass: the stream route re-runs the whole
+  authorisation chain on **every** request — the member's row (`ticketActor`
+  refuses anybody not `active`), their `media:read`, and the attachment's own
+  target. Suspend them, revoke the permission or delete the post and the next
+  range request is a 404. There are tests for each;
+- it expires in **15 minutes** — longer than the longest file the limits allow
+  (10 minutes of audio), so a straight playthrough never stalls, and short
+  enough that a URL in somebody's history is worthless by the time it is read.
+
+The key is derived from `COOKIE_SECRET` through its own info string, exactly as
+the ICS feed token is, so a ticket can never be replayed as a session
+credential. **That token's lesson stands**: it was once logged in full, which is
+why `core/logger.ts` strips the query string from every request line. Tickets
+ride in `?t=` and are covered by that already — do not undo it.
+
+**The two alternatives, and why not.**
+
+- **A service worker attaching the bearer to `/api/media/`** keeps the
+  credential exactly as it is, which is the strongest thing that can be said for
+  it. Against it: it puts the byte stream through a JS interception layer on
+  iOS, where ranged media through a service worker is the classic _silent_
+  failure — the element never starts and nothing is logged, which is the precise
+  shape D15 §1 warns about. It also needs the access token borrowed from a
+  window client on every cold start of the worker (D3 keeps the JWT out of every
+  storage a worker can read), and a seek is many requests. `sw.ts` is also the
+  file whose navigation-preload subtlety already cost a real bug.
+- **A cookie scoped to `/api/media`** is a second ambient credential covering
+  _all_ media for as long as it lives, attached by the browser to every request
+  that path sees, with no way to scope it to one object — and a second
+  credential class alongside D3's `__Host-rt` for one screen's benefit.
 
 ### Where video stops being a bigger photo
 
@@ -427,7 +518,12 @@ restored as a **pair** — they already share a `STAMP` and a `latest-*` symlink
   `createPostSchema.omit(...)`, which only a `ZodObject` has). The composer's own
   `submitDisabled={body.trim().length === 0}` should become
   `… && attachments.length === 0` when the design pass lands.
-- **`attachments` is `.optional()` in the response contracts**, not
-  `.default([])`, so the PWA's optimistic `const draft: PostResponse = {…}` keeps
-  compiling. The server always sends the array. Promote it to `.default([])` in
-  the same pass that adds `attachments: []` to that draft.
+- ~~**`attachments` is `.optional()` in the response contracts**~~ — done, it is
+  `.default([])` and the PWA's optimistic drafts set `attachments: []`.
+- ~~**`hiddenAttachments` is `.optional()` in the response contracts**~~ —
+  **done**, in the pass that wired the PWA up to all three of these. It is
+  `.default(0)` on both `postResponseSchema` and `commentResponseSchema`, and
+  the two optimistic drafts in `features/wall/hooks.ts` set
+  `hiddenAttachments: 0` — which is the truth about a note being written, since
+  `post:create` is never granted to anybody without `media:read`. The card reads
+  a plain `number` and branches on `> 0`, never on an empty `attachments` array.

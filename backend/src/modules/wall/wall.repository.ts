@@ -16,7 +16,7 @@ import {
   sql,
 } from 'drizzle-orm';
 
-import type { CommentableEntityType, ReactionSummary } from '@family/shared';
+import type { CommentableEntityType, ReactableEntityType, ReactionSummary } from '@family/shared';
 
 import type { Executor } from '../../core/db.js';
 import {
@@ -372,7 +372,7 @@ export interface ReactionFact {
 
 export async function findReaction(
   exec: Executor,
-  entityType: CommentableEntityType,
+  entityType: ReactableEntityType,
   entityId: string,
   userId: string,
   emoji: string,
@@ -394,7 +394,7 @@ export async function findReaction(
 
 export async function insertReaction(
   exec: Executor,
-  values: { entityType: CommentableEntityType; entityId: string; userId: string; emoji: string },
+  values: { entityType: ReactableEntityType; entityId: string; userId: string; emoji: string },
 ): Promise<void> {
   await exec.insert(reactions).values(values).onConflictDoNothing();
 }
@@ -413,7 +413,7 @@ export async function deleteReactionById(exec: Executor, id: string): Promise<vo
  */
 export async function loadReactions(
   exec: Executor,
-  entityType: CommentableEntityType,
+  entityType: ReactableEntityType,
   entityIds: readonly string[],
 ): Promise<ReactionFact[]> {
   if (entityIds.length === 0) return [];
@@ -436,6 +436,27 @@ export async function deleteReactionsFor(
   const rows = await exec
     .delete(reactions)
     .where(and(eq(reactions.entityType, entityType), eq(reactions.entityId, entityId)))
+    .returning({ id: reactions.id });
+  return rows.length;
+}
+
+/**
+ * The same delete over a whole set of targets — one statement, not one per id.
+ *
+ * It exists for exactly one caller: `deleteCommentsFor`, which soft-deletes a
+ * page of comments and then has to take their reactions with them. The single-
+ * id version in a loop would be one round trip per reply on a busy thread, and
+ * this is already inside somebody's delete transaction.
+ */
+export async function deleteReactionsForMany(
+  exec: Executor,
+  entityType: string,
+  entityIds: readonly string[],
+): Promise<number> {
+  if (entityIds.length === 0) return 0;
+  const rows = await exec
+    .delete(reactions)
+    .where(and(eq(reactions.entityType, entityType), inArray(reactions.entityId, [...entityIds])))
     .returning({ id: reactions.id });
   return rows.length;
 }

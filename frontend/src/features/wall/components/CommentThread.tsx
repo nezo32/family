@@ -1,7 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { MessageSquare, Trash2 } from 'lucide-react';
 import type { CommentResponse, EntityRef } from '@family/shared';
-import { Can } from '@/shared/auth';
+import { Can, useCan } from '@/shared/auth';
 import { Button } from '@/shared/ui/button';
 import { Textarea } from '@/shared/ui/textarea';
 import { InlineSpinner } from '@/shared/components';
@@ -23,6 +23,7 @@ import { useAttachments } from '../media/use-attachments';
 import { AttachmentField } from './AttachmentField';
 import { AuthorLine } from './AuthorLine';
 import { MediaBlock } from './MediaBlock';
+import { ReactionBar } from './ReactionBar';
 
 /**
  * The discussion under one note — and the one place on Стена where a text field
@@ -215,7 +216,16 @@ function CommentRow(props: {
   onDelete: () => void;
 }) {
   const { comment } = props;
+  const { can } = useCan();
   const pending = isOptimistic(comment.id);
+  /*
+    An optimistic row has no server id yet — `optimisticId()` mints a local one
+    — so a heart on it would toggle against a comment the server has never
+    heard of, and the 404 would land as a toast under a reply that is about to
+    appear correctly anyway. Withheld for the same reason and at the same moment
+    as the delete control below it.
+  */
+  const mayReact = can('kudos:give') && !pending;
 
   return (
     <li className={cn('space-y-1', pending && 'opacity-60')}>
@@ -240,25 +250,6 @@ function CommentRow(props: {
           )
         }
       />
-      {/*
-        **Reactions on a comment are still not buildable, and this is the
-        blocker.** §D7.8a specifies a one-row foot under every message — the ❤️
-        chip with its reactors' discs and a `⋯` — and `commentResponseSchema`
-        has carried a `reactions` array the whole time. What is missing is the
-        route: `COMMENTABLE_ENTITY_TYPES` is
-        `post · task · event · goal · poll · kudos` and has **no `comment`
-        member**, so `wall.routes.ts`'s `COMMENT_MOUNTS` loop never mounts
-        `/comments/:id/reactions`, and `comments.service.ts` has no access
-        resolver for a comment target. Every comment therefore arrives with
-        `reactions: []` and any toggle would 404.
-
-        Closing it is three small changes — one enum entry here, one mount row
-        and one resolver case in the backend — but two of the three are in
-        `backend/**`, which this change may not touch. Drawing the chip now
-        would ship a heart that does nothing, which is worse than the absence:
-        a control that can be pressed to no effect is the exact failure §D7.7d
-        refuses for a guest.
-      */}
       {comment.body.length > 0 ? (
         <p className="text-[15px] leading-[22px] wrap-break-word whitespace-pre-wrap select-text">
           {comment.body}
@@ -274,6 +265,7 @@ function CommentRow(props: {
       */}
       <MediaBlock
         attachments={comment.attachments}
+        hiddenCount={comment.hiddenAttachments}
         authorName={props.roster.nameOf(comment.authorId)}
         tone="inset"
         maxHeight="comment"
@@ -281,6 +273,44 @@ function CommentRow(props: {
         // block's own 16px would be a second inset. `twMerge` resolves it.
         className="px-0"
       />
+
+      {/*
+        §D7.8a — the foot line, and it is **one thing wide**.
+
+        `POST /api/comments/:id/reactions` is mounted now (the contract widened
+        to `REACTABLE_ENTITY_TYPES`, which is the commentable set plus `comment`
+        and *nothing else*), so the heart on a reply is the same heart as the
+        one on a card: drawn whether or not anybody has used it, `aria-pressed`,
+        the reactors as faces, and **no digit anywhere** — not on the chip, not
+        in the `title`, not in the accessible name (§D7.7b).
+
+        Two things it deliberately does not get.
+
+        **No `☺+` picker** (`picker={false}`). The post's full foot line under
+        every message is 44px of chrome per row, and five messages in a thread
+        is 220px of controls under five lines of text. §D7.8a puts the picker in
+        the row's `⋯` sheet instead; that sheet is not built here — see the
+        report — so a reply takes a ❤️ today and any other emoji only where
+        somebody has already used one.
+
+        **No thread toggle, and there must never be one.** The backend widened
+        reactions to `comment` and pointedly did *not* widen comments:
+        `GET /api/comments/:id/comments` answers 404 by construction. A
+        discussion on Стена is a flat list under a card, and an affordance
+        hinting otherwise would be the first half of a feature nobody designed.
+
+        The row is drawn only when the reader may react **or** somebody already
+        has, so a guest reading a thread of plain messages sees no control row
+        at all and five messages stay five rows tall.
+      */}
+      {mayReact || comment.reactions.length > 0 ? (
+        <ReactionBar
+          target={{ entityType: 'comment', entityId: comment.id }}
+          reactions={comment.reactions}
+          roster={props.roster}
+          picker={false}
+        />
+      ) : null}
     </li>
   );
 }

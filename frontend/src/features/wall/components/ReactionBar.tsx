@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { SmilePlus } from 'lucide-react';
-import { LIKE_EMOJI, type EntityRef, type ReactionSummary } from '@family/shared';
+import { LIKE_EMOJI, type ReactionSummary } from '@family/shared';
 import { useCan } from '@/shared/auth';
 import { Button } from '@/shared/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import { MemberDiscGroup } from '@/shared/ui/member-disc';
 import { cn } from '@/shared/lib/utils';
+import type { ReactionRef } from '../api';
 import { useReactionState, useRoster, useToggleReaction, type Roster } from '../hooks';
 import { REACTION_EMOJI, WALL_RU, reactorLabel, reactorMembers } from '../locale';
 
@@ -70,6 +71,20 @@ import { REACTION_EMOJI, WALL_RU, reactorLabel, reactorMembers } from '../locale
  * The heart adds no digit to any of this. `aria-label` is «Нравится» while it
  * is empty and «❤️ — Мама, Лиза» once it is not, which is exactly what is
  * drawn in each case.
+ *
+ * ## The same bar draws a comment's foot line (§D7.8a)
+ *
+ * `POST /api/comments/:id/reactions` is mounted now, so a message's foot is
+ * this component with `picker={false}`: the ❤️ chip with its reactors' discs,
+ * any other emoji somebody has already used beside it, and nothing else. Every
+ * rule above holds there unchanged — no digit on the chip, none in the `title`,
+ * none in the accessible name.
+ *
+ * What a comment does **not** get is a thread toggle, and that is structural
+ * rather than a layout choice: the backend widened reactions to `comment` and
+ * deliberately did not widen comments, so there is no
+ * `POST /api/comments/:id/comments` for one to point at. A discussion on Стена
+ * is a flat list under a card.
  */
 
 /** Six people, and «+N» must never render — see the note above. */
@@ -91,7 +106,14 @@ function withLike(summaries: readonly ReactionSummary[]): ReactionSummary[] {
 }
 
 export function ReactionBar(props: {
-  target: EntityRef;
+  /**
+   * `ReactionRef`, not `EntityRef` — the reactable set is the commentable set
+   * **plus `comment`** (§D7.8a). Every `EntityRef` is already one of these, so
+   * a card passes what it always passed and only a comment row names the wider
+   * type. The two enums are separate in the contract for exactly this reason:
+   * widening reactions to a comment must not widen *comments* to a comment.
+   */
+  target: ReactionRef;
   reactions: readonly ReactionSummary[];
   /** Passed in where the card already holds one; fetched otherwise. */
   roster?: Roster;

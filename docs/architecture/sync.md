@@ -128,25 +128,36 @@ special cases sit above the general ones. Same file.
 | #   | Route prefix (pattern)             | Domains         |
 | --- | ---------------------------------- | --------------- |
 | 1   | `/api/chores/kudos`                | `wall`          |
-| 2   | `/api/notifications/preferences`   | _(none)_        |
-| 3   | `/api/notifications/quiet-hours`   | _(none)_        |
-| 4   | `/api/notifications/digest`        | _(none)_        |
-| 5   | `/api/notifications/subscriptions` | _(none)_        |
-| 6   | `/api/notifications/telegram`      | _(none)_        |
-| 7   | `/api/notifications/deliveries`    | _(none)_        |
-| 8   | `/api/notifications`               | `notifications` |
-| 9   | `/api/tasks`                       | `tasks`         |
-| 10  | `/api/chores`                      | `tasks`         |
-| 11  | `/api/events`                      | `events`        |
-| 12  | `/api/goals`                       | `goals`         |
-| 13  | `/api/shopping`                    | `shopping`      |
-| 14  | `/api/wall`                        | `wall`          |
-| 15  | `/api/comments`                    | `wall`          |
-| 16  | `/api/members`                     | `members`       |
-| 17  | `/api/users`                       | `members`       |
-| 18  | `/api/me`                          | `members`       |
-| 19  | `/api/auth`                        | _(none)_        |
-| 20  | `/api/dashboard`                   | _(none)_        |
+| 2   | `/api/tasks/:id/comments`          | `wall`          |
+| 3   | `/api/tasks/:id/reactions`         | `wall`          |
+| 4   | `/api/events/:id/comments`         | `wall`          |
+| 5   | `/api/events/:id/reactions`        | `wall`          |
+| 6   | `/api/goals/:id/comments`          | `wall`          |
+| 7   | `/api/goals/:id/reactions`         | `wall`          |
+| 8   | `/api/kudos/:id/comments`          | `wall`          |
+| 9   | `/api/kudos/:id/reactions`         | `wall`          |
+| 10  | `/api/media`                       | _(none)_        |
+| 11  | `/api/posts`                       | `wall`          |
+| 12  | `/api/polls`                       | `wall`          |
+| 13  | `/api/notifications/preferences`   | _(none)_        |
+| 14  | `/api/notifications/quiet-hours`   | _(none)_        |
+| 15  | `/api/notifications/digest`        | _(none)_        |
+| 16  | `/api/notifications/subscriptions` | _(none)_        |
+| 17  | `/api/notifications/telegram`      | _(none)_        |
+| 18  | `/api/notifications/deliveries`    | _(none)_        |
+| 19  | `/api/notifications`               | `notifications` |
+| 20  | `/api/tasks`                       | `tasks`         |
+| 21  | `/api/chores`                      | `tasks`         |
+| 22  | `/api/events`                      | `events`        |
+| 23  | `/api/goals`                       | `goals`         |
+| 24  | `/api/shopping`                    | `shopping`      |
+| 25  | `/api/wall`                        | `wall`          |
+| 26  | `/api/comments`                    | `wall`          |
+| 27  | `/api/members`                     | `members`       |
+| 28  | `/api/users`                       | `members`       |
+| 29  | `/api/me`                          | `members`       |
+| 30  | `/api/auth`                        | _(none)_        |
+| 31  | `/api/dashboard`                   | _(none)_        |
 
 Notes on the non-obvious rows:
 
@@ -162,6 +173,22 @@ Notes on the non-obvious rows:
   written by the service worker on behalf of the device that just received a
   push; they change no shared state and must not cause every open client to
   refetch its inbox.
+- **A comment or a reaction is `wall` wherever it is mounted**, which is why
+  rows 2–9 sit above the general `/api/tasks`, `/api/events` and `/api/goals`
+  entries. A comment on a task changes no task: it changes the thread, which the
+  client keys under `['wall','comments',…]`. This row has been wrong once —
+  comments were mapped to the domain of the thing they hung off — and the symptom
+  was an open thread staying stale on every other phone in the house. Row 26
+  (`/api/comments`) covers `PATCH`/`DELETE /api/comments/:id` **and**
+  `POST /api/comments/:id/reactions`, the heart on a reply: same argument, same
+  domain.
+- **`/api/media` is classified as changing nothing**, deliberately. An upload is
+  a private draft with no `entity_id`; it becomes visible when the post or
+  comment carrying its id is written, and _that_ write already bumps `wall`.
+  Bumping here would make every phone in the house refetch the feed once per
+  file while somebody is still choosing photos.
+  `POST /api/media/:id/ticket` — the short-lived playback URL a `<video>` needs —
+  takes the same row and writes nothing at all.
 - **`/api/me`** is `members` because your display name and avatar appear on the
   family roster. It also carries the `['me']` invalidation on the client (§5),
   which is what repairs a stale permission list.

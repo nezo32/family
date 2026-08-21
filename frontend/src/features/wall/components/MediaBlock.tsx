@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, Pause, Play } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AlertTriangle, Lock, Pause, Play } from 'lucide-react';
 import type { MediaAttachment } from '@family/shared';
 
 import { cn } from '@/shared/lib/utils';
@@ -8,6 +8,7 @@ import { WALL_RU } from '../locale';
 import { formatClock, reservedRatio, spellDuration } from '../media/limits';
 import { claimPlayback, useExclusivePlayback, usePauseOffscreen } from '../media/playback';
 import { useMediaSource } from '../media/source';
+import { usePlaybackTicket, type Playback } from '../media/ticket';
 import { MediaViewer } from './MediaViewer';
 
 /**
@@ -32,6 +33,19 @@ import { MediaViewer } from './MediaViewer';
  * The ratio is clamped at the **tall** end to 4:5 and the box at `60dvh`. A
  * 9:19.5 phone screenshot is drawn `object-fit: cover` in a 4:5 box and the
  * whole frame is one tap away in the viewer.
+ *
+ * ## Video and audio load through a **ticket**; photos do not
+ *
+ * A `<video src>` now points at `/api/media/<id>/stream?t=…`, minted on the tap
+ * that starts it, so the browser's own media stack issues the range requests
+ * and a seek costs the part you seeked to rather than the whole file. See
+ * `media/ticket.ts` for the credential, for what a mid-playback 404 means and
+ * for why one re-mint is the right number.
+ *
+ * **A photograph keeps the plain `/api/media/<id>` path** and `source.ts`. It
+ * is not ranged, and its `private, max-age=31536000, immutable` response is
+ * exactly what a fifteen-minute credential in the URL would spoil — every mint
+ * would be a new cache key for bytes that never change.
  *
  * ## Two things the design asked for that the backend does not carry
  *
@@ -72,14 +86,42 @@ export function MediaBlock(props: {
   tone?: MediaTone;
   /** §D7.8b — a comment's box is capped shorter than a post's. */
   maxHeight?: 'card' | 'comment';
+  /**
+   * How many attachments this note carries that **this reader** may not open —
+   * `hiddenAttachments` off the wire (D15 §4).
+   *
+   * For everybody from `child` up it is `0` and `attachments` is the real
+   * array. For a `guest` it is the count and `attachments` is `[]`: no id, no
+   * url, no content type, no dimensions — nothing that could be used to probe
+   * the delivery route, which answers them 404 regardless.
+   *
+   * **Branch on this, never on `attachments.length === 0`** — a note with no
+   * photographs at all looks exactly the same from here, and drawing «только
+   * для семьи» on every text note would be the funniest possible bug.
+   */
+  hiddenCount?: number;
   className?: string;
 }) {
   const { attachments, authorName } = props;
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
 
-  if (attachments.length === 0) return null;
+  const hiddenCount = props.hiddenCount ?? 0;
+  if (attachments.length === 0 && hiddenCount === 0) return null;
 
   const tone = props.tone ?? 'plain';
+
+  // The two cannot both be non-empty — the server either redacts the array or
+  // it does not — but the check is on `hiddenCount` alone, deliberately, so
+  // that a future partial redaction draws both halves rather than neither.
+  if (hiddenCount > 0) {
+    return (
+      <div className={cn(tone === 'inset' ? 'px-4 pt-2' : '-mx-4 pt-2 sm:mx-0', props.className)}>
+        <BlockedMedia count={hiddenCount} rounded={tone === 'inset'} />
+      </div>
+    );
+  }
+
+  if (attachments.length === 0) return null;
   const first = attachments[0];
   if (!first) return null;
 
@@ -133,6 +175,54 @@ export function MediaBlock(props: {
         />
       ) : null}
     </>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* what a reader without `media:read` gets instead                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * «Фото — только для семьи» (§D7.14.10, D15 §4).
+ *
+ * **Not a lock-shaped hole and not a blur.** A blur is a client-side effect
+ * over bytes that were already sent, and the entire point of this path is that
+ * they were not: for a reader without `media:read` the server sends `[]` and a
+ * number, and `GET /api/media/:id` answers them 404. There is nothing here to
+ * un-blur, which is exactly the property worth having.
+ *
+ * ## Why it is not a reserved box
+ *
+ * Every other shape in this file reserves its height from the server's
+ * `width`/`height` so nothing reflows on load. Those numbers are part of what
+ * is withheld, and guessing a box would be inventing the one fact this design
+ * refuses to leak — a 4:5 block would tell a guest the note carries a portrait.
+ * So it is one quiet line, which is also what §D7.14.10 asks for, and it never
+ * reflows because nothing is ever going to arrive in it.
+ *
+ * ## The count is drawn, and that is why it is a count
+ *
+ * A line standing in for one photograph must not read the same as one standing
+ * in for four: a reader who cannot see them is at least told how much of the
+ * note they are missing. `locale.ts` carries the wording and the argument for
+ * the digit.
+ *
+ * The icon is `aria-hidden` and the sentence is the accessible name, because
+ * the sentence already says everything the padlock is gesturing at — and a
+ * screen reader announcing "замок" before it is a description of a glyph.
+ */
+function BlockedMedia(props: { count: number; rounded: boolean }) {
+  return (
+    <p
+      className={cn(
+        'flex min-h-11 items-center gap-2 bg-muted px-3 py-2.5',
+        'text-[13px] leading-[18px] font-medium text-muted-foreground',
+        props.rounded ? 'rounded-lg' : 'rounded-none sm:rounded-lg',
+      )}
+    >
+      <Lock className="size-4 shrink-0" aria-hidden />
+      {WALL_RU.media.blocked(props.count)}
+    </p>
   );
 }
 
@@ -317,6 +407,110 @@ function Photo(props: { attachment: MediaAttachment; label: string; onOpen: () =
 }
 
 /* -------------------------------------------------------------------------- */
+/* video and audio share these two                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Where playback should pick up when a ticket is re-minted underneath it.
+ *
+ * Swapping `src` resets `currentTime` to zero, so the position is captured in
+ * the element's `error` handler — the last moment it is still true — and
+ * consumed by the seek below. It is cleared once it has been used, and whenever
+ * the element goes back to idle, so a card scrolled away and re-opened starts
+ * from the beginning rather than from somebody's abandoned position.
+ */
+function useResumePoint(playback: Playback): React.RefObject<number> {
+  const resumeAt = useRef(0);
+  const idle = playback.state.status === 'idle';
+  useEffect(() => {
+    if (idle) resumeAt.current = 0;
+  }, [idle]);
+  return resumeAt;
+}
+
+/**
+ * Play the moment a URL is available — and **only** then, because the state
+ * that produced it is only ever entered by a tap.
+ *
+ * The gesture that set `started` is the gesture iOS requires
+ * (`RequiresUserGestureForAudioPlayback`, and video's Low Power Mode rule with
+ * no muted exemption — see `media/playback.ts`). The `catch` covers a phone
+ * deciding otherwise anyway, which leaves native controls and a paused first
+ * frame rather than an error.
+ *
+ * **`generation`, not `status` alone, is the trigger.** A re-mint runs
+ * `ready` -> `loading` -> `ready`, and the second `ready` carries a *different*
+ * URL that has to be played from the position the first one stopped at.
+ * Watching `status` would see it settle back on a value it already held and
+ * never fire again.
+ *
+ * The seek waits for `loadedmetadata`, because `currentTime` on an element that
+ * does not yet know its duration is silently dropped — the clip would restart
+ * from zero, which is the one thing a re-mint must never do to somebody two
+ * minutes into a school concert.
+ */
+function usePlayWhenReady(
+  ref: React.RefObject<HTMLMediaElement | null>,
+  playback: Playback,
+  resumeAt: React.RefObject<number>,
+): void {
+  const { status } = playback.state;
+  const { generation } = playback;
+
+  useEffect(() => {
+    if (status !== 'ready') return;
+    const element = ref.current;
+    if (!element) return;
+
+    claimPlayback(element);
+    const target = resumeAt.current;
+    resumeAt.current = 0;
+
+    const seek = (): void => {
+      try {
+        element.currentTime = target;
+      } catch {
+        // A source that will not take a seek starts from the beginning —
+        // worse than resuming, and much better than throwing out of an event
+        // handler.
+      }
+    };
+
+    /*
+      **`play()` is called unconditionally, and the seek is what waits.** The
+      order matters and getting it wrong is silent: `preload="none"` means the
+      element loads *nothing* until it is asked to play, so `readyState` is 0
+      and `loadedmetadata` will never fire on its own. Arranging the seek first
+      and the play inside its handler therefore deadlocks — measured, in
+      Chromium at 1440: the ticket was minted, the URL reached `src`, and the
+      element then sat at `readyState 0` having issued no request at all, for
+      ever. WebKit happened to load metadata anyway and hid it.
+
+      So: ask it to play, which starts the load; and hang the seek off the
+      metadata that load produces, because `currentTime` on an element that
+      does not yet know its duration is dropped on the floor.
+    */
+    // `HAVE_METADATA` is 1. Compared as a number rather than through the
+    // constant, because jsdom defines it on neither `HTMLMediaElement` nor
+    // `HTMLVideoElement` reliably and a unit test has to be able to render this.
+    let cleanup: (() => void) | undefined;
+    if (target > 0) {
+      if (element.readyState >= 1) {
+        seek();
+      } else {
+        element.addEventListener('loadedmetadata', seek, { once: true });
+        cleanup = () => {
+          element.removeEventListener('loadedmetadata', seek);
+        };
+      }
+    }
+
+    void element.play().catch(() => undefined);
+    return cleanup;
+  }, [status, generation, ref, resumeAt]);
+}
+
+/* -------------------------------------------------------------------------- */
 /* video                                                                       */
 /* -------------------------------------------------------------------------- */
 
@@ -341,7 +535,8 @@ function VideoBox(props: {
   const { attachment } = props;
   const [started, setStarted] = useState(false);
   const ref = useExclusivePlayback<HTMLVideoElement>();
-  const source = useMediaSource(attachment.url, started);
+  const playback = usePlaybackTicket(attachment.id, started);
+  const resumeAt = useResumePoint(playback);
   usePauseOffscreen(ref);
 
   const duration = attachment.durationMs;
@@ -350,17 +545,7 @@ function VideoBox(props: {
     duration === null ? null : spellDuration(duration),
   );
 
-  // Autoplay the moment the bytes are ready — and only then, because `started`
-  // is only ever set by a tap. The gesture that set it is the gesture iOS
-  // requires; the `catch` covers Low Power Mode deciding otherwise anyway,
-  // which leaves native controls and a paused first frame rather than an error.
-  useEffect(() => {
-    if (source.status !== 'ready') return;
-    const element = ref.current;
-    if (!element) return;
-    claimPlayback(element);
-    void element.play().catch(() => undefined);
-  }, [source.status, ref]);
+  usePlayWhenReady(ref, playback, resumeAt);
 
   return (
     <div
@@ -376,8 +561,8 @@ function VideoBox(props: {
       }}
     >
       {started ? (
-        source.status === 'failed' ? (
-          <MediaFailure />
+        playback.state.status === 'failed' || playback.state.status === 'lost' ? (
+          <MediaFailure lost={playback.state.status === 'lost'} />
         ) : (
           <video
             ref={ref}
@@ -385,15 +570,26 @@ function VideoBox(props: {
             // the lower-case one is what older WebKit reads off the DOM.
             playsInline
             controls
-            // Belt and braces rather than the mechanism: iOS sets
-            // `MediaDataLoadsAutomatically` false platform-wide, and on this
-            // transport nothing is fetched before the tap anyway.
+            /*
+              Still `none`, and it means something different now that `src` is a
+              real URL rather than a blob the client already holds: without it
+              the element would issue a metadata range request the moment the
+              attribute lands. It never gets the chance, because `started` gates
+              the mint and there is no `src` at all until the tap — but the
+              attribute is the belt to that braces, and it is what keeps a
+              re-mint from pre-buffering ahead of the seek below.
+            */
             preload="none"
             aria-label={label}
             className="size-full bg-black object-contain"
-            {...(source.status === 'ready' ? { src: source.src } : {})}
+            {...(playback.state.status === 'ready' ? { src: playback.state.src } : {})}
             onPlay={(event) => {
               claimPlayback(event.currentTarget);
+            }}
+            onError={(event) => {
+              // Where the reader was, captured **before** the swap resets it.
+              resumeAt.current = event.currentTarget.currentTime;
+              playback.recover();
             }}
           />
         )
@@ -461,7 +657,8 @@ function AudioRow(props: { attachment: MediaAttachment; authorName: string }) {
   const [playing, setPlaying] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
   const ref = useExclusivePlayback<HTMLAudioElement>();
-  const source = useMediaSource(attachment.url, started);
+  const playback = usePlaybackTicket(attachment.id, started);
+  const resumeAt = useResumePoint(playback);
 
   const total = attachment.durationMs;
   const label = WALL_RU.media.audioFrom(
@@ -471,13 +668,7 @@ function AudioRow(props: { attachment: MediaAttachment; authorName: string }) {
   const remaining = total === null ? null : Math.max(0, total - elapsedMs);
   const progress = total && total > 0 ? Math.min(1, elapsedMs / total) : 0;
 
-  useEffect(() => {
-    if (source.status !== 'ready') return;
-    const element = ref.current;
-    if (!element) return;
-    claimPlayback(element);
-    void element.play().catch(() => undefined);
-  }, [source.status, ref]);
+  usePlayWhenReady(ref, playback, resumeAt);
 
   const toggle = useCallback((): void => {
     const element = ref.current;
@@ -493,10 +684,10 @@ function AudioRow(props: { attachment: MediaAttachment; authorName: string }) {
     }
   }, [ref, started]);
 
-  if (source.status === 'failed') {
+  if (playback.state.status === 'failed' || playback.state.status === 'lost') {
     return (
       <div className="flex h-14 items-center gap-3 rounded-lg bg-secondary px-3">
-        <MediaFailure inline />
+        <MediaFailure inline lost={playback.state.status === 'lost'} />
       </div>
     );
   }
@@ -536,13 +727,17 @@ function AudioRow(props: { attachment: MediaAttachment; authorName: string }) {
         <audio
           ref={ref}
           preload="none"
-          {...(source.status === 'ready' ? { src: source.src } : {})}
+          {...(playback.state.status === 'ready' ? { src: playback.state.src } : {})}
           onPlay={(event) => {
             claimPlayback(event.currentTarget);
             setPlaying(true);
           }}
           onPause={() => {
             setPlaying(false);
+          }}
+          onError={(event) => {
+            resumeAt.current = event.currentTarget.currentTime;
+            playback.recover();
           }}
           onTimeUpdate={(event) => {
             setElapsedMs(Math.round(event.currentTarget.currentTime * 1000));
@@ -567,8 +762,14 @@ function AudioRow(props: { attachment: MediaAttachment; authorName: string }) {
  * Quiet and in place — never a toast. A failed attachment is not something the
  * reader did, and it is not something they can fix; the card around it is still
  * worth reading.
+ *
+ * `lost` is the second sentence and it is a different fact: a clip that *was*
+ * playing and then could not be, whose re-mint came back 404 — the member was
+ * suspended, `media:read` was revoked, or the note was deleted while they
+ * watched. «Вложение не открылось» would be the wrong words there. It opened;
+ * it stopped. See `media/ticket.ts`.
  */
-function MediaFailure(props: { inline?: boolean } = {}) {
+function MediaFailure(props: { inline?: boolean; lost?: boolean } = {}) {
   return (
     <span
       className={cn(
@@ -577,7 +778,7 @@ function MediaFailure(props: { inline?: boolean } = {}) {
       )}
     >
       <AlertTriangle className="size-4 shrink-0" aria-hidden />
-      {WALL_RU.media.unavailable}
+      {props.lost ? WALL_RU.media.playbackLost : WALL_RU.media.unavailable}
     </span>
   );
 }
