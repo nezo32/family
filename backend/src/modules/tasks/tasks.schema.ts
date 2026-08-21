@@ -64,6 +64,28 @@ export const taskSeries = pgTable(
     graceMinutes: integer().notNull().default(0),
 
     /**
+     * Minutes **before `startsAt`** at which to remind the assignee, e.g.
+     * `{1440, 60}` for "a day ahead and an hour ahead". Empty is the default
+     * and means no *advance* reminder — never "no reminder at all": the sweep
+     * emits a `task_started` for every occurrence regardless of this column,
+     * which is what makes the at-start notification unremovable rather than
+     * merely defaulted on.
+     *
+     * Values are strictly positive by contract (`taskReminderOffsetSchema`).
+     * Zero is not stored here, because a zero in an array is something an edit
+     * can drop.
+     *
+     * Anchored on the **start**, not on `dueAt`: «за час» has to mean an hour
+     * before the time the create sheet's when-row displays, and that row shows
+     * `dtstartLocal`. `dueAt` is `startsAt + dueOffsetMinutes` and is invisible
+     * in the form unless someone opens «Ещё».
+     */
+    reminderOffsets: integer()
+      .array()
+      .notNull()
+      .default(sql`'{}'::int[]`),
+
+    /**
      * Rotation that picks the assignee at materialization time (D5).
      *
      * Deliberately a bare `uuid` and **not** a foreign key: the chores module

@@ -34,6 +34,7 @@ import { RecurrenceBuilder } from './components/RecurrenceBuilder';
 import { ScheduleRepeatRow } from './components/ScheduleField';
 import { TaskEditor } from './components/TaskEditor';
 import { AssigneeControl } from './components/AssigneeControl';
+import { ReminderSheet, reminderSummary } from './components/ReminderField';
 import { useCompleteOccurrence } from './hooks';
 import { makeMe } from '@/test/me';
 import { taskKeys } from './api';
@@ -113,6 +114,7 @@ function series(overrides: Partial<TaskSeriesResponse> = {}): TaskSeriesResponse
     defaultAssigneeId: ME_ID,
     category: 'Уборка',
     autoCancelAfterDays: null,
+    reminderOffsets: [],
     supersedesSeriesId: null,
     archivedAt: null,
     createdAt: '2026-09-01T00:00:00.000Z',
@@ -505,5 +507,101 @@ describe('assignee controls', () => {
 
     expect(await screen.findByRole('button', { name: 'Возьму на себя' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Назначить/ })).toBeNull();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* reminders                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The row states the plan in words and the sheet never offers a way to switch
+ * the at-start notification off — those two together are the whole of «нужно
+ * добавить напоминания … и обязательное оповещение прям во время начала дела»
+ * as far as the client is concerned.
+ */
+describe('reminders', () => {
+  it('says what will happen when nothing has been chosen', () => {
+    // Not «—». An empty offsets array does not mean "no reminder": the at-start
+    // one is not in the array and is never off.
+    expect(reminderSummary([])).toBe('В момент начала');
+  });
+
+  it('reads two leads as one phrase, furthest first', () => {
+    expect(reminderSummary([1440, 60])).toBe('За день и за час');
+  });
+
+  it('stops being a phrase and becomes a count past two', () => {
+    expect(reminderSummary([10080, 1440, 60])).toBe('Напоминаний: 3');
+  });
+
+  function ReminderHarness({ initial = [] as number[] }) {
+    const [value, setValue] = useState<number[]>(initial);
+    return <ReminderSheet open onOpenChange={() => undefined} value={value} onChange={setValue} />;
+  }
+
+  it('offers no control at all for the at-start notification', () => {
+    render(<ReminderHarness />);
+
+    // It is stated, so nobody has to wonder whether it is on…
+    expect(screen.getByText('В момент начала')).toBeInTheDocument();
+    expect(screen.getByText('Всегда')).toBeInTheDocument();
+
+    // …and every checkbox in the sheet is a lead time, none of them it. A
+    // checkbox that cannot be unchecked invites a tap and then refuses it.
+    const toggles = screen.getAllByRole('checkbox');
+    expect(toggles).toHaveLength(8);
+    for (const toggle of toggles) {
+      expect(toggle.textContent).not.toBe('В момент начала');
+    }
+  });
+
+  it('toggles a lead time on and off without disturbing the others', () => {
+    render(<ReminderHarness initial={[1440]} />);
+
+    const day = screen.getByRole('checkbox', { name: 'За день' });
+    const hour = screen.getByRole('checkbox', { name: 'За час' });
+    expect(day).toHaveAttribute('aria-checked', 'true');
+    expect(hour).toHaveAttribute('aria-checked', 'false');
+
+    fireEvent.click(hour);
+    expect(screen.getByRole('checkbox', { name: 'За час' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(screen.getByRole('checkbox', { name: 'За день' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'За день' }));
+    expect(screen.getByRole('checkbox', { name: 'За день' })).toHaveAttribute(
+      'aria-checked',
+      'false',
+    );
+    expect(screen.getByRole('checkbox', { name: 'За час' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+  });
+
+  it('stops at five, and lets the five already chosen be undone', () => {
+    // The cap mirrors `taskSeriesCreateSchema.reminderOffsets.max(5)`; without
+    // it the form would let the user compose a body the server rejects.
+    render(<ReminderHarness initial={[10080, 2880, 1440, 360, 180]} />);
+
+    expect(screen.getByRole('checkbox', { name: 'За час' })).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: 'За день' })).not.toBeDisabled();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'За день' }));
+    expect(screen.getByRole('checkbox', { name: 'За час' })).not.toBeDisabled();
+  });
+
+  it('groups the toggles as a group, never as a radiogroup', () => {
+    // Announcing independent leads as radios would tell a screen-reader user
+    // that picking «за день» drops «за час».
+    render(<ReminderHarness />);
+    expect(screen.queryByRole('radiogroup')).toBeNull();
+    expect(screen.getAllByRole('group').length).toBeGreaterThan(0);
   });
 });

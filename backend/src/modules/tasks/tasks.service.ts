@@ -504,6 +504,20 @@ export function toOccurrenceResponse(
   };
 }
 
+/**
+ * Sorted descending, de-duplicated: `{60, 1440, 60}` becomes `{1440, 60}`.
+ *
+ * Not cosmetic. The dedupe key is `task_due_soon:<occurrenceId>:<offset>m`, so
+ * a duplicated offset is *already* idempotent at the notification layer — but
+ * it would still make `listDueReminders` return the same pair twice and the
+ * sweep report an emission it did not make. Sorting furthest-first is what lets
+ * the create sheet render «за день и за час» in the order a person says it,
+ * without the UI re-sorting a value the server owns.
+ */
+function normalizeReminderOffsets(offsets: readonly number[] | undefined): number[] {
+  return [...new Set(offsets ?? [])].sort((a, b) => b - a);
+}
+
 export function toSeriesResponse(series: TaskSeriesRow): TaskSeriesResponse {
   return {
     id: series.id,
@@ -518,6 +532,7 @@ export function toSeriesResponse(series: TaskSeriesRow): TaskSeriesResponse {
     defaultAssigneeId: series.defaultAssigneeId,
     category: series.category,
     autoCancelAfterDays: series.autoCancelAfterDays,
+    reminderOffsets: series.reminderOffsets,
     supersedesSeriesId: series.supersedesSeriesId,
     archivedAt: series.archivedAt?.toISOString() ?? null,
     createdAt: series.createdAt.toISOString(),
@@ -599,6 +614,7 @@ export class TasksService {
         defaultAssigneeId: input.defaultAssigneeId ?? null,
         category: input.category ?? null,
         autoCancelAfterDays: input.autoCancelAfterDays ?? null,
+        reminderOffsets: normalizeReminderOffsets(input.reminderOffsets),
       };
 
       const series = await repo.insertSeries(tx, values);
@@ -693,6 +709,7 @@ export class TasksService {
         'defaultAssigneeId',
         'category',
         'autoCancelAfterDays',
+        'reminderOffsets',
       ] as const
     ).filter((field) => input[field] !== undefined);
 
@@ -772,6 +789,10 @@ export class TasksService {
         input.autoCancelAfterDays === undefined
           ? series.autoCancelAfterDays
           : (input.autoCancelAfterDays ?? null),
+      reminderOffsets:
+        input.reminderOffsets === undefined
+          ? series.reminderOffsets
+          : normalizeReminderOffsets(input.reminderOffsets),
       supersedesSeriesId: series.id,
     });
 
@@ -811,6 +832,9 @@ export class TasksService {
     if (input.category !== undefined) patch.category = input.category ?? null;
     if (input.autoCancelAfterDays !== undefined) {
       patch.autoCancelAfterDays = input.autoCancelAfterDays ?? null;
+    }
+    if (input.reminderOffsets !== undefined) {
+      patch.reminderOffsets = normalizeReminderOffsets(input.reminderOffsets);
     }
 
     const scheduleChanged = input.recurrence !== undefined;

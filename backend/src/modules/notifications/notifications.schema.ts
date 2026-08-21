@@ -56,6 +56,7 @@ export const notificationType = pgEnum('notification_type', [
   // tasks & chores
   'task_assigned',
   'task_due_soon',
+  'task_started',
   'task_overdue',
   'task_completed',
   'chore_swap_requested',

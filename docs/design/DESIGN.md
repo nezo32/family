@@ -681,6 +681,14 @@ wrap differently.
 - «Пополнить» is not on the row. It is the primary action on the goal detail
   screen and a long-press/swipe action on the row. One filled primary per view.
 - Reached goals move to a `--surface-calm` group at the bottom under «СОБРАНО».
+  An archived goal gets its own group under «В АРХИВЕ» on the same calm ground,
+  and is counted in nothing: not in «КОПИМ», not in «N в работе», not in
+  «Накоплено». Revealing history must not move the figure the screen exists to
+  answer.
+- «Все / Семейные / Мои» is one segmented row, and «Показать архив» is
+  right-aligned opposite it on that same row — the shared control, the shared
+  rule, both specified in §D5. Below 420px there is no room for both and the
+  label collapses to an icon; the tabs never truncate.
 
 **Desktop**: main = the rows at 720 measure; side = the summary block (which is
 currently a full-width three-stat bar eating the top of the page). At `xl` the
@@ -700,8 +708,42 @@ Small changes only; this screen is close.
 - «Новый список» stops being a full-width filled button. It becomes the app-bar
   `⊕` on phone and a `variant="secondary"` button in the top bar on desktop.
   Opening a list is the primary action here.
-- «Показать архив» is currently a right-aligned orphan above the first row. Move
-  it to the bottom of the list as a quiet `meta` link.
+- «Показать архив» sits **on the filter row, right-aligned opposite the tabs** —
+  on this screen and on Копилки, from one shared component
+  (`shared/components/ArchiveToggle.tsx`). Ghost, 13/500 `meta` colour, 44 × 44
+  minimum; the icon is the second, non-colour signal for the pressed state and
+  `aria-pressed` carries it. Where a screen has no tabs, as here, the control
+  owns the row alone at content-right, still 16px above the first row.
+
+  **This reverses what this section said, deliberately.** It used to read: "a
+  right-aligned orphan above the first row — move it to the bottom of the list
+  as a quiet `meta` link", and the reasoning was not wrong so much as
+  incomplete. A control at the foot of a list is fine _when there is a list_:
+  the rows it reveals land directly above the thing that revealed them, and it
+  is not stacked under the app bar's filled primary. With **no** list there is
+  nothing to be at the bottom of. Measured on an empty Покупки with the link at
+  the bottom: at 320 × 800 its box sat at y = 467 with 289px of empty background
+  beneath it — adrift mid-viewport rather than anchored to anything; on an
+  iPhone 15 (393 × 659 visible) it sat at y = 685, **past the fold**, so the only
+  route to the archive on a screen with nothing on it was to scroll a page with
+  nothing to scroll. Empty is not an edge case here; it is the first state a new
+  family sees, and it is the one the owner reported.
+
+  The filter row is the one anchor present in **both** states, which is why the
+  rule is now stated there. Same empty Покупки after the move: y = 129 at 320,
+  y = 347 on an iPhone 15.
+
+  Below **420px** a row that must also seat tabs has no room for both — «Все /
+  Семейные / Мои» measures 214.5px and «🗄 Показать архив» 151.8px against 288px
+  of column at 320 and 361px at 393 — so the label collapses to `text-[0px]`
+  and the control becomes a 44 × 44 icon. The word stays in the DOM: the
+  accessible name is «Показать архив» / «Скрыть архив» at every width. Truncating
+  a tab instead is not the trade — it costs the user the filter they are
+  standing in.
+
+- When the archive turns out to be empty the control says so
+  («В архиве пока пусто…») under the row, once the wider query has actually
+  answered. A toggle that visibly does nothing reads as broken.
 - Row: icon tile 44 · name `row` · «7 из 11» `meta` · needed-count badge ·
   `⋯`. Keep.
 - Fix the pluralisation: the build renders «3 из 3 позиции». Route it through

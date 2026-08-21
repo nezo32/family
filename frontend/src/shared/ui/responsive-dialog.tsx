@@ -116,7 +116,54 @@ const drawerSize: Record<ResponsiveDialogSize, string> = {
   // viewport to the *top edge* of the keyboard rect, which already covers the
   // home indicator. `innerHeight - visualViewport.height` therefore contains
   // that 34px, and adding the inset spends it twice.
-  full: 'h-[calc(100dvh_-_max(env(safe-area-inset-top,0px),0.75rem)_-_0.75rem)]',
+  //
+  // ── Why `full` alone carries `!` on both its height and its bottom ────────
+  //
+  // Restoring `repositionInputs` (see the long note on the surface below) did
+  // not only restore `preventScrollMobileSafari`. The same flag gates vaul's
+  // own keyboard arithmetic, which — while any input inside the sheet has
+  // focus — writes an **inline `height` and `bottom`** onto this element on
+  // every `visualViewport` resize:
+  //
+  //   newDrawerHeight = visualViewport.height - getBoundingClientRect().top
+  //   style.height    = max(newDrawerHeight, visualViewport.height - top)
+  //   style.bottom    = max(innerHeight - visualViewport.height, 0)
+  //
+  // An inline declaration beats an unlayered class, so those two numbers
+  // *replace* the rule above for as long as they are set — and they are only
+  // ever cleared by a later run of the same handler that decides the keyboard
+  // has closed. That decision is `Math.abs(previousDiff - diff) > 60` on
+  // `innerHeight - visualViewport.height`, which is exactly the quantity iOS
+  // reports unreliably in a Home Screen web app (WebKit 237851 / 218465,
+  // catalogued above). When it does not flip, the shrunken height stays.
+  //
+  // Measured, on a real build at iPhone 15 metrics, in one opening of
+  // «Новое дело»: 635px tall at rest → 299px with a keyboard's worth of
+  // viewport removed → **still 299px, inline, after the viewport came back**.
+  // A 635px surface reduced to 299 and anchored at the bottom puts its header
+  // at y=377 on a 659px screen with 225px of window onto 424px of form — the
+  // sliver in the owner's screenshot, with «Отмена · Новое дело · Создать»
+  // intact above it and the title field's placeholder cut off by the bottom
+  // edge. It is a height rule that did not survive the revert, but the rule
+  // that did not survive was `repositionInputs={false}`, not a class.
+  //
+  // `!` on both properties is the whole fix: an `!important` declaration in a
+  // stylesheet outranks a non-important inline one, so the sheet's geometry
+  // goes back to being plain CSS that nothing can write to at runtime — the
+  // same invariant `keyboard-viewport.spec.ts` already pins for the tab bar —
+  // while `usePreventScroll` keeps running, which is the half of
+  // `repositionInputs` this app actually needs. Neither `!` touches vaul's
+  // drag or its open/close animation: both are `transform`.
+  //
+  // **`tall` and `auto` deliberately keep the arithmetic.** They are short
+  // sheets sitting on the bottom edge, so with a keyboard up an untouched
+  // `max-h-[60dvh]` picker is almost entirely *behind* it — 60 % of 659px
+  // anchored at `bottom: 0` leaves 59px visible above a 336px keyboard. There
+  // the lift is the difference between a usable «Заметка» sheet and a blank
+  // one, and being short they cannot suffer the failure above: there is no
+  // fixed header carrying the primary action to strand.
+  full:
+    'h-[calc(100dvh_-_max(env(safe-area-inset-top,0px),0.75rem)_-_0.75rem)]! bottom-0!',
   tall: 'h-[85dvh]',
   auto: 'max-h-[60dvh]',
 };

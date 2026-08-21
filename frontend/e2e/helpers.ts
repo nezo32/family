@@ -138,11 +138,56 @@ export const RUN_ID: string =
 const E2E_OWNER_EMAIL = `e2e-owner-${RUN_ID}@example.test`;
 const E2E_OWNER_PASSWORD = 'E2ePassw0rd!2345';
 
+/**
+ * One statement through `docker exec psql`, with the failure spelled out.
+ *
+ * `stdio` is piped on purpose. The default lets psql's `ERROR: …` go straight
+ * to the runner's stderr and leaves the thrown `Error` saying only `Command
+ * failed: docker exec …` — so the one line that says *what went wrong* is in a
+ * different place from the stack that says *who asked*, and under `--workers=8`
+ * they are separated by several other workers' output. Capturing it means the
+ * message thrown from here carries the statement **and** what Postgres said
+ * about it, in one piece.
+ */
 function psql(sql: string): string {
-  return execSync(
-    `docker exec family-dev-postgres-1 psql -U family -d family -tAc "${sql.replaceAll('"', '\\"')}"`,
-    { encoding: 'utf8' },
-  ).trim();
+  try {
+    return execSync(
+      `docker exec family-dev-postgres-1 psql -U family -d family -tAc "${sql.replaceAll('"', '\\"')}"`,
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    ).trim();
+  } catch (error) {
+    throw new Error(explainPsqlFailure(sql, error));
+  }
+}
+
+/** The `stderr`/`stdout` `execSync` hangs off the error it throws, if any. */
+function capturedOutput(error: unknown, stream: 'stderr' | 'stdout'): string {
+  if (typeof error !== 'object' || error === null) return '';
+  const value = (error as Record<string, unknown>)[stream];
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function explainPsqlFailure(sql: string, error: unknown): string {
+  const said = capturedOutput(error, 'stderr') || capturedOutput(error, 'stdout');
+  const reason = said || (error instanceof Error ? error.message : String(error));
+  // Postgres answered and refused, versus never having been reached at all.
+  // The two need different first sentences: one is a statement to fix, the
+  // other is a container to start, and guessing wrong sends the reader to the
+  // wrong place.
+  const refused = /^ERROR:/m.test(reason);
+  return (
+    (refused
+      ? 'Postgres refused a statement the end-to-end harness sent it.\n'
+      : 'The end-to-end harness could not reach the development database.\n' +
+        'It talks to Postgres through `docker exec family-dev-postgres-1`; ' +
+        'this is not the app,\nnot the API and not authentication.\n') +
+    `\n  statement: ${sql}\n` +
+    `  psql said: ${reason.replaceAll('\n', '\n             ')}\n` +
+    (refused
+      ? ''
+      : '\n  Is the dev stack up? ' +
+        '`docker compose -f infra/docker-compose.dev.yml --env-file .env up -d`\n')
+  );
 }
 
 /** Runs at most once per worker process; the sweeps below are idempotent. */
@@ -181,43 +226,251 @@ const SUITE_DEBRIS: Array<{ table: string; match: string; from: string }> = [
 ];
 
 /**
+ * The one predicate that decides which accounts this sweep may touch, written
+ * once and reused by every statement below.
+ *
+ * Timid on purpose, because a wrong match deletes another agent's fixtures out
+ * from under a live run. Nothing seeded can match it: the seeded family is
+ * `@example.com` (plus the child with no email at all). Other suites'
+ * `@example.test` fixtures do not carry the `e2e-owner-` prefix, and the
+ * pre-existing fixed `e2e-owner@example.test` has no `-` after `owner`, so it is
+ * left alone — a suite running the previous code may still be using it. Six
+ * hours is two orders of magnitude beyond the longest run measured here, so it
+ * cannot reach a concurrent one either.
+ *
+ * Takes the alias so it can be used as a `where` clause and as a subquery
+ * without the wording drifting between the two.
+ */
+function staleOwner(alias: string): string {
+  return (
+    `${alias}.email like 'e2e-owner-%@example.test'` +
+    ` and ${alias}.created_at < now() - interval '6 hours'`
+  );
+}
+
+/** `select` form of {@link staleOwner}, for `… in (…)` and `… join …`. */
+const STALE_OWNER_IDS = `select u.id from users u where ${staleOwner('u')}`;
+
+/**
+ * Tables that hold a stale owner **hostage** — asked of the catalogue, not
+ * listed here.
+ *
+ * `users` is pointed at by forty foreign keys and eleven of them are `restrict`
+ * or `no action`: the schema is deliberately hostile to deleting a member
+ * (D3 — members are *suspended*, not hard-deleted, and there is no implemented
+ * `DELETE /members/:id` precisely because "what happens to a departed member's
+ * data" is an unanswered product question). Every one of those eleven can block
+ * this sweep, and the twelfth — added by whoever ships the next module — would
+ * have blocked it silently.
+ *
+ * So the sweep does not carry a list. It asks `pg_constraint` which columns
+ * point at `users` without a cascade, and uses the answer both to *avoid* the
+ * violation and to *name the table* when one still holds on. A new table is
+ * therefore handled the day it appears, with no edit here.
+ *
+ * Deliberately **not** `$$`-quoted or wrapped in a `DO` block: this string
+ * travels through a shell (`sh -c` in CI, `cmd.exe` on Windows) inside double
+ * quotes, where `$` is a variable sigil on one of the two.
+ */
+function blockingReferences(): Array<{ table: string; column: string }> {
+  const rows = psql(
+    `select c.conrelid::regclass::text, a.attname from pg_constraint c` +
+      ` join unnest(c.conkey) k(attnum) on true` +
+      ` join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum` +
+      ` where c.contype = 'f' and c.confrelid = 'users'::regclass` +
+      ` and c.confdeltype in ('a', 'r') order by 1, 2`,
+  );
+  return rows
+    .split(/\r?\n/)
+    .map((line) => line.split('|'))
+    .filter((parts): parts is [string, string] => parts.length === 2 && parts[0] !== '')
+    .map(([table, column]) => ({ table, column }));
+}
+
+/**
+ * Hands a stale owner's uploads back to the application's own orphan sweep.
+ *
+ * This is the one dependent table the sweep does something *other* than leave
+ * alone, and the reason is the bytes. `media_attachments` rows point at objects
+ * in RustFS, and `sweepOrphanedMedia` (`backend/src/modules/storage/media.service.ts`)
+ * is **row-driven**: it selects candidate rows, removes the object, then removes
+ * the row — object first, row second, so a store that is down costs nothing. The
+ * `Storage` interface has no `list` operation and there is no reconciliation
+ * pass against the bucket, so a row that disappears without going through that
+ * function strands its object **permanently**. Nothing will ever find it again.
+ *
+ * That is also the argument against `on delete cascade` on `uploader_id`, which
+ * would have been the tidy-looking schema fix: it deletes rows behind the
+ * sweep's back, which is exactly the leak. `media.service.ts` says as much —
+ * "the grace period is the whole reason the cascade does not delete objects".
+ *
+ * So instead of deleting anything, this does what the application itself does
+ * when a post goes (`detachAllFrom`): **soft-delete the row**. It stays visible
+ * to `listDetachedBefore`, and `maintenance.sweep-media` reclaims the object and
+ * then the row after `DETACHED_GRACE_DAYS`. The uploader is re-pointed at the
+ * oldest non-fixture account only because the column is `not null` and something
+ * has to hold it; the row is soft-deleted in the same statement, so no screen
+ * ever attributes the upload to them.
+ *
+ * If there is no such account — a database with nothing but fixtures in it —
+ * the guard makes this a no-op rather than a `not null` violation, and the
+ * owner is simply reported as held below.
+ */
+function handBackStaleUploads(): number {
+  const handed = psql(
+    `with keeper as (select id from users` +
+      ` where email is not null and email not like 'e2e-%@example.test'` +
+      ` order by created_at limit 1),` +
+      ` done as (update media_attachments set uploader_id = (select id from keeper),` +
+      ` deleted_at = coalesce(deleted_at, now()), updated_at = now()` +
+      ` where uploader_id in (${STALE_OWNER_IDS})` +
+      ` and (select count(*) from keeper) = 1 returning 1)` +
+      ` select count(*) from done`,
+  );
+  return Number(handed) || 0;
+}
+
+/**
  * Drops what earlier runs left in the development database.
  *
- * Two cutoffs, because the two kinds of litter cost different things:
+ * Three passes, in this order, and the order is the fix for the bug this
+ * function used to have:
  *
- * - **Accounts, six hours.** They are inert — an extra `users` row slows nothing
- *   down and hides no data — so the cutoff is set for safety, not tidiness.
- * - **Written rows, thirty minutes.** These are what tips a capped list over, so
- *   they cannot be left for six hours. Thirty minutes is still an order of
- *   magnitude beyond the longest run measured here (2.1 minutes for a full
- *   suite, ~3.5 with `--workers=1`), which leaves room for a run being stepped
- *   through in `PWDEBUG` and never touches a concurrent one.
+ * 1. **Written rows, thirty minutes.** `SUITE_DEBRIS` above. These are what tips
+ *    a capped list over, so they cannot wait six hours. They go *first* because
+ *    `task_series.created_by_id` and `shopping_items.requested_by_id` are both
+ *    `restrict` against `users` — a thirty-minute-old task series belonging to a
+ *    six-hour-old owner used to block the account delete that ran before it.
+ * 2. **Uploads.** Handed to the application's orphan sweep, see above.
+ * 3. **Accounts, six hours.** And *only* the accounts nothing points at any
+ *    more. This used to be an unqualified `delete from users`, which is how one
+ *    stale owner with an attachment took the whole authenticated suite down.
  *
- * Every predicate is deliberately timid, because a wrong match here deletes
- * another agent's fixtures out from under a live run — and `task_series`
- * cascades into its occurrences. Nothing seeded can match any of them: the
- * seeded family is `@example.com` (plus the child with no email at all), its
- * chores are named in Russian without an `E2E ` prefix, and its shopping items
- * are bare words with no timestamp. Other suites' `@example.test` fixtures do
- * not carry the `e2e-owner-` prefix, and the pre-existing fixed
- * `e2e-owner@example.test` has no `-` after `owner`, so it is left alone — a
- * suite running the previous code may still be using it.
+ * ### Why it no longer insists
+ *
+ * Deleting a member is an operation this product does not support, and the
+ * schema says so in eleven places. The sweep's job is to stop test accounts
+ * accumulating, not to answer that question on the product's behalf — so it
+ * takes the accounts it can have, leaves the ones it cannot, and *says which
+ * table held them*. A held account costs one inert `users` row, which is what
+ * the six-hour cutoff was already documented as being relaxed about; a failed
+ * sweep used to cost every signed-in test in the run.
+ *
+ * Blanket-cascading those eleven foreign keys was the alternative and it is
+ * worse: it is a product decision ("a departed member's savings goal vanishes")
+ * taken to make a test helper's `DELETE` succeed, and for `media_attachments`
+ * it silently leaks the objects — see {@link handBackStaleUploads}.
  */
 function sweepStaleFixtures(): void {
   if (swept) return;
   swept = true;
 
-  psql(
-    `delete from users where email like 'e2e-owner-%@example.test'` +
-      ` and created_at < now() - interval '6 hours'`,
-  );
+  // Each pass is attempted on its own. A sweep is best effort by nature, and a
+  // debris table that will not budge is no reason to skip the accounts — the
+  // previous shape gave up at the first `psql` non-zero and, worse, took the
+  // run with it.
+  const failures: string[] = [];
+  const attempt = (what: string, run: () => void): void => {
+    try {
+      run();
+    } catch (error) {
+      failures.push(`${what}:\n${(error instanceof Error ? error.message : String(error)).trim()}`);
+    }
+  };
 
   for (const debris of SUITE_DEBRIS) {
-    psql(
-      `delete from ${debris.table} where (${debris.match})` +
-        ` and created_at < now() - interval '30 minutes'`,
-    );
+    attempt(`clearing ${debris.table} (${debris.from})`, () => {
+      psql(
+        `delete from ${debris.table} where (${debris.match})` +
+          ` and created_at < now() - interval '30 minutes'`,
+      );
+    });
   }
+
+  attempt('handing stale uploads to the media sweep', handBackStaleUploads);
+
+  attempt('dropping stale e2e-owner accounts', () => {
+    // `not exists` per blocking column, so the statement can only ever remove
+    // accounts whose deletion cannot raise a foreign-key violation. Postgres
+    // still enforces the constraints; this just means it never has to.
+    const held = blockingReferences()
+      .map((ref) => ` and not exists (select 1 from ${ref.table} b where b.${ref.column} = u.id)`)
+      .join('');
+    psql(`delete from users u where ${staleOwner('u')}${held}`);
+  });
+
+  attempt('reporting what it had to keep', reportHeldOwners);
+
+  if (failures.length > 0) announceSweepFailure(failures);
+}
+
+/**
+ * Says which table is keeping stale accounts alive, once per worker.
+ *
+ * A warning rather than a failure: an undeleted `users` row breaks nothing, and
+ * the whole point of this rewrite is that housekeeping can no longer take the
+ * suite with it. But it is not silent either — silence is how the *next* table
+ * to point at `users` would go unnoticed until the dev database had thousands of
+ * fixture accounts in it.
+ */
+function reportHeldOwners(): void {
+  const remaining = Number(psql(`select count(*) from users u where ${staleOwner('u')}`)) || 0;
+  if (remaining === 0) return;
+
+  const breakdown = blockingReferences()
+    .map(
+      (ref) =>
+        `select '${ref.table}.${ref.column}', count(*) from ${ref.table} b` +
+        ` join users u on u.id = b.${ref.column} where ${staleOwner('u')}`,
+    )
+    .join(' union all ');
+  const held = psql(`select * from (${breakdown}) t where count > 0 order by 1`);
+
+  console.warn(
+    `\ne2e housekeeping: kept ${String(remaining)} stale e2e-owner account(s) — ` +
+      'something still points at them.\n' +
+      'Nothing is wrong with the suite or with sign-in; this is bookkeeping.\n' +
+      (held ? `${held.replace(/^/gm, '  ')}\n` : '') +
+      'Each line is a table that still holds rows for those accounts. ' +
+      '`media_attachments` should\n' +
+      'never appear — it is handed to the app’s own media sweep. Anything ' +
+      'else is either debris a\n' +
+      'run failed to clear (see SUITE_DEBRIS) or a table added since this sweep ' +
+      'was written, in\n' +
+      'which case decide whether the run should clean it up or the inert rows ' +
+      'are fine.\n',
+  );
+}
+
+/**
+ * Housekeeping failed. Say so, in those words, and let the run continue.
+ *
+ * The failure this replaces: a non-zero `psql` exit threw out of
+ * `sweepStaleFixtures`, which is the first thing `ensureApprovedOwner` calls,
+ * which is the first thing every worker's sign-in calls — so a foreign-key
+ * violation on a `delete from users` surfaced as *every authenticated test
+ * failing to sign in*, an error that points at authentication and reads like a
+ * broken app. Four stale owners with sixteen attachments between them took a
+ * whole suite down that way, twice.
+ *
+ * Cleaning up is not a precondition for signing in, so it does not get to stop
+ * the run. What it gets is a paragraph with its own name on it.
+ */
+function announceSweepFailure(failures: readonly string[]): void {
+  const detail = failures.join('\n\n');
+  console.warn(
+    '\ne2e housekeeping FAILED — the suite is running anyway.\n' +
+      'This is `sweepStaleFixtures()` in e2e/helpers.ts clearing debris from ' +
+      'earlier runs.\n' +
+      'It is NOT authentication, NOT the API, and NOT the code under test: ' +
+      'no assertion in this\n' +
+      'run depends on it. What it does mean is that stale fixtures are ' +
+      'accumulating in the dev\n' +
+      'database, and eventually something capped — the tasks list fetches ' +
+      '`limit: 100` — will\n' +
+      'start dropping rows a spec expects to see.\n\n' +
+      `${detail.replace(/^/gm, '  ')}\n`,
+  );
 }
 
 /**

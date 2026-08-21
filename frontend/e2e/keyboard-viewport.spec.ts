@@ -441,7 +441,7 @@ test('each sheet size still resolves to the height it claims', async ({ page }) 
   await page.waitForTimeout(600);
 
   const SIZES = {
-    full: 'h-[calc(100dvh_-_max(env(safe-area-inset-top,0px),0.75rem)_-_0.75rem)]',
+    full: 'h-[calc(100dvh_-_max(env(safe-area-inset-top,0px),0.75rem)_-_0.75rem)]! bottom-0!',
     tall: 'h-[85dvh]',
     auto: 'max-h-[60dvh]',
   } as const;
@@ -486,4 +486,111 @@ test('each sheet size still resolves to the height it claims', async ({ page }) 
   expect(measured.quiet.full, 'full is the screen less the top inset').toBe(available);
 
   expect(measured.hostile, 'no size reads a viewport property any more').toEqual(measured.quiet);
+});
+
+/**
+ * The third reported defect, and the one that made «Новое дело» unusable: the
+ * sheet opening collapsed to a sliver on the bottom edge, its header intact
+ * above a 200-odd pixel window onto a 400-odd pixel form.
+ *
+ * It is the *other* half of restoring `repositionInputs`. That flag gates
+ * `preventScrollMobileSafari`, which this app needs; it also gates vaul's own
+ * keyboard arithmetic, which — while an input inside the sheet has focus —
+ * writes an inline `height` and `bottom` onto the surface on every
+ * `visualViewport` resize, and only clears them when a later run of the same
+ * handler decides the keyboard has closed. That decision reads
+ * `innerHeight - visualViewport.height`, the one quantity iOS reports
+ * unreliably in a Home Screen web app, so on the owner's phone it did not
+ * clear. `responsive-dialog.tsx` answers with `!` on both properties for
+ * `size="full"`.
+ *
+ * Stated as geometry rather than as mechanism: whatever a library writes onto
+ * this element, a full sheet is the screen less its top inset, and «Создать»
+ * is on screen — before a keyboard, during one, and after it goes away.
+ */
+test('a full sheet cannot be resized out from under itself by a keyboard', async ({ page }) => {
+  await emulateInstalled(page);
+  await page.goto('/tasks');
+
+  const trigger = page.getByRole('button', { name: /Новое дело|Новая задача|Добавить/i }).first();
+  await expect(trigger, 'no create trigger on /tasks').toBeVisible({ timeout: 20_000 });
+  await trigger.click();
+  await expect(page.getByRole('dialog')).toBeVisible({ timeout: 15_000 });
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const s = document.querySelector('[data-slot="responsive-dialog"]');
+          return s === null ? 'missing' : getComputedStyle(s).transform;
+        }),
+      { timeout: 8_000 },
+    )
+    .toBe('none');
+
+  const geometry = async () =>
+    page.evaluate(() => {
+      const surface = document.querySelector('[data-slot="responsive-dialog"]');
+      const box = surface?.getBoundingClientRect();
+      const submit = [...(surface?.querySelectorAll('button') ?? [])].find((b) =>
+        /Создать/i.test(b.textContent ?? ''),
+      );
+      const sb = submit?.getBoundingClientRect();
+      const body = surface?.querySelector('[data-scroll-pane]') ?? null;
+      const bb = body?.getBoundingClientRect();
+      return {
+        innerHeight: window.innerHeight,
+        top: Math.round(box?.top ?? Number.NaN),
+        bottom: Math.round(box?.bottom ?? Number.NaN),
+        height: Math.round(box?.height ?? Number.NaN),
+        bodyHeight: Math.round(bb?.height ?? Number.NaN),
+        submitTop: Math.round(sb?.top ?? Number.NaN),
+        submitBottom: Math.round(sb?.bottom ?? Number.NaN),
+      };
+    });
+
+  // `max(env(safe-area-inset-top), 12px) + 12px`, and the inset is 0 here.
+  const INSET = 24;
+
+  const before = await geometry();
+  expect(before.top, 'the sheet starts at the top inset').toBe(INSET);
+  expect(before.height, 'and is the screen less that inset').toBe(before.innerHeight - INSET);
+
+  await page.setViewportSize(REDUCED);
+  await page.waitForTimeout(SETTLED_MS);
+
+  const during = await geometry();
+  expect(during.top, 'still at the top inset with a keyboard up').toBe(INSET);
+  expect(during.height, 'and still sized from the viewport it is on').toBe(
+    during.innerHeight - INSET,
+  );
+  expect(during.submitTop, '«Создать» is on screen').toBeGreaterThanOrEqual(0);
+  expect(during.submitBottom).toBeLessThanOrEqual(during.innerHeight);
+
+  await page.setViewportSize(FULL);
+  await page.waitForTimeout(SETTLED_MS);
+
+  // The regression proper. Before the fix this read 299px on a 659px viewport,
+  // with the sheet's top at y=360 — an inline `height` vaul had written while
+  // the viewport was short and never took back.
+  const after = await geometry();
+  expect(after.top, 'the sheet came back to the top inset').toBe(INSET);
+  expect(after.height, 'at its full height').toBe(after.innerHeight - INSET);
+  expect(after.bodyHeight, 'and the form is not a sliver').toBe(before.bodyHeight);
+  expect(after.submitTop, '«Создать» is where it was').toBe(before.submitTop);
+
+  // Said once more against the property rather than the box, because an inline
+  // style *is* still written — it simply no longer wins.
+  const resolved = await page.evaluate(() => {
+    const surface = document.querySelector('[data-slot="responsive-dialog"]');
+    return {
+      computedHeight: surface === null ? '' : getComputedStyle(surface).height,
+      computedBottom: surface === null ? '' : getComputedStyle(surface).bottom,
+      inline: (surface as HTMLElement | null)?.getAttribute('style') ?? '',
+    };
+  });
+  expect(resolved.computedBottom, 'anchored by plain CSS, as the tab bar is').toBe('0px');
+  expect(
+    resolved.computedHeight,
+    'the stylesheet outranks whatever vaul left in the style attribute',
+  ).toBe(`${String(FULL.height - INSET)}px`);
 });

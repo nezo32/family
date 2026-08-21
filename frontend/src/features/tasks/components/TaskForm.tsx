@@ -15,6 +15,7 @@ import { getFamilyTimeZone } from '@/shared/lib/format';
 import { cn } from '@/shared/lib/utils';
 import { TASKS_RU } from '../locale';
 import { ONCE, scheduleFromView, todayKey, type ScheduleValue } from '../recurrence';
+import { ReminderRow, ReminderSheet } from './ReminderField';
 import { isCustomSchedule, ScheduleRepeatRow, ScheduleWhenRow } from './ScheduleField';
 
 /**
@@ -37,6 +38,7 @@ import { isCustomSchedule, ScheduleRepeatRow, ScheduleWhenRow } from './Schedule
  *   └───────────────────────────────────────┘
  *   ПОДРОБНЕЕ
  *   🔁 Повторение          не повторяется  ›
+ *   🔔 Напоминание       в момент начала  ›
  *   👥 Кто                          Любой  ›
  *   📝 Заметка                          —  ›
  *   ⌄ Ещё                                     ← срок, категория, кто видит
@@ -150,7 +152,7 @@ export function TaskForm(props: {
   const [customReplaced, setCustomReplaced] = useState(false);
   const [showMore, setShowMore] = useState(false);
   const [openSheet, setOpenSheet] = useState<
-    'who' | 'due' | 'category' | 'notes' | 'who-sees' | null
+    'who' | 'due' | 'category' | 'notes' | 'who-sees' | 'reminders' | null
   >(null);
 
   // Snapshot of what was loaded, so an untouched schedule is not resent (and a
@@ -173,6 +175,7 @@ export function TaskForm(props: {
       defaultAssigneeId: series?.defaultAssigneeId ?? null,
       category: series?.category ?? null,
       autoCancelAfterDays: series?.autoCancelAfterDays ?? null,
+      reminderOffsets: series?.reminderOffsets ?? [],
     }),
     [series],
   );
@@ -219,6 +222,7 @@ export function TaskForm(props: {
   const category = form.watch('category') ?? '';
   const notes = form.watch('notes') ?? '';
   const visibility = form.watch('visibility') ?? 'household';
+  const reminderOffsets = form.watch('reminderOffsets') ?? [];
 
   const scheduleChanged = JSON.stringify({ dtstartLocal, schedule }) !== initial.current;
   const assignee = props.members.find((member) => member.id === assigneeId) ?? null;
@@ -316,6 +320,20 @@ export function TaskForm(props: {
               }}
             />
 
+            {/*
+              Right under «Повторение», above «Кто». A reminder is a statement
+              about *when*, so it belongs next to the other one; «Кто» and
+              «Заметка» are about the chore itself. This is the sixth visible
+              control, which is exactly the §F5 budget — anything further has to
+              go behind «Ещё».
+            */}
+            <ReminderRow
+              value={reminderOffsets}
+              onClick={() => {
+                setOpenSheet('reminders');
+              }}
+            />
+
             {can('task:assign') ? (
               <ValueRow
                 icon={<Users />}
@@ -386,6 +404,17 @@ export function TaskForm(props: {
       </form>
 
       {/* ---- the sheets the rows open ------------------------------------ */}
+
+      <ReminderSheet
+        open={openSheet === 'reminders'}
+        onOpenChange={(next) => {
+          setOpenSheet(next ? 'reminders' : null);
+        }}
+        value={reminderOffsets}
+        onChange={(next) => {
+          form.setValue('reminderOffsets', next, { shouldDirty: true });
+        }}
+      />
 
       <PickerSheet
         open={openSheet === 'who'}

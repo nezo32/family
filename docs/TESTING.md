@@ -433,6 +433,40 @@ another agent's fixtures out from under a live run, and both `users` and
 Six hours because these are inert: an extra `users` row slows nothing down and
 hides no data, so the cutoff is set for safety rather than tidiness.
 
+**The account delete is conditional, and that is the point.** `users` is pointed
+at by forty foreign keys and **eleven of them are `restrict`** — `comments`,
+`media_attachments`, `polls`, `savings_goals`, `goal_transactions` (twice),
+`shopping_items`, `shopping_lists`, `task_series`, `event_series`. That is not an
+oversight: members are _suspended_, not hard-deleted (D3), there is no
+implemented `DELETE /members/:id`, and "what happens to a departed member's
+data" is an open product question. Hard-deleting a user is the one operation the
+schema is built to refuse.
+
+So the sweep does not insist. It asks `pg_constraint` which columns point at
+`users` without a cascade — it carries no list, so a table added by the next
+module is covered the day it appears — and deletes only the stale accounts that
+**nothing** points at, adding one `not exists` per blocking column. Whatever it
+has to keep it names, by table, in a warning. A kept account costs one inert
+row; the previous unqualified `delete from users` cost the whole authenticated
+suite the first time a run left an upload behind (see below).
+
+**Uploads are handed back, never deleted.** `media_attachments` is the one
+dependent table the sweep touches, and the reason is the bytes.
+`sweepOrphanedMedia` is **row-driven** — it lists candidate rows, removes the
+object, then removes the row — and `Storage` has no `list` operation, so there is
+no reconciliation pass against the bucket. A row that disappears any other way
+strands its object in RustFS permanently. The sweep therefore does what the app
+itself does when a post goes (`detachAllFrom`): soft-deletes the row, re-pointing
+`uploader_id` at the oldest non-fixture account only because the column is `not
+null`. `maintenance.sweep-media` then reclaims the object and the row after
+`DETACHED_GRACE_DAYS`, and the account is deletable on a later sweep.
+
+This is also why **`on delete cascade` on `media_attachments.uploader_id` is the
+wrong fix**, tidy as it looks: it deletes rows behind the sweep's back, which is
+exactly the leak, and it answers a product question in order to make a test
+helper's `DELETE` succeed. `media.service.ts` already says it — "the grace period
+is the whole reason the cascade does not delete objects".
+
 **Rows the specs write — thirty minutes.** These are _not_ inert, and deleting the
 account does not take them with it: the seeded family owns some of the same
 data, and a task created through the UI outlives its creator. The tasks list
@@ -444,6 +478,11 @@ the code it was exercising.
 - `task_series` whose title starts with `E2E ` (occurrences cascade with them).
 - `shopping_items` whose name ends in a 13-digit `Date.now()`. The seeded items
   are the bare words — `Молоко`, `Хлеб` — with no suffix, so they never match.
+
+**These run _before_ the account pass, and the order is load-bearing.** Both of
+those tables are `restrict` against `users`, so a thirty-minute-old task series
+belonging to a six-hour-old owner used to hold that owner hostage — the sweep
+deleted the accounts first and the rows that blocked them second.
 
 Thirty rather than six hundred minutes because these are what tips a capped list
 over; and thirty rather than five because it is an order of magnitude beyond the
@@ -464,6 +503,36 @@ assertion could have been written to survive the dirty database instead: every
 one of those tasks is due today, so neither narrowing the date window nor
 filtering the list gets under the `limit: 100`. Housekeeping is the fix, and
 prevention is the cheaper half of it.
+
+#### When housekeeping fails, it says so — and the run carries on
+
+The sweep used to be able to take the whole suite down, and the way it did it is
+the reason this section exists. `sweepStaleFixtures()` is the first thing
+`ensureApprovedOwner` calls, which is the first thing every worker's sign-in
+calls. A non-zero `psql` exit therefore threw out of `execSync`, out of the
+sweep, and out of sign-in — so **one stale account with one attachment failed
+every authenticated test in the run**, with an error that pointed squarely at
+authentication. It happened twice; the second time four stale owners held
+sixteen attachments between them, and the fix was a hand-written `DELETE`.
+
+Two things changed:
+
+- **Each pass is attempted separately and none of them is fatal.** Cleaning up
+  is not a precondition for signing in, so it does not get to stop the run.
+  Failures are collected and printed as one paragraph headed
+  `e2e housekeeping FAILED — the suite is running anyway`, which states in as
+  many words that it is not authentication, not the API and not the code under
+  test, and says what the accumulating litter will eventually break.
+- **`psql()` captures `stderr` and puts it in the thrown message,** with the
+  statement beside it. The default `stdio` sent Postgres's `ERROR:` line to the
+  runner's stderr and left the `Error` saying only `Command failed: docker exec
+…` — under `--workers=8` those two halves end up pages apart. The message also
+  distinguishes "Postgres refused this statement" from "the harness never
+  reached Postgres", because one is a statement to fix and the other is a
+  container to start.
+
+If you see `e2e housekeeping: kept N stale e2e-owner account(s)`, read the table
+names under it. `media_attachments` should never be among them.
 
 ---
 

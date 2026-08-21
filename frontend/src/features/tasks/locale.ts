@@ -155,6 +155,43 @@ export const TASKS_RU = {
     categorySheetTitle: 'Категория',
     notesSheetTitle: 'Заметка',
     whoSheetTitle: 'Кто это сделает',
+
+    /* ---- напоминания (§F5: «Напоминания → ValueRow → sheet») ---- */
+    reminders: 'Напоминание',
+    remindersSheetTitle: 'Напоминания',
+    /**
+     * What the row says when nothing was chosen. It states what *will* happen,
+     * not what is missing: «—» would read as "no reminder at all", and the
+     * at-start one is never off.
+     */
+    remindersNone: 'В момент начала',
+    /** The sheet's fixed first row. Not a toggle — it has no off state. */
+    remindersAlwaysLabel: 'В момент начала',
+    remindersAlwaysValue: 'Всегда',
+    remindersAlwaysHint:
+      'Приходит для каждого дела. Выключить можно только в настройках уведомлений.',
+    remindersAheadLabel: 'Заранее',
+    remindersLimitHint: 'Не больше пяти напоминаний на одно дело.',
+    /** Two leads read as one phrase: «За день и за час». */
+    remindersJoin: ' и ',
+    /** Three or more stop being a phrase and become a count. */
+    remindersManyValue: (n: number) => `Напоминаний: ${String(n)}`,
+    /**
+     * What the sheet offers, in minutes before the start — «за час (или
+     * несколько часов)» and «за день (или несколько дней)», which is what was
+     * asked for, and nothing else. A picker a thumb has to scroll is one nobody
+     * reads to the end of.
+     */
+    remindersOptions: [
+      { minutes: 30, label: 'За 30 минут' },
+      { minutes: 60, label: 'За час' },
+      { minutes: 120, label: 'За 2 часа' },
+      { minutes: 180, label: 'За 3 часа' },
+      { minutes: 360, label: 'За 6 часов' },
+      { minutes: 1440, label: 'За день' },
+      { minutes: 2880, label: 'За 2 дня' },
+      { minutes: 10080, label: 'За неделю' },
+    ],
   },
 
   /** Who can see the chore. Same vocabulary as the calendar, by design. */

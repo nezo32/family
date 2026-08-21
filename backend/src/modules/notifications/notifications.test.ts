@@ -529,6 +529,61 @@ describe('render — every notification type', () => {
     expect(rendered.body).not.toContain('250000');
   });
 
+  /**
+   * The two task-reminder types are a pair, and the pair only works if they do
+   * not read the same. «Скоро дело · Вынести мусор · за час» is a warning;
+   * «Пора · Вынести мусор» is an instruction, and it is the one that arrives
+   * for every occurrence whether or not anybody chose a lead time.
+   */
+  it('says how far ahead a task reminder is, in words', () => {
+    const hour = renderNotification('task_due_soon', {
+      title: 'Вынести мусор',
+      occurrenceId: 'abc',
+      offsetMinutes: 60,
+    });
+    expect(hour.title).toBe('Скоро дело');
+    expect(hour.body).toBe('Вынести мусор · за час');
+
+    expect(
+      renderNotification('task_due_soon', { title: 'Полить цветы', offsetMinutes: 120 }).body,
+    ).toContain('за 2 часа');
+    expect(
+      renderNotification('task_due_soon', { title: 'Полить цветы', offsetMinutes: 1440 }).body,
+    ).toContain('за день');
+    expect(
+      renderNotification('task_due_soon', { title: 'Полить цветы', offsetMinutes: 2880 }).body,
+    ).toContain('за 2 дня');
+    expect(
+      renderNotification('task_due_soon', { title: 'Полить цветы', offsetMinutes: 10080 }).body,
+    ).toContain('за неделю');
+    expect(
+      renderNotification('task_due_soon', { title: 'Полить цветы', offsetMinutes: 30 }).body,
+    ).toContain('за 30 минут');
+  });
+
+  it('falls back to the old payload shape for an intent written by an earlier build', () => {
+    // `dueLabel` and no `offsetMinutes`: intents already in the inbox when this
+    // shipped, which are rendered at *send* time and so must still render.
+    const rendered = renderNotification('task_due_soon', {
+      title: 'Вынести мусор',
+      dueLabel: 'сегодня в 19:00',
+    });
+    expect(rendered.body).toContain('сегодня в 19:00');
+  });
+
+  it('renders the at-start notification as an instruction, not a warning', () => {
+    const rendered = renderNotification('task_started', {
+      title: 'Вынести мусор',
+      occurrenceId: 'abc',
+    });
+    expect(rendered.title).toBe('Пора');
+    expect(rendered.body).toContain('Вынести мусор');
+    expect(rendered.navigate).toBe('/tasks/abc');
+    expect(rendered.title, 'it must not read like the lead-time reminder').not.toBe(
+      renderNotification('task_due_soon', {}).title,
+    );
+  });
+
   it('declines Russian plurals correctly', () => {
     expect(renderNotification('birthday_today', { personName: 'Лиза', age: 1 }).body).toContain(
       '1 год',

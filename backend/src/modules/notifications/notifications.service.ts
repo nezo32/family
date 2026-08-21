@@ -304,6 +304,7 @@ function parseAudience(raw: Record<string, unknown>): {
 const REQUIRED_PERMISSIONS: Record<NotificationType, readonly Permission[]> = {
   task_assigned: ['task:read:own', 'task:read:any'],
   task_due_soon: ['task:read:own', 'task:read:any'],
+  task_started: ['task:read:own', 'task:read:any'],
   task_overdue: ['task:read:own', 'task:read:any'],
   task_completed: ['task:read:own', 'task:read:any'],
   chore_swap_requested: ['task:read:own', 'task:read:any'],

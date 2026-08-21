@@ -1,0 +1,2 @@
+ALTER TYPE "public"."notification_type" ADD VALUE 'task_started' BEFORE 'task_overdue';--> statement-breakpoint
+ALTER TABLE "task_series" ADD COLUMN "reminder_offsets" integer[] DEFAULT '{}'::int[] NOT NULL;

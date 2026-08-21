@@ -31,6 +31,7 @@ import { NOTIFICATION_ACTION_RU, NOTIFICATIONS_RU, PRIORITY_RU } from '../locale
 const TYPE_ICONS: Partial<Record<NotificationType, ComponentType<{ className?: string }>>> = {
   task_assigned: ListTodo,
   task_due_soon: ListTodo,
+  task_started: ListTodo,
   task_overdue: AlertTriangle,
   task_completed: CheckCheck,
   chore_swap_requested: ListTodo,

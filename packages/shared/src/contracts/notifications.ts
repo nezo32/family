@@ -21,6 +21,19 @@ import { idSchema, isoDateTimeSchema, nonEmptyString, timeOfDaySchema } from './
 export const NOTIFICATION_TYPES = [
   'task_assigned',
   'task_due_soon',
+  /**
+   * «Пора» — the occurrence has started, right now.
+   *
+   * A *separate* type from `task_due_soon` on purpose, and this is the whole
+   * shape of the owner's «обязательное оповещение прям во время начала дела»:
+   * the lead reminders are chosen per series and can be none, this one is
+   * emitted for every occurrence and is not in that array at all. Sharing one
+   * type would mean one preferences row, so switching off «Скоро дело» would
+   * silently switch off the notification that is supposed to be unremovable —
+   * and one `render.ts` case, which would have to branch on the payload to
+   * decide whether it is saying «через час» or «сейчас».
+   */
+  'task_started',
   'task_overdue',
   'task_completed',
   'chore_swap_requested',
@@ -201,8 +214,13 @@ export const NOTIFICATION_TYPE_LABELS_RU: Record<NotificationType, NotificationT
     group: 'tasks',
   },
   task_due_soon: {
-    label: 'Скоро срок',
-    description: 'До срока вашей задачи осталось совсем немного.',
+    label: 'Скоро дело',
+    description: 'Напоминание заранее — за час, за день, как вы выбрали.',
+    group: 'tasks',
+  },
+  task_started: {
+    label: 'Пора делать',
+    description: 'Дело началось. Приходит всегда, для каждого дела.',
     group: 'tasks',
   },
   task_overdue: {
@@ -310,6 +328,22 @@ export const QUIET_MODE_LABELS_RU: Record<QuietMode, string> = {
 export const NOTIFICATION_TYPE_DEFAULT_PRIORITY: Record<NotificationType, NotificationPriority> = {
   task_assigned: 'normal',
   task_due_soon: 'normal',
+  /**
+   * `normal`, deliberately, and **not** `critical`.
+   *
+   * `critical` is the only value that overrides quiet hours, and it also skips
+   * the hourly push cap and opens a ten-minute D11 escalation chain to another
+   * adult. Making every chore's start time critical would mean a task scheduled
+   * at 03:00 rings the house at 03:00 and then wakes the other parent at 03:10.
+   * That is the notification fatigue D10 exists to prevent, and a family that
+   * meets it once turns notifications off wholesale — losing «дать лекарство в
+   * 20:00» along with «вынести мусор».
+   *
+   * `normal` still delivers immediately outside quiet hours, and inside them
+   * D10 **defers rather than drops**: the notification arrives when the window
+   * ends. Nothing is lost; it simply does not arrive at 03:00.
+   */
+  task_started: 'normal',
   task_overdue: 'high',
   task_completed: 'low',
   chore_swap_requested: 'high',
@@ -356,6 +390,7 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: Record<
 > = {
   task_assigned: { enabled: true, push: true, telegram: false, inApp: true },
   task_due_soon: { enabled: true, push: true, telegram: false, inApp: true },
+  task_started: { enabled: true, push: true, telegram: false, inApp: true },
   task_overdue: { enabled: true, push: true, telegram: false, inApp: true },
   task_completed: { enabled: true, push: false, telegram: false, inApp: true },
   chore_swap_requested: { enabled: true, push: true, telegram: false, inApp: true },
@@ -405,6 +440,7 @@ export const NOTIFICATION_PREFERENCE_ROLE_OVERRIDES: Partial<
   guest: {
     task_assigned: { enabled: false, push: false, telegram: false, inApp: false },
     task_due_soon: { enabled: false, push: false, telegram: false, inApp: false },
+    task_started: { enabled: false, push: false, telegram: false, inApp: false },
     task_overdue: { enabled: false, push: false, telegram: false, inApp: false },
     task_completed: { enabled: false, push: false, telegram: false, inApp: false },
     chore_swap_requested: { enabled: false, push: false, telegram: false, inApp: false },

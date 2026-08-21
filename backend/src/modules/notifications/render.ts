@@ -120,6 +120,40 @@ function actor(payload: NotificationPayload, fallback = 'Кто-то из сем
   return text(payload, 'actorName', text(payload, 'actorDisplayName', fallback));
 }
 
+/**
+ * «за час», «за 2 часа», «за день», «за 30 минут» — the lead time of a task
+ * reminder, in words.
+ *
+ * Russian needs three plural forms and picks between them by the *last two*
+ * digits, which is why this is a function and not a template literal. Whole
+ * days and whole hours get their own wording because «за 1440 минут» is not
+ * something a person says.
+ */
+function ruPlural(n: number, one: string, few: string, many: string): string {
+  const mod100 = Math.abs(n) % 100;
+  const mod10 = mod100 % 10;
+  if (mod100 >= 11 && mod100 <= 14) return many;
+  if (mod10 === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4) return few;
+  return many;
+}
+
+export function leadPhrase(minutes: number | null): string | null {
+  if (minutes === null || !Number.isFinite(minutes) || minutes <= 0) return null;
+  if (minutes === 10_080) return 'за неделю';
+  if (minutes % 1440 === 0) {
+    const days = minutes / 1440;
+    return days === 1 ? 'за день' : `за ${String(days)} ${ruPlural(days, 'день', 'дня', 'дней')}`;
+  }
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return hours === 1
+      ? 'за час'
+      : `за ${String(hours)} ${ruPlural(hours, 'час', 'часа', 'часов')}`;
+  }
+  return `за ${String(minutes)} ${ruPlural(minutes, 'минуту', 'минуты', 'минут')}`;
+}
+
 function joinBody(...parts: Array<string | null | undefined>): string {
   return parts.filter((p): p is string => Boolean(p && p.length > 0)).join(' · ');
 }
@@ -163,10 +197,32 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
 
     case 'task_due_soon': {
       const taskId = id(p, 'occurrenceId', 'taskId', 'entityId');
+      // The lead time the family chose, said back to them in words: a reminder
+      // that does not say how far ahead it is makes the reader open the app to
+      // find out, which is the one thing a reminder is supposed to save.
+      const lead = leadPhrase(count(p, 'offsetMinutes'));
       const due = text(p, 'dueLabel');
       return {
-        title: 'Скоро срок задачи',
-        body: joinBody(text(p, 'title', 'Задача'), due ? `срок ${due}` : 'срок совсем близко'),
+        title: 'Скоро дело',
+        body: joinBody(
+          text(p, 'title', 'Дело'),
+          lead ?? (due ? `срок ${due}` : 'срок совсем близко'),
+        ),
+        navigate: route(APP_ROUTES.tasks, taskId),
+      };
+    }
+
+    /**
+     * «Пора» — the occurrence has started. The one task notification nobody
+     * chose and nobody can drop from a series (see `task_started` in the shared
+     * contract); it says the name of the chore and nothing else, because at the
+     * moment a thing is supposed to start there is nothing else to say.
+     */
+    case 'task_started': {
+      const taskId = id(p, 'occurrenceId', 'taskId', 'entityId');
+      return {
+        title: 'Пора',
+        body: joinBody(text(p, 'title', 'Дело'), text(p, 'atLabel')),
         navigate: route(APP_ROUTES.tasks, taskId),
       };
     }

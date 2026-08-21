@@ -47,10 +47,11 @@ import { GoalFormDialog } from '../components/GoalFormDialog';
  * out of every count and out of «Накоплено», so the display figure does not move
  * when the archive is revealed.
  *
- * «Показать архив» is band 4 (§C2) — quiet, meta, no box, at the bottom of the
- * list — and it is the *same component* Покупки renders, which is the only
- * thing that keeps the two screens from drifting apart again. See
- * `shared/components/ArchiveToggle.tsx` for why it sits where it does.
+ * «Показать архив» rides the **filter row**, right-aligned opposite the scope
+ * tabs, and it is the *same component* Покупки renders — the only thing that
+ * keeps the two screens from drifting apart again. It used to sit at the bottom
+ * of the list, which is fine while there is a list and adrift in the middle of
+ * an empty viewport when there is not. See `shared/components/ArchiveToggle.tsx`.
  *
  * Access is decided entirely by `useCan()` (D4): a child holds no `goal:*`
  * permission and never reaches this route, a teen holds `goal:read` only and so
@@ -114,7 +115,25 @@ export default function GoalsPage() {
         {/* Phone: the display figure leads, because it is the answer. */}
         {summary ? <div className="min-[1088px]:hidden">{summary}</div> : null}
 
-        <ScopeBar value={scope} onChange={setScope} />
+        {/* The filter row: scope tabs on the left, «Показать архив» right-
+            aligned opposite them (§D5). One row, one component — the same one
+            Покупки renders. */}
+        <ArchiveToggle
+          tabs={<ScopeBar value={scope} onChange={setScope} />}
+          expanded={includeArchived}
+          onToggle={() => {
+            setIncludeArchived((value) => !value);
+          }}
+          showLabel={GOALS_RU.showArchived}
+          hideLabel={GOALS_RU.hideArchived}
+          // Only once the wider query has actually answered: while the old
+          // list is still on screen the archive is not empty, it is unknown.
+          emptyHint={
+            archived.length === 0 && !isPending && !isPlaceholderData && !isError
+              ? GOALS_RU.archiveEmpty
+              : undefined
+          }
+        />
 
         {isPending ? (
           <GoalListSkeleton />
@@ -168,24 +187,6 @@ export default function GoalsPage() {
             ) : null}
           </SectionStack>
         )}
-
-        {/* Band 4 (§C2): quiet, meta, no box, at the bottom of the list — the
-            same control Покупки renders, from the same component. */}
-        <ArchiveToggle
-          expanded={includeArchived}
-          onToggle={() => {
-            setIncludeArchived((value) => !value);
-          }}
-          showLabel={GOALS_RU.showArchived}
-          hideLabel={GOALS_RU.hideArchived}
-          // Only once the wider query has actually answered: while the old
-          // list is still on screen the archive is not empty, it is unknown.
-          emptyHint={
-            archived.length === 0 && !isPending && !isPlaceholderData && !isError
-              ? GOALS_RU.archiveEmpty
-              : undefined
-          }
-        />
       </div>
 
       {/* §C4: Сводка. Desktop only — on a phone it is already at the top,

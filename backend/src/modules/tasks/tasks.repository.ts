@@ -568,6 +568,154 @@ export async function findOverdue(
     .limit(params.limit ?? 500);
 }
 
+/* -------------------------------------------------------------------------- */
+/* Reminders                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/** One `(occurrence, lead time)` pair that has just come due, or the start itself. */
+export interface DueTaskReminder {
+  occurrenceId: string;
+  seriesId: string;
+  /** Minutes before the start. `0` is the at-start notification. */
+  offsetMinutes: number;
+  startsAt: Date;
+  localDate: string;
+  startsLocal: string;
+  title: string;
+  timezone: string;
+  /** `null` when the chore is «Любой» and no rotation has claimed it. */
+  assigneeId: string | null;
+  seriesCreatedById: string;
+}
+
+interface DueTaskReminderRow {
+  [column: string]: unknown;
+  occurrence_id: string;
+  series_id: string;
+  offset_minutes: number | string;
+  starts_at: Date | string;
+  local_date: string;
+  starts_local: string;
+  title: string;
+  timezone: string;
+  assignee_id: string | null;
+  series_created_by_id: string;
+}
+
+function toDueTaskReminder(row: DueTaskReminderRow): DueTaskReminder {
+  return {
+    occurrenceId: row.occurrence_id,
+    seriesId: row.series_id,
+    offsetMinutes:
+      typeof row.offset_minutes === 'number'
+        ? row.offset_minutes
+        : Number.parseInt(row.offset_minutes, 10),
+    startsAt: row.starts_at instanceof Date ? row.starts_at : new Date(row.starts_at),
+    localDate: row.local_date,
+    startsLocal: row.starts_local,
+    title: row.title,
+    timezone: row.timezone,
+    assigneeId: row.assignee_id,
+    seriesCreatedById: row.series_created_by_id,
+  };
+}
+
+/**
+ * Every `(occurrence, reminderOffset)` pair whose lead time elapsed inside
+ * `(now - lookbackMinutes, now]`.
+ *
+ * Shaped after `events.repository.listDueReminders`, and for the same reasons:
+ *
+ * - `reminder_offsets` is an `int[]`, so the pairs come from a
+ *   `CROSS JOIN LATERAL unnest(...)`. One row per reminder is exactly the grain
+ *   the dedupe key needs — `task_due_soon:<occurrenceId>:<offset>m` — so a
+ *   series with `{1440, 60}` cannot have its two reminders collapse into one.
+ * - **The lower bound is not optional.** Without it a worker that was down for
+ *   a day comes back and fires every reminder it missed at once. With it, a
+ *   long outage silently drops stale ones, which is the right trade: a reminder
+ *   about a chore that started two hours ago is noise, and D10's real failure
+ *   mode is fatigue.
+ * - Every `Date` goes through `ts()`. `drizzle-orm/postgres-js` nulls that
+ *   driver's timestamp serialisers, so a raw `Date` in a raw template throws at
+ *   *bind* time — which is how event reminders were dead for the whole life of
+ *   this project without a single failing test.
+ *
+ * Anchored on `starts_at`, never `due_at`: see the note on
+ * `taskSeries.reminderOffsets`.
+ */
+export async function listDueReminders(
+  ex: Executor,
+  options: { now: Date; lookbackMinutes: number; limit: number },
+): Promise<DueTaskReminder[]> {
+  const floor = new Date(options.now.getTime() - options.lookbackMinutes * 60_000);
+  const rows = await ex.execute<DueTaskReminderRow>(sql`
+    select
+      o.id                                  as occurrence_id,
+      o.series_id                           as series_id,
+      ro.offset_minutes                     as offset_minutes,
+      o.starts_at                           as starts_at,
+      o.local_date                          as local_date,
+      o.starts_local                        as starts_local,
+      coalesce(o.title_override, s.title)   as title,
+      s.timezone                            as timezone,
+      o.assignee_id                         as assignee_id,
+      s.created_by_id                       as series_created_by_id
+    from task_occurrences o
+    join task_series s on s.id = o.series_id
+    cross join lateral unnest(s.reminder_offsets) as ro(offset_minutes)
+    where o.status = 'scheduled'
+      and s.archived_at is null
+      and o.starts_at > ${ts(options.now)}
+      and o.starts_at - make_interval(mins => ro.offset_minutes) <= ${ts(options.now)}
+      and o.starts_at - make_interval(mins => ro.offset_minutes) > ${ts(floor)}
+    order by o.starts_at asc
+    limit ${options.limit}
+  `);
+
+  return rows.map(toDueTaskReminder);
+}
+
+/**
+ * Occurrences that **started** inside `(now - lookbackMinutes, now]`.
+ *
+ * No `reminder_offsets` join: the at-start notification is not in that array
+ * and cannot be taken out of it (see the column's own note). It is emitted for
+ * every scheduled occurrence of every live series, which is what makes the
+ * owner's «обязательное оповещение прям во время начала дела» a property of
+ * this query rather than of a default somebody can edit away.
+ *
+ * `offsetMinutes` comes back as `0` so callers can treat both sweeps alike.
+ */
+export async function listStartedSince(
+  ex: Executor,
+  options: { now: Date; lookbackMinutes: number; limit: number },
+): Promise<DueTaskReminder[]> {
+  const floor = new Date(options.now.getTime() - options.lookbackMinutes * 60_000);
+  const rows = await ex.execute<DueTaskReminderRow>(sql`
+    select
+      o.id                                  as occurrence_id,
+      o.series_id                           as series_id,
+      0                                     as offset_minutes,
+      o.starts_at                           as starts_at,
+      o.local_date                          as local_date,
+      o.starts_local                        as starts_local,
+      coalesce(o.title_override, s.title)   as title,
+      s.timezone                            as timezone,
+      o.assignee_id                         as assignee_id,
+      s.created_by_id                       as series_created_by_id
+    from task_occurrences o
+    join task_series s on s.id = o.series_id
+    where o.status = 'scheduled'
+      and s.archived_at is null
+      and o.starts_at <= ${ts(options.now)}
+      and o.starts_at > ${ts(floor)}
+    order by o.starts_at asc
+    limit ${options.limit}
+  `);
+
+  return rows.map(toDueTaskReminder);
+}
+
 /** Reminder window: still scheduled, due inside `[from, to]`. */
 export async function findDueBetween(
   ex: Executor,

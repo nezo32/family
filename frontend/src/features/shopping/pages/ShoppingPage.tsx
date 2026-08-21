@@ -76,6 +76,39 @@ function ShoppingListsOverview() {
         onRetry={sync.flushNow}
       />
 
+      {/*
+        The filter row (§D5). Right-aligned above the first row — which is
+        exactly where §D5 used to forbid it, and the reversal is deliberate:
+        this control spent a pass at the bottom of the list, where it is fine
+        with a list under it and adrift in the middle of the viewport without
+        one. An empty Покупки is the first screen a new family sees.
+
+        Покупки has no scope filter, so the control owns the row on its own and
+        keeps its label at every width; on Копилки the same component seats the
+        tabs to its left. The component is the only thing that keeps the two
+        screens from drifting apart again.
+
+        Not behind `shopping:list:manage`: showing history is a read, and
+        `GET /shopping/lists?includeArchived=true` asks for `shopping:read`.
+        Gating it here hid the archive from everyone who cannot archive — the
+        children and teens who share these lists — while `/shopping/:id` still
+        opened an archived list for them by URL.
+      */}
+      <ArchiveToggle
+        className="mb-4"
+        expanded={showArchived}
+        onToggle={() => {
+          setShowArchived((current) => !current);
+        }}
+        showLabel={SHOPPING_RU.showArchived}
+        hideLabel={SHOPPING_RU.hideArchived}
+        emptyHint={
+          !isPending && !isPlaceholderData && !isError && data.every((list) => !list.isArchived)
+            ? SHOPPING_RU.archiveEmpty
+            : undefined
+        }
+      />
+
       {isPending ? (
         <ul className="space-y-2" aria-busy>
           {[0, 1, 2].map((row) => (
@@ -116,34 +149,6 @@ function ShoppingListsOverview() {
           ))}
         </ul>
       )}
-
-      {/*
-        Band 4 (§C2/§D5): at the bottom of the list, not above the first row.
-        The rows it reveals are archived, so they sort to the end — press it up
-        by the title and, measured at 320px, the change happens ~700px below
-        your thumb. It is also the same component Копилки uses, which is the
-        only thing that keeps the two screens from drifting apart again.
-
-        Not behind `shopping:list:manage`: showing history is a read, and
-        `GET /shopping/lists?includeArchived=true` asks for `shopping:read`.
-        Gating it here hid the archive from everyone who cannot archive — the
-        children and teens who share these lists — while `/shopping/:id` still
-        opened an archived list for them by URL.
-      */}
-      <ArchiveToggle
-        className="mt-6"
-        expanded={showArchived}
-        onToggle={() => {
-          setShowArchived((current) => !current);
-        }}
-        showLabel={SHOPPING_RU.showArchived}
-        hideLabel={SHOPPING_RU.hideArchived}
-        emptyHint={
-          !isPending && !isPlaceholderData && !isError && data.every((list) => !list.isArchived)
-            ? SHOPPING_RU.archiveEmpty
-            : undefined
-        }
-      />
 
       <CreateListDialog
         open={creating}

@@ -21,7 +21,8 @@ import { TasksService } from './tasks.service.js';
  * | `scheduler.materialize-all` | `UNIQUE (series_id, occurrence_key)` + `DO NOTHING` |
  * | auto-cancel (same job) | `WHERE status = 'scheduled'` — a cancelled row is not re-cancelled |
  * | `scheduler.overdue-sweep` | `notification_intents.dedupe_key = task_overdue:<occurrenceId>` |
- * | `scheduler.reminders` | `dedupe_key = task_due_soon:<occurrenceId>:<lead>m` |
+ * | `scheduler.reminders` (ahead)    | `dedupe_key = task_due_soon:<occurrenceId>:<offset>m` |
+ * | `scheduler.reminders` (at start) | `dedupe_key = task_started:<occurrenceId>` |
  *
  * Note what the overdue sweep does **not** do: it never writes a status, a flag
  * or a column. Overdue is derived on read (§4); this job only decides whom to
@@ -30,13 +31,26 @@ import { TasksService } from './tasks.service.js';
  */
 
 /**
- * How far ahead "скоро срок" looks.
+ * How far back a reminder sweep will look for lead times it missed.
  *
- * `task_series` carries no per-series reminder offsets (unlike `event_series`,
- * which has `reminder_offsets`), so tasks get one family-wide lead time. The
- * window is the full lead rather than one sweep interval on purpose: after a
- * worker outage the next pass still catches everything it missed, and the
- * dedupe key stops the overlap from re-notifying.
+ * The sweep runs every five minutes and looks back thirty, so its window
+ * overlaps itself six times over. That is deliberate — a worker restart, a
+ * retry, or a few minutes of Redis being unreachable must not lose a reminder
+ * — and the dedupe key is the only thing that makes the overlap safe. Same
+ * number, same reasoning, as `events.jobs.REMINDER_LOOKBACK_MINUTES`.
+ *
+ * It is also the bound on lateness: a reminder whose moment passed more than
+ * half an hour ago is not sent at all. A push about a chore that started
+ * yesterday is noise, and D10's real failure mode is fatigue.
+ */
+export const REMINDER_LOOKBACK_MINUTES = 30;
+
+/**
+ * Retained so the shape of the key does not change for anything already
+ * notified. Before per-series offsets existed, every assigned task got exactly
+ * one reminder an hour before its `dueAt`, keyed
+ * `task_due_soon:<occurrenceId>:60m`. A series that now carries `{60}` produces
+ * the identical key, so nothing that has already been told is told twice.
  */
 export const TASK_REMINDER_LEAD_MINUTES = 60;
 
@@ -128,32 +142,106 @@ export async function runOverdueSweep(db: Db, now = new Date()): Promise<number>
   return emitted;
 }
 
-/** "Скоро срок" — one notification per occurrence per lead time. */
+/**
+ * Who a reminder about one occurrence is for.
+ *
+ * The assignee, and when there is none — «Любой», which is what a chore is
+ * created with by default — **whoever created the series**. That second clause
+ * is load-bearing: the create sheet defaults «Кто» to «Любой», so the ordinary
+ * «вынести мусор, сегодня в 21:00» has no assignee at all, and the rule this
+ * replaces (`if (assigneeId === null) continue`) would have made the
+ * notification the owner asked to be unremovable apply to almost nothing.
+ *
+ * Not `{ everyone: true }`, which is what the overdue sweep does. Overdue is a
+ * problem the household shares; a chore starting on time is one person's
+ * business, and telling five people about it every evening is the fatigue D10
+ * exists to prevent.
+ */
+function reminderAudience(reminder: repo.DueTaskReminder): NotificationAudience {
+  return { users: [reminder.assigneeId ?? reminder.seriesCreatedById] };
+}
+
+/**
+ * Both halves of "напоминания о деле", in one pass.
+ *
+ * 1. **Ahead of time**, once per `(occurrence, offset)` in the series'
+ *    `reminder_offsets` — «за час», «за день», whatever the family chose.
+ *    Optional, and empty by default.
+ * 2. **At the start**, once per occurrence, always. It is not an offset and it
+ *    is not in that array, so no edit can remove it; see the note on
+ *    `taskSeries.reminderOffsets` and on `task_started` in the shared contract.
+ *
+ * "Mandatory" stops there, and stops there deliberately. `task_started` is
+ * `normal` priority, so quiet hours still apply to it — and D10 says quiet
+ * hours **defer**, they do not drop, so the notification arrives when the
+ * window ends rather than at 03:00. The only priority that overrides a quiet
+ * window is `critical`, which would also skip the hourly push cap and open a
+ * ten-minute escalation chain to another adult. A family woken once by a chore
+ * turns notifications off wholesale, and «дать лекарство в 20:00» goes with it.
+ *
+ * Both halves dedupe on a key naming the occurrence and the lead, so the
+ * five-minute cron overlapping its own thirty-minute window six times over
+ * tells someone once.
+ */
 export async function runTaskReminders(db: Db, now = new Date()): Promise<number> {
-  const to = new Date(now.getTime() + TASK_REMINDER_LEAD_MINUTES * 60_000);
-  const due = await repo.findDueBetween(db, { from: now, to, limit: SWEEP_LIMIT });
+  const [ahead, starting] = await Promise.all([
+    repo.listDueReminders(db, {
+      now,
+      lookbackMinutes: REMINDER_LOOKBACK_MINUTES,
+      limit: SWEEP_LIMIT,
+    }),
+    repo.listStartedSince(db, {
+      now,
+      lookbackMinutes: REMINDER_LOOKBACK_MINUTES,
+      limit: SWEEP_LIMIT,
+    }),
+  ]);
 
   let emitted = 0;
-  for (const occurrence of due) {
-    // An unassigned task has nobody to remind — reminding the whole family
-    // about work nobody has taken is noise, and the overdue sweep will still
-    // surface it if it goes undone.
-    if (occurrence.assigneeId === null) continue;
 
+  for (const reminder of ahead) {
     const result = await emit(db, {
       type: 'task_due_soon',
-      audience: { users: [occurrence.assigneeId] },
+      audience: reminderAudience(reminder),
       actorId: null,
       entityType: 'task_occurrence',
-      entityId: occurrence.id,
-      dedupeKey: `task_due_soon:${occurrence.id}:${TASK_REMINDER_LEAD_MINUTES}m`,
+      entityId: reminder.occurrenceId,
+      // Per occurrence *and* per offset: a series with `{1440, 60}` owes two
+      // notifications, and a key without the offset would collapse them.
+      dedupeKey: `task_due_soon:${reminder.occurrenceId}:${String(reminder.offsetMinutes)}m`,
       payload: {
-        title: occurrence.title,
-        dueAt: occurrence.dueAt.toISOString(),
-        localDate: occurrence.localDate,
-        leadMinutes: TASK_REMINDER_LEAD_MINUTES,
-        seriesId: occurrence.seriesId,
-        occurrenceId: occurrence.id,
+        title: reminder.title,
+        startsAt: reminder.startsAt.toISOString(),
+        startsLocal: reminder.startsLocal,
+        localDate: reminder.localDate,
+        offsetMinutes: reminder.offsetMinutes,
+        // Kept alongside the newer name: an intent written by the previous
+        // build is still sitting in someone's inbox waiting to be rendered.
+        leadMinutes: reminder.offsetMinutes,
+        seriesId: reminder.seriesId,
+        occurrenceId: reminder.occurrenceId,
+      },
+    });
+    if (!result.deduped) emitted += 1;
+  }
+
+  for (const reminder of starting) {
+    const result = await emit(db, {
+      type: 'task_started',
+      audience: reminderAudience(reminder),
+      actorId: null,
+      entityType: 'task_occurrence',
+      entityId: reminder.occurrenceId,
+      // No offset in the key: there is exactly one of these per occurrence,
+      // ever.
+      dedupeKey: `task_started:${reminder.occurrenceId}`,
+      payload: {
+        title: reminder.title,
+        startsAt: reminder.startsAt.toISOString(),
+        startsLocal: reminder.startsLocal,
+        localDate: reminder.localDate,
+        seriesId: reminder.seriesId,
+        occurrenceId: reminder.occurrenceId,
       },
     });
     if (!result.deduped) emitted += 1;

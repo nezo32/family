@@ -234,6 +234,30 @@ export type CalendarRange = z.infer<typeof calendarRangeSchema>;
 /* Task series                                                                 */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Minutes **before the occurrence starts** at which to remind the assignee.
+ *
+ * Three properties, and each of them is load-bearing:
+ *
+ * - **Offsets, never timestamps.** D2's time model is a floating local
+ *   wall-clock string plus an IANA zone; the absolute instant is resolved
+ *   server-side, per occurrence, at materialization. A reminder time computed
+ *   on the client would be an instant chosen under today's UTC offset and would
+ *   drift by an hour the moment the series crosses a DST boundary — which for
+ *   «каждый понедельник в 08:00» happens twice a year, silently.
+ * - **Strictly positive.** Zero is not a lead time, it is the start itself, and
+ *   the start is not optional (see `task_started` in the notifications
+ *   contract). Allowing 0 in here would let an edit remove the one notification
+ *   the owner asked to be unremovable.
+ * - **Capped at five, like events.** The cap is not about storage; it is about
+ *   how many times one chore may interrupt one person.
+ */
+export const taskReminderOffsetSchema = z
+  .number()
+  .int()
+  .min(1)
+  .max(60 * 24 * 30);
+
 const taskSeriesFields = {
   title: nonEmptyString(200),
   notes: z.string().max(4000).nullish(),
@@ -256,6 +280,8 @@ const taskSeriesFields = {
   defaultAssigneeId: idSchema.nullish(),
   category: z.string().max(64).nullish(),
   autoCancelAfterDays: z.number().int().min(1).max(365).nullish(),
+  /** Lead times, in minutes before the start. Empty => only the at-start one. */
+  reminderOffsets: z.array(taskReminderOffsetSchema).max(5).default([]),
 };
 
 export const taskSeriesCreateSchema = z.object({
@@ -293,6 +319,7 @@ export const taskSeriesUpdateSchema = z
     defaultAssigneeId: idSchema.nullish(),
     category: z.string().max(64).nullish(),
     autoCancelAfterDays: z.number().int().min(1).max(365).nullish(),
+    reminderOffsets: z.array(taskReminderOffsetSchema).max(5).optional(),
     /** Omit to keep the schedule. Present => the schedule itself is changing. */
     recurrence: recurrenceSpecSchema.optional(),
   })
@@ -327,6 +354,8 @@ export const taskSeriesResponseSchema = z.object({
   defaultAssigneeId: idSchema.nullable(),
   category: z.string().nullable(),
   autoCancelAfterDays: z.number().int().nullable(),
+  /** Looser than the input schema on purpose: an imported series may carry anything. */
+  reminderOffsets: z.array(z.number().int()),
   supersedesSeriesId: idSchema.nullable(),
   archivedAt: isoDateTimeSchema.nullable(),
   createdAt: isoDateTimeSchema,
