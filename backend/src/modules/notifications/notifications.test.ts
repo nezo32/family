@@ -1156,6 +1156,9 @@ const LINK_IDS = {
   occurrenceId: '00000000-0000-4000-8000-000000000007',
   swapId: '00000000-0000-4000-8000-000000000008',
   entityId: '00000000-0000-4000-8000-000000000009',
+  // Distinct from `eventId` on purpose: the calendar's two spellings used to be
+  // treated as synonyms, and they are not -- see `ROUTE_ACCEPTS_IDS` below.
+  seriesId: '00000000-0000-4000-8000-00000000000a',
 } as const;
 
 type LinkIdKey = keyof typeof LINK_IDS;
@@ -1168,6 +1171,8 @@ const LINK_FIXTURE = {
   ...LINK_IDS,
   displayName: 'Тест',
   title: 'Тест',
+  /** The instance an `event_reminder` is about — floating local date (D2). */
+  localDate: '2026-08-21',
 };
 
 /**
@@ -1183,10 +1188,23 @@ const LINK_FIXTURE = {
  * than in the value, so this table cannot judge it. Every other key is judged.
  */
 const ROUTE_ACCEPTS_IDS: Record<string, readonly LinkIdKey[]> = {
-  // Both of these load an *occurrence*; `taskId`/`eventId` are the older
-  // payload spellings producers still emit for the same thing.
+  // `/tasks/:taskId` loads an *occurrence*; `taskId` is the older payload
+  // spelling producers still emit for the same thing.
   [APP_ROUTES.tasks]: ['occurrenceId', 'taskId'],
-  [APP_ROUTES.calendar]: ['occurrenceId', 'eventId'],
+  /*
+   * `/calendar/:eventId` loads a **series**, not an occurrence.
+   * `EventDetailPage` passes the segment to `GET /events/series/:id` and there
+   * is no single-item occurrence read to point it at.
+   *
+   * This line used to read `['occurrenceId', 'eventId']` under a comment
+   * claiming the calendar behaved like the tasks route above. It does not, and
+   * the untrue half of that comment is what made this guard *endorse* the very
+   * bug it was written to catch: `event_reminder` linked to
+   * `/calendar/<occurrenceId>`, no `event_series` row has ever shared an id
+   * with an `event_occurrences` row, and the check waved it through in CI for
+   * every release. A test that blesses a bug is worse than no test.
+   */
+  [APP_ROUTES.calendar]: ['seriesId', 'eventId'],
   [APP_ROUTES.goals]: ['goalId'],
   [APP_ROUTES.shopping]: ['listId'],
 };
@@ -1313,6 +1331,54 @@ describe('notification deep links', () => {
 
     expect(rendered.navigate).toBe(`${APP_ROUTES.tasks}/${LINK_IDS.occurrenceId}`);
     expect(rendered.navigate).not.toContain(LINK_IDS.swapId);
+  });
+
+  it('sends an event reminder to the series, focused on the date it is about', () => {
+    /*
+     * The bug this file's `wrongKindOfId` check was supposed to catch and
+     * instead blessed.
+     *
+     * `/calendar/:eventId` loads a series (`GET /events/series/:id`), and
+     * `events.jobs.ts` puts an `occurrenceId` in every reminder payload. The
+     * renderer preferred it, so every single event reminder linked to
+     * `/calendar/<event_occurrences.id>` -- a path that resolves, a page that
+     * mounts, and a lookup that can never match: the two tables share no ids.
+     *
+     * The series id is what the route can load. The date rides in the query
+     * string rather than in the path because occurrence ids are regenerated
+     * whenever a series is edited, and an inbox row is read long after it is
+     * written -- a local date stays true, an occurrence id does not.
+     */
+    const rendered = renderNotification('event_reminder', LINK_FIXTURE);
+
+    expect(rendered.navigate).toBe(
+      `${APP_ROUTES.calendar}/${LINK_IDS.seriesId}?date=${LINK_FIXTURE.localDate}`,
+    );
+    expect(rendered.navigate).not.toContain(LINK_IDS.occurrenceId);
+  });
+
+  it('falls back to the calendar itself when a reminder payload has no series id', () => {
+    // A producer that forgets `seriesId` must not compose `/calendar/undefined`
+    // and must not silently reach for `entityId`, which for this type is the
+    // occurrence (`entityType: 'event_occurrence'`) -- the wrong kind again.
+    const rendered = renderNotification('event_reminder', {
+      title: 'Ужин у бабушки',
+      occurrenceId: LINK_IDS.occurrenceId,
+      entityId: LINK_IDS.entityId,
+      localDate: '2026-08-21',
+    });
+
+    expect(rendered.navigate).toBe(APP_ROUTES.calendar);
+  });
+
+  it('the id guard rejects an occurrence id on the calendar route', () => {
+    // The guard itself, tested directly: `ROUTE_ACCEPTS_IDS` is a hand-written
+    // table, and the last time its calendar row was wrong nothing noticed for
+    // the life of the feature. This pins the row that matters.
+    expect(wrongKindOfId(`${APP_ROUTES.calendar}/${LINK_IDS.occurrenceId}`)).toContain(
+      'occurrenceId',
+    );
+    expect(wrongKindOfId(`${APP_ROUTES.calendar}/${LINK_IDS.seriesId}?date=2026-08-21`)).toBeNull();
   });
 
   it('sends the join request to the approval queue, not to a member page that does not exist', () => {

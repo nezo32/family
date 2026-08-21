@@ -103,7 +103,17 @@ export interface EventFormDialogProps {
   occurrence?: EventOccurrenceResponse | undefined;
   /** Pre-selected day when creating from the grid. */
   initialDateKey?: string | undefined;
-  onSaved?: () => void;
+  /**
+   * The series as the server returned it.
+   *
+   * It carries the **id**, and after a «это и последующие» edit that id is not
+   * the one the caller passed in: that scope *splits* the series, truncating
+   * this one and inserting a successor (`events.service.ts` §3.3). A caller
+   * whose URL names the old series — `/calendar/:eventId` — has no other way to
+   * learn where the edited dates went; `supersedesSeriesId` points backwards
+   * and no read endpoint follows it forwards.
+   */
+  onSaved?: (saved: EventSeriesResponse) => void;
 }
 
 type SheetKey =
@@ -229,7 +239,32 @@ export function EventFormDialog(props: EventFormDialogProps) {
   };
 
   const submit = (values: EventFormValues, effectiveScope: EditScope | null): void => {
-    const recurrence = buildRecurrenceSpec(recurrenceState, { dtstartLocal, timezone });
+    const applied: EditScope = effectiveScope ?? 'all';
+    /**
+     * The anchor of the rule we post — which is not always the date in the
+     * when-row.
+     *
+     * That row is seeded from the **instance** the edit was opened from, so an
+     * untouched form saved as «изменить все» would post 15 сентября as the
+     * series DTSTART merely because that is the occurrence the user tapped.
+     * The rule would be re-anchored on every rename, and the backend has no way
+     * to tell that apart from a deliberate move of the whole series.
+     *
+     * So an `all` edit keeps the rule's own anchor unless the date was actually
+     * changed. `this_and_future` deliberately does the opposite: its successor
+     * series *is* anchored at the instance (§3.3).
+     */
+    const anchorDtstart =
+      series && applied === 'all' && dateKey === anchorDateKey
+        ? toFloatingLocal(
+            dateKeyOfFloating(series.recurrence.dtstartLocal),
+            isAllDay ? '00:00' : time,
+          )
+        : dtstartLocal;
+    const recurrence = buildRecurrenceSpec(recurrenceState, {
+      dtstartLocal: anchorDtstart,
+      timezone,
+    });
     const cleaned = {
       ...values,
       description: emptyToNull(values.description),
@@ -241,15 +276,14 @@ export function EventFormDialog(props: EventFormDialogProps) {
     if (!series) {
       const body: EventSeriesCreate = { ...cleaned, recurrence };
       create.mutate(body, {
-        onSuccess: () => {
+        onSuccess: (saved) => {
           props.onOpenChange(false);
-          props.onSaved?.();
+          props.onSaved?.(saved);
         },
       });
       return;
     }
 
-    const applied: EditScope = effectiveScope ?? 'all';
     const body: EventSeriesUpdate = {
       scope: applied,
       ...(applied === 'all' ? {} : { occurrenceId: props.occurrence?.id }),
@@ -268,9 +302,9 @@ export function EventFormDialog(props: EventFormDialogProps) {
       ...(applied === 'this' || scheduleUnparsed ? {} : { recurrence }),
     };
     update.mutate(body, {
-      onSuccess: () => {
+      onSuccess: (saved) => {
         props.onOpenChange(false);
-        props.onSaved?.();
+        props.onSaved?.(saved);
       },
     });
   };

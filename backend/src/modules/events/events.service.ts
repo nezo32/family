@@ -18,8 +18,13 @@ import type {
 
 import type { AuthContext } from '../../core/auth/context.js';
 import type { Db, Executor } from '../../core/db.js';
-import { badRequest, conflict, forbidden, notFound } from '../../core/errors.js';
-import { recurrenceEngine, type SeriesRule } from '../../core/recurrence/engine.js';
+import { badRequest, conflict, forbidden, internal, notFound } from '../../core/errors.js';
+import {
+  DEFAULT_MAX_COUNT,
+  recurrenceEngine,
+  type SeriesRule,
+} from '../../core/recurrence/engine.js';
+import { HORIZON_DAYS } from '../../core/recurrence/materializer.js';
 import {
   dispatchAfterCommit,
   emitIntent,
@@ -78,6 +83,9 @@ function temporal(): TemporalApi {
 
 /** Minutes in one wall-clock day. All-day durations are multiples of this. */
 export const MINUTES_PER_DAY = 1440;
+
+/** Only ever used to walk a horizon forward — never for wall-clock arithmetic. */
+const MS_PER_DAY = 86_400_000;
 
 /* -------------------------------------------------------------------------- */
 /* Pure helpers — the interesting rules, testable without Postgres             */
@@ -611,13 +619,68 @@ async function applyThisOnly(
   }
 }
 
-/** True when the edit changes *when* the event happens, not just what it says. */
-function touchesSchedule(input: EventSeriesUpdate): boolean {
-  return (
-    input.recurrence !== undefined ||
-    input.durationMinutes !== undefined ||
-    input.isAllDay !== undefined
-  );
+/**
+ * What an `all` edit actually asks of the schedule.
+ *
+ * The predecessor of this function asked «is `recurrence`, `durationMinutes` or
+ * `isAllDay` *present* in the body?» — and the form posts all three on every
+ * save, renames included. Presence is not change: a corrected typo arrived
+ * looking exactly like a reschedule, took the reschedule path, and deleted the
+ * whole future of the series. So the request is compiled first and **compared**
+ * with what is stored.
+ *
+ * The two answers are deliberately separate, because they are different
+ * questions:
+ *
+ * - `keysChanged` — the rule moved, so *which local dates exist* may differ;
+ * - `spanChanged` — only how long each occurrence lasts moved. Every date
+ *   survives; turning a one-hour dinner into a two-hour one un-invites nobody.
+ */
+interface ScheduleIntent {
+  readonly schedule: CompiledSchedule;
+  readonly durationMinutes: number;
+  readonly isAllDay: boolean;
+  readonly keysChanged: boolean;
+  readonly spanChanged: boolean;
+}
+
+/** RDATE/EXDATE lists are sets — a reordering is not a change. */
+function sameLocalDates(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  const left = [...a].sort();
+  const right = [...b].sort();
+  return left.every((value, index) => value === right[index]);
+}
+
+function resolveScheduleIntent(series: EventSeriesRow, input: EventSeriesUpdate): ScheduleIntent {
+  const isAllDay = input.isAllDay ?? series.isAllDay;
+  const spec = input.recurrence;
+  const schedule: CompiledSchedule =
+    spec === undefined
+      ? {
+          rrule: series.rrule,
+          dtstartLocal: isAllDay ? toMidnight(series.dtstartLocal) : series.dtstartLocal,
+          timezone: series.timezone,
+          rdatesLocal: series.rdatesLocal,
+          exdatesLocal: series.exdatesLocal,
+        }
+      : compileSchedule(spec, isAllDay);
+
+  const requested = input.durationMinutes ?? series.durationMinutes;
+  const durationMinutes = isAllDay ? allDayDurationMinutes(requested) : requested;
+
+  return {
+    schedule,
+    durationMinutes,
+    isAllDay,
+    keysChanged:
+      schedule.rrule !== series.rrule ||
+      schedule.dtstartLocal !== series.dtstartLocal ||
+      schedule.timezone !== series.timezone ||
+      !sameLocalDates(schedule.rdatesLocal, series.rdatesLocal) ||
+      !sameLocalDates(schedule.exdatesLocal, series.exdatesLocal),
+    spanChanged: durationMinutes !== series.durationMinutes || isAllDay !== series.isAllDay,
+  };
 }
 
 function metadataPatch(input: EventSeriesUpdate): repo.SeriesPatch {
@@ -636,9 +699,13 @@ function metadataPatch(input: EventSeriesUpdate): repo.SeriesPatch {
  * §3.4 — edit the series in place.
  *
  * Metadata-only edits delete nothing: `COALESCE(override, series_value)` means
- * every non-overridden occurrence picks the new title up for free. A *schedule*
- * change drops the future `scheduled`, non-exception rows and re-materializes;
- * past occurrences are never touched by any scope.
+ * every non-overridden occurrence picks the new title up for free — and, since
+ * {@link resolveScheduleIntent} compares rather than sniffs, a rename really is
+ * a metadata-only edit even though the form posts the schedule alongside it.
+ *
+ * A genuine schedule change **re-times** the future occurrences instead of
+ * deleting them (see {@link reconcileFutureOccurrences}); past occurrences are
+ * never touched by any scope.
  */
 async function applyToAll(
   x: Executor,
@@ -646,42 +713,31 @@ async function applyToAll(
   input: EventSeriesUpdate,
 ): Promise<void> {
   const patch = metadataPatch(input);
-  const isAllDay = input.isAllDay ?? series.isAllDay;
+  const intent = resolveScheduleIntent(series, input);
+  const rescheduled = intent.keysChanged || intent.spanChanged;
 
-  if (touchesSchedule(input)) {
-    const spec = input.recurrence;
-    const schedule =
-      spec === undefined
-        ? {
-            rrule: series.rrule,
-            dtstartLocal: isAllDay ? toMidnight(series.dtstartLocal) : series.dtstartLocal,
-            timezone: series.timezone,
-            rdatesLocal: series.rdatesLocal,
-            exdatesLocal: series.exdatesLocal,
-          }
-        : compileSchedule(spec, isAllDay);
-
-    const requested = input.durationMinutes ?? series.durationMinutes;
-    patch.rrule = schedule.rrule;
-    patch.dtstartLocal = schedule.dtstartLocal;
-    patch.timezone = schedule.timezone;
-    patch.rdatesLocal = schedule.rdatesLocal;
-    patch.exdatesLocal = schedule.exdatesLocal;
-    patch.seriesEndsAt = recomputeSeriesEnd(schedule);
-    patch.isAllDay = isAllDay;
-    patch.durationMinutes = isAllDay ? allDayDurationMinutes(requested) : requested;
-    // Re-materialize from scratch: the watermark has to go back or the
-    // materializer will consider the window already done.
-    patch.materializedThrough = null;
-  } else if (input.durationMinutes !== undefined) {
-    patch.durationMinutes = input.durationMinutes;
+  if (rescheduled) {
+    patch.rrule = intent.schedule.rrule;
+    patch.dtstartLocal = intent.schedule.dtstartLocal;
+    patch.timezone = intent.schedule.timezone;
+    patch.rdatesLocal = intent.schedule.rdatesLocal;
+    patch.exdatesLocal = intent.schedule.exdatesLocal;
+    patch.seriesEndsAt = recomputeSeriesEnd(intent.schedule);
+    patch.isAllDay = intent.isAllDay;
+    patch.durationMinutes = intent.durationMinutes;
+    if (intent.keysChanged) {
+      // The rule can now produce dates inside a window the watermark calls
+      // done, so the watermark has to go back or they are never materialized.
+      // A pure span change adds no dates, so it leaves the watermark alone.
+      patch.materializedThrough = null;
+    }
   }
 
   await repo.updateSeriesRow(x, series.id, patch);
 
-  if (touchesSchedule(input)) {
-    const cutoff = localDateTimeIn(new Date(), series.timezone);
-    await repo.deleteFutureScheduledOccurrences(x, series.id, cutoff);
+  if (rescheduled) {
+    const cutoff = localDateTimeIn(new Date(), intent.schedule.timezone);
+    await reconcileFutureOccurrences(x, series.id, intent.schedule, intent.durationMinutes, cutoff);
   }
 
   await materializeAndInvite(x, series.id, input.attendeeIds ?? []);
@@ -689,6 +745,160 @@ async function applyToAll(
   if (input.attendeeIds !== undefined) {
     const occurrenceIds = await repo.listOccurrenceIdsOfSeries(x, series.id);
     await repo.removeAttendeesExcept(x, occurrenceIds, input.attendeeIds);
+  }
+}
+
+/** One occurrence row and the slot the edited rule now wants it on. */
+interface OccurrenceMove {
+  readonly id: string;
+  readonly from: string;
+  readonly to: string;
+}
+
+/**
+ * Bring the future occurrences of a series in line with an edited schedule
+ * **without throwing away the answers on the dates that survive it**.
+ *
+ * This used to be one `DELETE ... WHERE occurrence_key >= now` followed by a
+ * re-materialization. `event_attendees.occurrence_id` is `ON DELETE CASCADE`,
+ * so every «приду» and every «не приду» on every future date went with the
+ * rows, and the re-invite that followed brought the guest list back at the
+ * column default, `pending`. Moving a weekly dinner from 18:00 to 19:00 is not
+ * a reason to ask the family again — it is the same dinner, and the same
+ * people are coming to it.
+ *
+ * ## Telling a surviving date from a vanished one
+ *
+ * The identity of an occurrence is `occurrence_key`, the floating local slot
+ * the rule produced. It is *not* usable as the match here, because the key
+ * carries the time of day: 18:00 → 19:00 rewrites every key in the series even
+ * though not one date moved, and matching on the key would call all of them
+ * vanished — which is the very data loss this function exists to stop.
+ *
+ * What survives a re-timing is the **local date**. So the old slots of a date
+ * are paired with the new slots of that same date, in clock order:
+ *
+ * - paired → the row is re-timed in place, keeping its id and with it its
+ *   `event_attendees` rows and their answers;
+ * - an old slot with no new partner → the rule genuinely stopped producing it,
+ *   so the row goes and its answers cascade away with it. That is right: there
+ *   is nothing left to come to;
+ * - a new slot with no old partner → left to the materializer on the next line.
+ *
+ * `done`, `cancelled` and hand-edited (`is_exception`) rows are outside all of
+ * this, exactly as before — history is not rewritten.
+ */
+export async function reconcileFutureOccurrences(
+  x: Executor,
+  seriesId: string,
+  schedule: CompiledSchedule,
+  durationMinutes: number,
+  cutoffKey: string,
+): Promise<void> {
+  const timezone = schedule.timezone;
+  const existing = await repo.listFutureScheduledOccurrences(x, seriesId, cutoffKey);
+
+  /**
+   * The expansion window has to reach every row we are about to judge. A row
+   * beyond the horizon that the new rule *does* still produce would otherwise
+   * look like one it dropped, and be deleted with its answers.
+   */
+  const from = recurrenceEngine.toInstant(cutoffKey, timezone);
+  const horizon = new Date(Date.now() + HORIZON_DAYS * MS_PER_DAY);
+  const last = existing[existing.length - 1];
+  const to =
+    last === undefined
+      ? horizon
+      : new Date(
+          Math.max(
+            horizon.getTime(),
+            recurrenceEngine.toInstant(last.occurrenceKey, timezone).getTime(),
+          ),
+        );
+
+  const planned = recurrenceEngine
+    .expand(
+      {
+        rrule: schedule.rrule,
+        dtstartLocal: schedule.dtstartLocal,
+        timezone,
+        rdatesLocal: schedule.rdatesLocal,
+        exdatesLocal: schedule.exdatesLocal,
+      },
+      {
+        from,
+        to,
+        // The cap must clear the rows being judged. Truncating the expansion at
+        // the 1000th slot of a `FREQ=HOURLY` import would make slot 1001
+        // indistinguishable from one the rule dropped, and delete it.
+        maxCount: Math.max(DEFAULT_MAX_COUNT, existing.length + 1),
+      },
+    )
+    .filter((key) => key >= cutoffKey);
+
+  interface DateBucket {
+    readonly rows: EventOccurrenceRow[];
+    readonly slots: string[];
+  }
+  const byDate = new Map<string, DateBucket>();
+  const bucketOf = (key: string): DateBucket => {
+    const date = recurrenceEngine.localDateOf(key);
+    let bucket = byDate.get(date);
+    if (!bucket) {
+      bucket = { rows: [], slots: [] };
+      byDate.set(date, bucket);
+    }
+    return bucket;
+  };
+  // Both lists arrive sorted — the rows by `ORDER BY occurrence_key`, the slots
+  // from the expander — so pairing by position is pairing in clock order.
+  for (const row of existing) bucketOf(row.occurrenceKey).rows.push(row);
+  for (const key of planned) bucketOf(key).slots.push(key);
+
+  const doomed: string[] = [];
+  const moves: OccurrenceMove[] = [];
+  for (const { rows, slots } of byDate.values()) {
+    for (const [index, row] of rows.entries()) {
+      const slot = slots[index];
+      if (slot === undefined) doomed.push(row.id);
+      else moves.push({ id: row.id, from: row.occurrenceKey, to: slot });
+    }
+  }
+
+  // Deletes first: they free slots a survivor may be moving onto.
+  await repo.deleteOccurrencesByIds(x, doomed);
+
+  const retime = async (move: OccurrenceMove): Promise<void> => {
+    const times = resolveOccurrenceTimes(move.to, durationMinutes, timezone);
+    await repo.retimeOccurrence(x, move.id, { occurrenceKey: move.to, ...times });
+  };
+
+  // A slot that did not move still needs its span recomputed — that is the
+  // whole of a duration-only edit.
+  for (const move of moves) {
+    if (move.from === move.to) await retime(move);
+  }
+
+  /**
+   * A slot that *did* move has to wait for the slot it is moving onto to be
+   * vacated: `event_occurrences_series_key_uq` is not deferrable, so a row
+   * cannot take 19:00 while another row of the same day still holds it.
+   * Applying the unblocked moves first always makes progress — were every
+   * remaining move blocked, that day's old and new key sets would be equal, and
+   * pairing two equal sorted sets by position yields only no-ops, which the
+   * loop above has already dealt with.
+   */
+  let pending = moves.filter((move) => move.from !== move.to);
+  const held = new Set(pending.map((move) => move.from));
+  while (pending.length > 0) {
+    const free = pending.filter((move) => !held.has(move.to));
+    if (free.length === 0) throw internal('Reschedule could not order the occurrence moves');
+    for (const move of free) {
+      held.delete(move.from);
+      await retime(move);
+    }
+    const done = new Set(free.map((move) => move.id));
+    pending = pending.filter((move) => !done.has(move.id));
   }
 }
 

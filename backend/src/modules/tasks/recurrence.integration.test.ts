@@ -278,7 +278,259 @@ describe.skipIf(!hasTestDb)('recurrence & rotation (integration)', () => {
   });
 
   /* ====================================================================== */
-  /* 4. chore rotation fairness — deterministic and frozen                  */
+  /* 4. an edit keeps the occurrences it did not change                     */
+  /* ====================================================================== */
+
+  /**
+   * The occurrence id is a URL (`/tasks/:occurrenceId`), a comment thread, a
+   * pending swap and a notification dedupe key. Regenerating a row that the
+   * edit did not actually move throws all four away — the visible symptom was
+   * «Дело сохранено» followed immediately by «Задача не найдена», because the
+   * detail page refetched the id it was standing on.
+   */
+  describe('edit-all identity', () => {
+    it('keeps every occurrence id when the form resends an unchanged deadline', async () => {
+      const seriesId = await createSeries(adult, { defaultAssigneeId: teen.id });
+      const before = await occurrencesOf(seriesId);
+      expect(before).toHaveLength(5);
+
+      // What the edit sheet actually sends: the whole field set, changed or
+      // not. Only `title` differs from what was loaded.
+      const response = await request(h.app, {
+        method: 'PATCH',
+        url: `/api/tasks/series/${seriesId}`,
+        token: adult.accessToken,
+        payload: {
+          scope: 'all',
+          title: 'Мыть посуду и вытирать',
+          notes: null,
+          visibility: 'household',
+          dueOffsetMinutes: 60,
+          graceMinutes: 30,
+          rotationId: null,
+          defaultAssigneeId: teen.id,
+          category: null,
+          autoCancelAfterDays: null,
+          reminderOffsets: [],
+        },
+      });
+      expectStatus(response, 200);
+
+      const after = await occurrencesOf(seriesId);
+      expect(after.map((r) => r.id)).toEqual(before.map((r) => r.id));
+      expect(after.map((r) => r.assigneeId)).toEqual(before.map((r) => r.assigneeId));
+    });
+
+    it('still serves the occurrence the user was looking at after the save', async () => {
+      const seriesId = await createSeries(adult);
+      const [first] = await occurrencesOf(seriesId);
+      if (!first) throw new Error('nothing materialized');
+
+      const save = await request(h.app, {
+        method: 'PATCH',
+        url: `/api/tasks/series/${seriesId}`,
+        token: adult.accessToken,
+        payload: { scope: 'all', title: 'Мыть посуду быстро', dueOffsetMinutes: 60 },
+      });
+      expectStatus(save, 200);
+
+      // The refetch the detail page fires on invalidation.
+      const refetch = await request(h.app, {
+        method: 'GET',
+        url: `/api/tasks/occurrences/${first.id}`,
+        token: adult.accessToken,
+      });
+      expectStatus(refetch, 200);
+      expect(refetch.json<{ title: string }>().title).toBe('Мыть посуду быстро');
+    });
+
+    it('moves the deadline in place rather than regenerating the rows', async () => {
+      const seriesId = await createSeries(adult);
+      const before = await occurrencesOf(seriesId);
+
+      const response = await request(h.app, {
+        method: 'PATCH',
+        url: `/api/tasks/series/${seriesId}`,
+        token: adult.accessToken,
+        // 09:00 + 60min was the deadline; make it 09:00 + 180min.
+        payload: { scope: 'all', dueOffsetMinutes: 180 },
+      });
+      expectStatus(response, 200);
+
+      const after = await occurrencesOf(seriesId);
+      expect(after.map((r) => r.id)).toEqual(before.map((r) => r.id));
+      // Wall-clock arithmetic on the local start, as at materialization (D2).
+      for (const row of after) {
+        expect(row.dueAt.getTime() - row.startsAt.getTime()).toBe(180 * 60_000);
+      }
+    });
+
+    it('does not cancel a pending swap when the chore is merely renamed', async () => {
+      const seriesId = await createSeries(adult, { defaultAssigneeId: teen.id });
+      const [first] = await occurrencesOf(seriesId);
+      if (!first) throw new Error('nothing materialized');
+
+      // «Подмени меня» — an offer the other person has already been told about.
+      const offer = await request(h.app, {
+        method: 'POST',
+        url: '/api/chores/swaps',
+        token: teen.accessToken,
+        payload: { occurrenceId: first.id, toUserId: adult.id },
+      });
+      expect([200, 201]).toContain(offer.statusCode);
+
+      await request(h.app, {
+        method: 'PATCH',
+        url: `/api/tasks/series/${seriesId}`,
+        token: adult.accessToken,
+        payload: { scope: 'all', title: 'Мыть посуду до блеска', dueOffsetMinutes: 60 },
+      });
+
+      // `chore_swaps.occurrence_id` is ON DELETE CASCADE, so regenerating the
+      // occurrence deletes the offer outright — silently, and after the person
+      // it was addressed to has already been notified.
+      const inbox = await request(h.app, {
+        method: 'GET',
+        url: '/api/chores/swaps?direction=incoming',
+        token: adult.accessToken,
+      });
+      expectStatus(inbox, 200);
+      const pending = inbox
+        .json<{ items: Array<{ occurrenceId: string; status: string }> }>()
+        .items.filter((item) => item.status === 'pending');
+      expect(pending.map((item) => item.occurrenceId)).toEqual([first.id]);
+    });
+
+    it('reassigns the occurrences already on the board when «кто» changes', async () => {
+      const seriesId = await createSeries(adult, { defaultAssigneeId: teen.id });
+      const before = await occurrencesOf(seriesId);
+      expect(before.every((r) => r.assigneeId === teen.id)).toBe(true);
+
+      const response = await request(h.app, {
+        method: 'PATCH',
+        url: `/api/tasks/series/${seriesId}`,
+        token: adult.accessToken,
+        payload: { scope: 'all', defaultAssigneeId: adult.id },
+      });
+      expectStatus(response, 200);
+
+      // Frozen means "never recomputed on read" (D5), not "unreachable by an
+      // edit": a change of who does it that only takes effect in ninety days
+      // has not taken effect.
+      const after = await occurrencesOf(seriesId);
+      expect(after.map((r) => r.id)).toEqual(before.map((r) => r.id));
+      expect(after.every((r) => r.assigneeId === adult.id)).toBe(true);
+    });
+
+    it('keeps the hand-picked assignee of an exception when «кто» changes', async () => {
+      const seriesId = await createSeries(adult, { defaultAssigneeId: teen.id });
+      const [first] = await occurrencesOf(seriesId);
+      if (!first) throw new Error('nothing materialized');
+
+      // A hand-made decision: «сегодня сделаю я».
+      const byHand = await request(h.app, {
+        method: 'POST',
+        url: `/api/tasks/occurrences/${first.id}/assign`,
+        token: owner.accessToken,
+        payload: { assigneeId: owner.id },
+      });
+      expectStatus(byHand, 200);
+
+      await request(h.app, {
+        method: 'PATCH',
+        url: `/api/tasks/series/${seriesId}`,
+        token: adult.accessToken,
+        payload: { scope: 'all', defaultAssigneeId: adult.id },
+      });
+
+      const after = await occurrencesOf(seriesId);
+      // The rule reassigns the rows the rule owns. It does not take a chore
+      // back off somebody who volunteered for it.
+      expect(after.find((r) => r.id === first.id)?.assigneeId).toBe(owner.id);
+      expect(after.filter((r) => r.id !== first.id).every((r) => r.assigneeId === adult.id)).toBe(
+        true,
+      );
+    });
+
+    it('keeps the dates a new rule still produces and drops only the rest', async () => {
+      const seriesId = await createSeries(adult);
+      const before = await occurrencesOf(seriesId);
+      const keptKey = '2026-09-03T09:00:00';
+      const kept = before.find((r) => r.occurrenceKey === keptKey);
+      if (!kept) throw new Error('expected 2026-09-03 in the daily series');
+
+      // Daily → every other day from the same anchor: the 1st, 3rd and 5th
+      // survive as dates, the 2nd and 4th genuinely stop existing.
+      const response = await request(h.app, {
+        method: 'PATCH',
+        url: `/api/tasks/series/${seriesId}`,
+        token: adult.accessToken,
+        payload: {
+          scope: 'all',
+          recurrence: {
+            mode: 'preset',
+            preset: { kind: 'daily', interval: 2 },
+            ends: { type: 'after', count: 3 },
+            dtstartLocal: '2026-09-01T09:00:00',
+            timezone: 'Europe/Moscow',
+            rdatesLocal: [],
+            exdatesLocal: [],
+          },
+        },
+      });
+      expectStatus(response, 200);
+
+      const after = await occurrencesOf(seriesId);
+      expect(after.map((r) => r.occurrenceKey)).toEqual([
+        '2026-09-01T09:00:00',
+        '2026-09-03T09:00:00',
+        '2026-09-05T09:00:00',
+      ]);
+      // The surviving date is the *same row*, not a new one wearing its date.
+      expect(after.find((r) => r.occurrenceKey === keptKey)?.id).toBe(kept.id);
+    });
+  });
+
+  /**
+   * The split is the one edit that legitimately retires the row the user is
+   * standing on: `this_and_future` closes the old series and opens a successor,
+   * so the anchor's id *is* gone by design. What must not be gone is the
+   * anchor's **date** — the successor owns it now, and the response names the
+   * successor, which is what lets the detail page follow instead of 404.
+   */
+  it('hands the anchor date to the successor the split response names', async () => {
+    const seriesId = await createSeries(adult);
+    const rows = await occurrencesOf(seriesId);
+    const anchor = rows[2];
+    if (!anchor) throw new Error('expected five occurrences');
+
+    const split = await request(h.app, {
+      method: 'PATCH',
+      url: `/api/tasks/series/${seriesId}`,
+      token: adult.accessToken,
+      payload: {
+        scope: 'this_and_future',
+        occurrenceId: anchor.id,
+        title: 'Мыть посуду и убрать со стола',
+      },
+    });
+    expectStatus(split, 200);
+    const successorId = split.json<{ id: string }>().id;
+
+    const sameDate = await request(h.app, {
+      method: 'GET',
+      url: `/api/tasks/occurrences?seriesId=${successorId}&from=${anchor.localDate}&to=${anchor.localDate}`,
+      token: adult.accessToken,
+    });
+    expectStatus(sameDate, 200);
+    const items = sameDate.json<{ items: Array<{ id: string; title: string }> }>().items;
+    expect(items).toHaveLength(1);
+    expect(items[0]?.id).not.toBe(anchor.id);
+    expect(items[0]?.title).toBe('Мыть посуду и убрать со стола');
+  });
+
+  /* ====================================================================== */
+  /* 5. chore rotation fairness — deterministic and frozen                  */
   /* ====================================================================== */
 
   describe('chore rotation', () => {

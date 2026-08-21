@@ -9,7 +9,7 @@ import {
   SkipForward,
   Trash2,
 } from 'lucide-react';
-import type { EditScope } from '@family/shared';
+import type { EditScope, TaskSeriesResponse } from '@family/shared';
 import { Can } from '@/shared/auth/Can';
 import { SideColumn } from '@/app/layout/SideColumn';
 import { useCan } from '@/shared/auth/use-can';
@@ -19,7 +19,7 @@ import { ConfirmDialog } from '@/shared/components/ConfirmDialog';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Separator } from '@/shared/ui/separator';
-import { ROUTES } from '@/shared/lib/routes';
+import { ROUTES, taskDetail } from '@/shared/lib/routes';
 import { formatDateTime } from '@/shared/lib/format';
 import { COMMON } from '@/shared/lib/i18n';
 import { TASKS_RU } from '../locale';
@@ -34,6 +34,7 @@ import {
   useSwaps,
   useUncompleteOccurrence,
 } from '../hooks';
+import { fetchOccurrences } from '../api';
 import { AssigneeControl } from '../components/AssigneeControl';
 import { EditScopeDialog } from '@/shared/components';
 import { TaskEditor } from '../components/TaskEditor';
@@ -66,8 +67,52 @@ export default function TaskDetailPage() {
 
   const [editing, setEditing] = useState(false);
   const [skipping, setSkipping] = useState(false);
+  /** `'following'` while we work out where this date went; see {@link followSaved}. */
+  const [afterSave, setAfterSave] = useState<'idle' | 'following' | 'rescheduled'>('idle');
   const [deleteScopeOpen, setDeleteScopeOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  /**
+   * Where this date went, after a save that may have moved it.
+   *
+   * An edit keeps the occurrences it did not change, so the usual save leaves
+   * this page exactly where it was. Two edits legitimately retire the row we
+   * are standing on, though, and neither may end at «Задача не найдена»:
+   *
+   * - `this_and_future` splits the series, so the same date belongs to the
+   *   **successor** now — and `saved` *is* the successor, so one lookup by date
+   *   finds the row that replaced ours;
+   * - a schedule change can drop this day altogether, and then there is nothing
+   *   to navigate to and nothing to invent. That is not an error, so it does
+   *   not get an error's wording.
+   */
+  const followSaved = (saved: TaskSeriesResponse): void => {
+    if (!occurrence) return;
+    const { id: previousId, localDate } = occurrence;
+    setAfterSave('following');
+
+    void fetchOccurrences({ seriesId: saved.id, from: localDate, to: localDate, limit: 5 })
+      .then((page) => {
+        const replacement = page.items.find((item) => item.id !== previousId);
+        if (page.items.some((item) => item.id === previousId)) {
+          setAfterSave('idle');
+          return;
+        }
+        if (!replacement) {
+          setAfterSave('rescheduled');
+          return;
+        }
+        // `replace`, not `push`: the id we came in on no longer resolves, so
+        // leaving it in the history stack only arms the back button with a 404.
+        setAfterSave('idle');
+        void navigate(taskDetail(replacement.id), { replace: true });
+      })
+      .catch(() => {
+        // The lookup is a courtesy. If it fails, fall back to whatever the
+        // occurrence query itself has to say.
+        setAfterSave('idle');
+      });
+  };
 
   const back = (
     <Link
@@ -79,11 +124,27 @@ export default function TaskDetailPage() {
     </Link>
   );
 
-  if (occurrenceQuery.isPending) {
+  if (occurrenceQuery.isPending || afterSave === 'following') {
     return (
       <>
         <PageHeader title={TASKS_RU.title} eyebrow={back} />
         <TaskDetailSkeleton />
+      </>
+    );
+  }
+
+  if (afterSave === 'rescheduled') {
+    return (
+      <>
+        <PageHeader title={TASKS_RU.rescheduledTitle} eyebrow={back} />
+        <ErrorState
+          title={TASKS_RU.rescheduledTitle}
+          description={TASKS_RU.rescheduledDescription}
+          onRetry={() => {
+            void navigate(ROUTES.tasks);
+          }}
+          retryLabel={TASKS_RU.backToList}
+        />
       </>
     );
   }
@@ -294,6 +355,7 @@ export default function TaskDetailPage() {
           series={series}
           occurrence={occurrence}
           members={roster}
+          onSaved={followSaved}
         />
       ) : null}
 

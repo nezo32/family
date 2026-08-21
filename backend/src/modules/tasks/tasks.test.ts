@@ -306,6 +306,7 @@ vi.mock('./tasks.repository.js', () => {
       return row;
     },
     async deleteFutureScheduled(_ex: unknown, params: Row) {
+      const keepKeys = (params.keepKeys ?? undefined) as readonly string[] | undefined;
       const removed: string[] = [];
       for (const [key, row] of store.occurrences) {
         if (row.seriesId !== params.seriesId) continue;
@@ -322,10 +323,60 @@ vi.mock('./tasks.repository.js', () => {
         ) {
           continue;
         }
+        // A date the new rule still produces keeps its row, and with it its id.
+        if (keepKeys !== undefined && keepKeys.includes(row.occurrenceKey as string)) continue;
         store.occurrences.delete(key);
         removed.push(row.id as string);
       }
       return removed;
+    },
+    async refreshScheduledInstants(
+      _ex: unknown,
+      seriesId: string,
+      planned: ReadonlyArray<{
+        occurrenceKey: string;
+        startsAt: Date;
+        derivedAt: Date;
+        localDate: string;
+      }>,
+    ) {
+      let touched = 0;
+      for (const row of store.occurrences.values()) {
+        if (row.seriesId !== seriesId) continue;
+        if (row.status !== 'scheduled' || row.isException === true) continue;
+        const next = planned.find((o) => o.occurrenceKey === row.occurrenceKey);
+        if (!next) continue;
+        Object.assign(row, {
+          startsAt: next.startsAt,
+          dueAt: next.derivedAt,
+          localDate: next.localDate,
+          startsLocal: next.occurrenceKey,
+        });
+        touched += 1;
+      }
+      return touched;
+    },
+    async listFutureRuleAssigned(_ex: unknown, seriesId: string, from: Date) {
+      return [...store.occurrences.values()]
+        .filter(
+          (row) =>
+            row.seriesId === seriesId &&
+            row.status === 'scheduled' &&
+            row.isException !== true &&
+            (row.startsAt as Date) >= from,
+        )
+        .sort((a, b) => (a.occurrenceKey as string).localeCompare(b.occurrenceKey as string))
+        .map((row) => ({ id: row.id as string, startsAt: row.startsAt as Date }));
+    },
+    async setRuleAssignment(
+      _ex: unknown,
+      id: string,
+      assignment: { assigneeId: string | null; assignedVia: string | null },
+    ) {
+      const row = store.occurrences.get(id);
+      if (!row || row.isException === true) return;
+      row.assigneeId = assignment.assigneeId;
+      row.assignedVia = assignment.assignedVia;
     },
     async autoCancelStale() {
       return [];

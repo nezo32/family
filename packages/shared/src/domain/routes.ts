@@ -43,6 +43,24 @@ export type AppRoute = (typeof APP_ROUTES)[keyof typeof APP_ROUTES];
 export const APP_ROUTE_PATHS: readonly string[] = Object.values(APP_ROUTES);
 
 /**
+ * Which instance of a repeating thing a detail link is about, as a floating
+ * local date (D2) — `/calendar/<seriesId>?date=2026-08-21`.
+ *
+ * `/calendar/:eventId` is keyed by a **series**, so the path alone cannot say
+ * "the ужин on Wednesday" — and it must stay that way. Occurrence rows are
+ * regenerated whenever a series is edited, so a link keyed by one goes stale
+ * the first time somebody changes the time, and a notification link is read
+ * long after it is written. A date is data rather than a pointer: it survives
+ * regeneration, and when it matches nothing the page simply stops highlighting
+ * a row instead of failing to load.
+ *
+ * It lives here because both sides compose it — the backend renderer builds the
+ * query string (`modules/notifications/render.ts`) and the PWA reads it
+ * (`EventDetailPage`) — and that is the same drift this file exists to stop.
+ */
+export const EVENT_DATE_PARAM = 'date';
+
+/**
  * The routes that serve a **detail page** under a single child segment.
  *
  * This list is the difference between `/tasks/<id>` and `/admin/members/<id>`,

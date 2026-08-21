@@ -1,3 +1,5 @@
+import { EVENT_DATE_PARAM } from '@family/shared';
+
 /**
  * The single source of truth for URL paths.
  *
@@ -49,6 +51,17 @@ export function loginUrl(next?: string): string {
 /* -------------------------------------------------------------------------- */
 
 export const taskDetail = (taskId: string): string => `${ROUTES.tasks}/${taskId}`;
-export const eventDetail = (eventId: string): string => `${ROUTES.calendar}/${eventId}`;
+
+/**
+ * Which instance of a series a calendar link is about — see the note on the
+ * constant in `@family/shared`. Re-exported so routing vocabulary has one
+ * import site on this side.
+ */
+export { EVENT_DATE_PARAM };
+
+export const eventDetail = (seriesId: string, dateKey?: string): string =>
+  dateKey
+    ? `${ROUTES.calendar}/${seriesId}?${EVENT_DATE_PARAM}=${dateKey}`
+    : `${ROUTES.calendar}/${seriesId}`;
 export const goalDetail = (goalId: string): string => `${ROUTES.goals}/${goalId}`;
 export const shoppingList = (listId: string): string => `${ROUTES.shopping}/${listId}`;

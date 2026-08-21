@@ -607,6 +607,67 @@ export async function deleteFutureScheduledOccurrences(
   return rows.length;
 }
 
+/**
+ * The future rows a reschedule is allowed to touch, oldest slot first.
+ *
+ * Deliberately the same predicate {@link deleteFutureScheduledOccurrences}
+ * selects on, because it is the same set: history (`done`, `cancelled`) and
+ * hand-edited exceptions are nobody's to rewrite. The difference is what the
+ * caller then does with them — see `reconcileFutureOccurrences`.
+ */
+export async function listFutureScheduledOccurrences(
+  x: Executor,
+  seriesId: string,
+  fromKey: string,
+): Promise<EventOccurrenceRow[]> {
+  return x
+    .select()
+    .from(eventOccurrences)
+    .where(
+      and(
+        eq(eventOccurrences.seriesId, seriesId),
+        gte(eventOccurrences.occurrenceKey, fromKey),
+        eq(eventOccurrences.status, 'scheduled'),
+        eq(eventOccurrences.isException, false),
+      ),
+    )
+    .orderBy(asc(eventOccurrences.occurrenceKey));
+}
+
+/** Drop exactly these occurrences. Their attendees cascade away with them. */
+export async function deleteOccurrencesByIds(x: Executor, ids: readonly string[]): Promise<number> {
+  if (ids.length === 0) return 0;
+  const rows = await x
+    .delete(eventOccurrences)
+    .where(inArray(eventOccurrences.id, [...ids]))
+    .returning({ id: eventOccurrences.id });
+  return rows.length;
+}
+
+/**
+ * Move one occurrence onto the slot an edited rule now produces for it.
+ *
+ * **The only place `occurrence_key` is ever written after insert**, and it is
+ * deliberately not part of {@link OccurrencePatch}: a user dragging an instance
+ * must leave the key alone (that is what stops the next horizon extension from
+ * re-creating a phantom on the original day, §1). Here the *rule itself* moved,
+ * so the row's slot moves with it — which is what keeps its id, and therefore
+ * its `event_attendees` rows, alive across a reschedule.
+ */
+export async function retimeOccurrence(
+  x: Executor,
+  id: string,
+  next: {
+    occurrenceKey: string;
+    startsAt: Date;
+    endsAt: Date;
+    localDate: string;
+    startsLocal: string;
+  },
+): Promise<void> {
+  await x.update(eventOccurrences).set(next).where(eq(eventOccurrences.id, id));
+}
+
 /** `scheduled` future rows become `cancelled` — used by "delete all". */
 export async function cancelFutureOccurrences(
   x: Executor,
@@ -810,8 +871,14 @@ export async function addAttendees(
     await x
       .insert(eventAttendees)
       .values(batch)
-      // The unique index is what makes a re-run of the fan-out free, and it is
-      // also what stops a re-invite from resetting somebody's «нет» to pending.
+      // The unique index is what makes a re-run of the fan-out free: somebody
+      // already invited to this occurrence keeps the answer they gave.
+      //
+      // It only protects a row that still **exists**. `occurrence_id` is
+      // `ON DELETE CASCADE`, so a reschedule that deleted the occurrence took
+      // «нет» with it and this clause never saw the conflict it was trusted to
+      // catch — the whole point of re-timing occurrences in place instead
+      // (`reconcileFutureOccurrences` in the service).
       .onConflictDoNothing({
         target: [eventAttendees.occurrenceId, eventAttendees.userId],
       });

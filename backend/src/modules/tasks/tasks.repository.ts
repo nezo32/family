@@ -1,7 +1,21 @@
-import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, or, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  lt,
+  lte,
+  notInArray,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 
 import type { Executor } from '../../core/db.js';
-import { nowSql, ts } from '../../core/sql.js';
+import { dateOnly, nowSql, ts } from '../../core/sql.js';
 import {
   decodeCursor,
   encodeCursor,
@@ -902,10 +916,20 @@ export async function applyOccurrenceOverride(
  * Only `scheduled`, non-exception rows are removed. Everything `done`,
  * `skipped` or hand-edited stays exactly where it is — that is the difference
  * between changing a schedule and rewriting history.
+ *
+ * `keepKeys` narrows that further to the dates the **new** rule no longer
+ * produces. A date that survives an edit must survive it as the same row: its
+ * id is a URL, a comment thread, a pending swap and a notification dedupe key,
+ * and none of those can be re-derived from a fresh UUID.
  */
 export async function deleteFutureScheduled(
   ex: Executor,
-  params: { seriesId: string; fromKey?: string | undefined; fromInstant?: Date | undefined },
+  params: {
+    seriesId: string;
+    fromKey?: string | undefined;
+    fromInstant?: Date | undefined;
+    keepKeys?: readonly string[] | undefined;
+  },
 ): Promise<string[]> {
   const filters: SQL[] = [
     eq(taskOccurrences.seriesId, params.seriesId),
@@ -918,12 +942,112 @@ export async function deleteFutureScheduled(
   if (params.fromInstant !== undefined) {
     filters.push(gte(taskOccurrences.startsAt, params.fromInstant));
   }
+  // An empty `keepKeys` means "the new rule owes nothing here", which is a
+  // filter that must not be applied — `NOT IN ()` is not valid SQL and the
+  // intent is to delete everything in range.
+  if (params.keepKeys !== undefined && params.keepKeys.length > 0) {
+    filters.push(notInArray(taskOccurrences.occurrenceKey, [...params.keepKeys]));
+  }
 
   const rows = await ex
     .delete(taskOccurrences)
     .where(and(...filters))
     .returning({ id: taskOccurrences.id });
   return rows.map((r) => r.id);
+}
+
+/**
+ * Future rows still assigned by the rule, in the order the rotation walks them.
+ *
+ * `is_exception` is the line between "the rule decided this" and "a person
+ * decided this": a claimed or hand-reassigned occurrence carries the flag and
+ * is therefore not listed, because a series-wide change of who does the chore
+ * must not take a chore back off whoever volunteered for it.
+ */
+export async function listFutureRuleAssigned(
+  ex: Executor,
+  seriesId: string,
+  from: Date,
+): Promise<Array<{ id: string; startsAt: Date }>> {
+  return ex
+    .select({ id: taskOccurrences.id, startsAt: taskOccurrences.startsAt })
+    .from(taskOccurrences)
+    .where(
+      and(
+        eq(taskOccurrences.seriesId, seriesId),
+        eq(taskOccurrences.status, 'scheduled'),
+        eq(taskOccurrences.isException, false),
+        gte(taskOccurrences.startsAt, from),
+      ),
+    )
+    .orderBy(asc(taskOccurrences.occurrenceKey), asc(taskOccurrences.id));
+}
+
+/** Write one rule-made assignment. Never flips `is_exception` — the rule did it. */
+export async function setRuleAssignment(
+  ex: Executor,
+  id: string,
+  assignment: { assigneeId: string | null; assignedVia: TaskOccurrenceRow['assignedVia'] },
+): Promise<void> {
+  await ex
+    .update(taskOccurrences)
+    .set({ assigneeId: assignment.assigneeId, assignedVia: assignment.assignedVia })
+    .where(and(eq(taskOccurrences.id, id), eq(taskOccurrences.isException, false)));
+}
+
+/** One planned instant, as {@link refreshScheduledInstants} needs it. */
+export interface PlannedInstant {
+  readonly occurrenceKey: string;
+  readonly startsAt: Date;
+  readonly derivedAt: Date;
+  readonly localDate: string;
+}
+
+/** Rows per UPDATE. Same reasoning as the materializer's insert chunk. */
+const REFRESH_CHUNK = 250;
+
+/**
+ * Re-derive `starts_at` / `due_at` / `local_date` / `starts_local` for the rows
+ * an edit kept (§3.4).
+ *
+ * The materializer's `ON CONFLICT DO NOTHING` is what preserves a surviving
+ * row's identity, and it is also what leaves that row holding instants derived
+ * from the *old* deadline offset or the *old* timezone. This is the other half:
+ * the key stays, the derived columns follow the new series values.
+ *
+ * `occurrence_key` is never in the update set, and `is_exception` rows are
+ * never touched — a hand-moved instance keeps the time a human gave it.
+ */
+export async function refreshScheduledInstants(
+  ex: Executor,
+  seriesId: string,
+  planned: readonly PlannedInstant[],
+): Promise<number> {
+  let touched = 0;
+  for (let i = 0; i < planned.length; i += REFRESH_CHUNK) {
+    const batch = planned.slice(i, i + REFRESH_CHUNK);
+    const tuples = batch.map(
+      (o) =>
+        sql`(${o.occurrenceKey}::text, ${ts(o.startsAt)}, ${ts(o.derivedAt)}, ${dateOnly(o.localDate)})`,
+    );
+
+    const rows = await ex.execute<{ id: string }>(sql`
+      update ${taskOccurrences} o
+      set starts_at = v.starts_at,
+          due_at = v.due_at,
+          local_date = v.local_date,
+          starts_local = v.occurrence_key
+      from (values ${sql.join(tuples, sql`, `)})
+        as v(occurrence_key, starts_at, due_at, local_date)
+      where o.series_id = ${seriesId}
+        and o.occurrence_key = v.occurrence_key
+        and o.status = 'scheduled'
+        and o.is_exception = false
+      returning o.id
+    `);
+    touched += rows.length;
+  }
+  return touched;
 }
 
 /**

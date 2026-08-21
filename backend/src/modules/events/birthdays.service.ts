@@ -3,7 +3,7 @@ import { recurrenceEngine } from '../../core/recurrence/engine.js';
 import { emit } from '../notifications/notifications.service.js';
 import * as repo from './events.repository.js';
 import type { EventSeriesRow } from './events.schema.js';
-import { localDateIn } from './events.service.js';
+import { localDateIn, reconcileFutureOccurrences } from './events.service.js';
 
 /**
  * Birthday event generation (`docs/architecture/scheduling.md` §6).
@@ -208,12 +208,19 @@ export async function syncBirthdayForUser(
   });
 
   if (moved) {
-    // Drop the stale future slots. Past occurrences, and anything a person
-    // deliberately edited, are left alone — this is the same "history is not
-    // rewritten" rule the §3 mutations follow.
-    await repo.deleteFutureScheduledOccurrences(
+    /**
+     * Realign the future slots. A date the correction genuinely moves off is
+     * dropped; a date that survives it — a fixed birth *year*, say, which
+     * leaves `BYMONTH`/`BYMONTHDAY` exactly where they were — keeps its
+     * occurrence row, and with it its id and anyone already invited. Past
+     * occurrences and anything a person deliberately edited are left alone,
+     * the same "history is not rewritten" rule the §3 mutations follow.
+     */
+    await reconcileFutureOccurrences(
       x,
       existing.id,
+      rule,
+      existing.durationMinutes,
       `${localDateIn(new Date(), timezone)}T00:00:00`,
     );
     await repo.materializeEventSeries(x, existing.id);

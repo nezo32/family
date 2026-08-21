@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import type { EventOccurrenceResponse, EventSeriesResponse, PublicUser } from '@family/shared';
 
 /* -------------------------------------------------------------------------- */
@@ -13,14 +14,23 @@ const responses = new Map<string, unknown>();
 
 vi.mock('@/shared/api/client', () => {
   const get = (path: string): Promise<unknown> => {
-    if (responses.has(path)) return Promise.resolve(responses.get(path));
+    if (responses.has(path)) {
+      const value = responses.get(path);
+      // A stubbed `Error` is a stubbed *failure* — the only way to exercise the
+      // screens a 404 is supposed to produce.
+      return value instanceof Error ? Promise.reject(value) : Promise.resolve(value);
+    }
     return Promise.reject(new Error(`unstubbed GET ${path}`));
   };
+  // `PATCH <path>` in the same map: a series update answers with the series the
+  // server chose, which for a `this_and_future` edit is a *different* one.
+  const patch = (path: string): Promise<unknown> =>
+    Promise.resolve(responses.has(`PATCH ${path}`) ? responses.get(`PATCH ${path}`) : {});
   return {
     api: {
       get,
       post: () => Promise.resolve({}),
-      patch: () => Promise.resolve({}),
+      patch,
       put: () => Promise.resolve({}),
       del: () => Promise.resolve(undefined),
     },
@@ -42,6 +52,8 @@ import { AgendaList } from './components/AgendaList';
 import { EventDetailSheet } from './components/EventDetailSheet';
 import { RecurrenceBuilder } from './components/RecurrenceBuilder';
 import CalendarPage from './pages/CalendarPage';
+import EventDetailPage from './pages/EventDetailPage';
+import { ApiError } from '@/shared/api/errors';
 
 /* -------------------------------------------------------------------------- */
 /* Fixtures                                                                    */
@@ -503,5 +515,185 @@ describe('recurrence builder grammar', () => {
 
     expect(screen.queryByLabelText(/RRULE/i)).toBeNull();
     expect(screen.getByRole('radio', { name: 'Последний день месяца' })).toBeInTheDocument();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* 6. The event detail page — the only route a notification can reach          */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * `/calendar/:eventId` has no link anywhere in the UI: the calendar opens a
+ * sheet instead of navigating. A push notification is the only way in, which
+ * makes this the one detail route that can rot for a whole release with nobody
+ * noticing — and it did, for the life of the feature. These tests stand in for
+ * the human who never visits it.
+ */
+
+const SEP_08 = 'occ-sep-08';
+const SEP_15 = 'occ-sep-15';
+const SEP_22 = 'occ-sep-22';
+
+function occurrenceOn(id: string, localDate: string, title: string): EventOccurrenceResponse {
+  return {
+    ...timedOccurrence,
+    id,
+    title,
+    localDate,
+    occurrenceKey: `${localDate}T19:00:00`,
+    startsLocal: `${localDate}T19:00:00`,
+  };
+}
+
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location">{`${location.pathname}${location.search}`}</div>;
+}
+
+function renderEventDetail(path: string) {
+  return render(
+    wrapper(
+      <MemoryRouter initialEntries={[path]}>
+        <LocationProbe />
+        <Routes>
+          <Route path="/calendar/:eventId" element={<EventDetailPage />} />
+          <Route path="/calendar" element={<div>Календарь</div>} />
+        </Routes>
+      </MemoryRouter>,
+    ),
+  );
+}
+
+describe('event detail page', () => {
+  beforeEach(() => {
+    responses.set('/events/series/series-dinner', series());
+    responses.set('/events/occurrences', [
+      occurrenceOn(SEP_08, '2026-09-08', 'Ужин восьмого'),
+      occurrenceOn(SEP_15, '2026-09-15', 'Ужин пятнадцатого'),
+    ]);
+  });
+
+  it('marks the date the reminder was about', async () => {
+    // The whole reason `?date=` exists. The path can only name the series, so
+    // without it the reader of «Скоро событие» arrives at a list of dates with
+    // no indication which one they were just told about.
+    const { container } = renderEventDetail('/calendar/series-dinner?date=2026-09-15');
+
+    expect(await screen.findByTestId('reminded-date')).toHaveTextContent(
+      'Напоминание: 15 сентября 2026 г.',
+    );
+    const marked = container.querySelectorAll('[data-reminded="true"]');
+    expect(marked).toHaveLength(1);
+    expect(marked[0]).toHaveTextContent('Ужин пятнадцатого');
+  });
+
+  it('renders without a reminded date at all', async () => {
+    renderEventDetail('/calendar/series-dinner');
+
+    expect(await screen.findByText('Ужин восьмого')).toBeInTheDocument();
+    expect(screen.queryByTestId('reminded-date')).toBeNull();
+  });
+
+  it('ignores a date the URL made up', async () => {
+    // The param is typed by anybody. Anything that is not a date key is absent.
+    renderEventDetail('/calendar/series-dinner?date=завтра');
+
+    expect(await screen.findByText('Ужин восьмого')).toBeInTheDocument();
+    expect(screen.queryByTestId('reminded-date')).toBeNull();
+  });
+
+  it('says so when the reminded date has left the schedule', async () => {
+    // The successor of a «это и последующие» edit need not contain the date the
+    // reader arrived on. The window below straddles 15 сентября without
+    // containing it, which is the only evidence that proves the date is gone.
+    responses.set('/events/occurrences', [
+      occurrenceOn(SEP_08, '2026-09-08', 'Ужин восьмого'),
+      occurrenceOn(SEP_22, '2026-09-22', 'Ужин двадцать второго'),
+    ]);
+
+    const { container } = renderEventDetail('/calendar/series-dinner?date=2026-09-15');
+
+    expect(await screen.findByTestId('reminded-date')).toHaveTextContent(
+      'Этой даты больше нет в расписании',
+    );
+    expect(container.querySelectorAll('[data-reminded="true"]')).toHaveLength(0);
+  });
+
+  it('does not accuse a date the loaded window never covered', async () => {
+    // `/events/occurrences` answers a bounded from-today window. A date beyond
+    // its last row may be perfectly real and simply further out than the 25
+    // rows we asked for, so the page must not claim it was rescheduled.
+    renderEventDetail('/calendar/series-dinner?date=2026-12-01');
+
+    expect(await screen.findByTestId('reminded-date')).toHaveTextContent(
+      'Напоминание: 1 декабря 2026 г.',
+    );
+  });
+
+  it('answers a link whose series is gone with «не найдено», not an error', async () => {
+    /*
+     * Inbox rows outlive the rows they point at: `notification_intents.
+     * entity_id` has no foreign key and nothing sweeps the inbox, so a push
+     * sent last week can name a series deleted since. That is an outcome, not a
+     * failure, and it must not arrive as the red alert card with a «Повторить»
+     * that can never succeed.
+     */
+    responses.set('/events/series/series-gone', new ApiError({ code: 'NOT_FOUND', status: 404 }));
+
+    renderEventDetail('/calendar/series-gone?date=2026-09-15');
+
+    expect(await screen.findByText('Событие не найдено')).toBeInTheDocument();
+    expect(screen.queryByText('Что-то пошло не так')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Повторить' })).toBeNull();
+    // Two ways out: the eyebrow back-link every state carries, and the empty
+    // state's own action. The second is the one this screen adds.
+    expect(screen.getAllByRole('link', { name: 'К календарю' })).toHaveLength(2);
+  });
+
+  it('follows a «это и последующие» edit to the series it created', async () => {
+    /*
+     * The split, from the reader's side. `events.service.ts` truncates this
+     * series and inserts a **successor** carrying the edited fields, so the id
+     * in the URL stops being the one holding the edited dates. Before this, the
+     * save toast settled over pre-edit content and an empty «Ближайшие даты».
+     *
+     * `?date=` rides along untouched: it is a date, and a split cannot
+     * invalidate a date the way it invalidates a row id.
+     */
+    const user = userEvent.setup();
+    const successor = series({ id: 'series-successor', title: 'Ужин попозже' });
+    responses.set('/events/series/series-successor', successor);
+    responses.set('PATCH /events/series/series-dinner', successor);
+
+    renderEventDetail('/calendar/series-dinner?date=2026-09-15');
+
+    await user.click(await screen.findByRole('button', { name: /Изменить/ }));
+    await user.click(await screen.findByRole('button', { name: /Сохранить/ }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location')).toHaveTextContent(
+        '/calendar/series-successor?date=2026-09-15',
+      );
+    });
+  });
+
+  it('stays put when the save edited the series in place', async () => {
+    // The ordinary edit returns the same series. Navigating to where we already
+    // are is a pointless history write, and `replace: true` on every save would
+    // fight the anchor logic the form applies to an «все» edit.
+    const user = userEvent.setup();
+    responses.set('PATCH /events/series/series-dinner', series({ title: 'Ужин переименованный' }));
+
+    renderEventDetail('/calendar/series-dinner?date=2026-09-15');
+
+    await user.click(await screen.findByRole('button', { name: /Изменить/ }));
+    await user.click(await screen.findByRole('button', { name: /Сохранить/ }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /Сохранить/ })).toBeNull();
+    });
+    expect(screen.getByTestId('location')).toHaveTextContent(
+      '/calendar/series-dinner?date=2026-09-15',
+    );
   });
 });

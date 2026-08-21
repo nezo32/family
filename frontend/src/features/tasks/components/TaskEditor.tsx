@@ -39,7 +39,12 @@ export function TaskEditor(props: {
   /** Anchor for `this` / `this_and_future`. */
   occurrence?: TaskOccurrenceResponse | null;
   members: readonly PublicUser[];
-  onSaved?: () => void;
+  /**
+   * The series as it stands after the save. A `this_and_future` edit answers
+   * with the **successor**, not the series that was passed in, so a caller that
+   * is standing on one occurrence can find out where that date went.
+   */
+  onSaved?: (series: TaskSeriesResponse) => void;
 }) {
   const series = props.series ?? null;
   const occurrence = props.occurrence ?? null;
@@ -72,9 +77,9 @@ export function TaskEditor(props: {
         return;
       }
       create.mutate(parsed.data, {
-        onSuccess: () => {
+        onSuccess: (created) => {
           props.onOpenChange(false);
-          props.onSaved?.();
+          props.onSaved?.(created);
         },
       });
       return;
@@ -95,9 +100,9 @@ export function TaskEditor(props: {
     update.mutate(
       { seriesId: series.id, body: parsed.data },
       {
-        onSuccess: () => {
+        onSuccess: (saved) => {
           props.onOpenChange(false);
-          props.onSaved?.();
+          props.onSaved?.(saved);
         },
       },
     );

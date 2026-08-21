@@ -30,6 +30,23 @@ export const CALENDAR_RU = {
   emptyAgendaDescription:
     'Здесь появятся встречи, праздники и дни рождения. Соседние месяцы — стрелками выше.',
   loadFailed: 'Не удалось загрузить календарь',
+  /**
+   * `/calendar/:eventId` answering a 404. A notification is the only way into
+   * that screen, and a push outlives the row it names, so this is the ordinary
+   * outcome of an old reminder rather than a failure. D4 makes a deletion and a
+   * permission denial indistinguishable from here — the wording claims neither.
+   */
+  notFoundTitle: 'Событие не найдено',
+  notFoundDescription:
+    'Возможно, оно уже прошло, было удалено или доступно только другим участникам.',
+  /** «Напоминание: 21 августа 2026 г.» — which date sent the reader here. */
+  remindedAbout: (date: string) => `Напоминание: ${date}`,
+  /**
+   * Same date, after an edit took it out of the schedule. Matches the tasks
+   * side's wording (`TASKS_RU.rescheduledTitle`) on purpose: it is the same
+   * sentence about the same kind of event, and two spellings of it would drift.
+   */
+  remindedDateGone: 'Этой даты больше нет в расписании',
 
   /* ---- actions -------------------------------------------------------- */
   createEvent: 'Новое событие',

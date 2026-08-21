@@ -35,8 +35,10 @@ import {
   createMaterializerPort,
   materializeDueThroughPort,
   materializeSeries,
+  planSeries,
   type MaterializeResult,
   type OccurrenceDecorator,
+  type SeriesSnapshot,
 } from '../../core/recurrence/materializer.js';
 import { loadRotationSnapshot } from '../chores/chores.service.js';
 import { RotationRun, type RotationSnapshot } from '../chores/rotation.js';
@@ -197,6 +199,12 @@ export function ruleOf(series: {
   };
 }
 
+/** Who the rule hands one occurrence to, given when it starts (D5). */
+type AssigneePick = (startsAt: Date) => {
+  assigneeId: string | null;
+  assignedVia: AssignedVia | null;
+};
+
 export interface CompiledRecurrence {
   readonly rrule: string | null;
   readonly dtstartLocal: string;
@@ -238,6 +246,47 @@ export function compileRecurrence(spec: RecurrenceSpec): CompiledRecurrence {
     ...base,
     rrule,
     seriesEndsAt: recurrenceEngine.seriesEndsAt({ ...base, rrule }),
+  };
+}
+
+/**
+ * Does this compiled rule say anything the series does not already say?
+ *
+ * The edit sheet posts the whole form back, so a title change can arrive
+ * carrying the very schedule it loaded. Answering "the schedule changed"
+ * because a `recurrence` key is *present* — rather than because it *differs* —
+ * re-materializes the window and hands every future occurrence a new id, which
+ * is the difference between saving a title and losing a comment thread.
+ */
+export function recurrenceDiffers(series: TaskSeriesRow, next: CompiledRecurrence): boolean {
+  const sameDates = (a: readonly string[], b: readonly string[]): boolean =>
+    a.length === b.length && a.every((value, index) => value === b[index]);
+
+  return (
+    series.rrule !== next.rrule ||
+    series.dtstartLocal !== next.dtstartLocal ||
+    series.timezone !== next.timezone ||
+    !sameDates(series.rdatesLocal, next.rdatesLocal) ||
+    !sameDates(series.exdatesLocal, next.exdatesLocal) ||
+    (series.seriesEndsAt?.getTime() ?? null) !== (next.seriesEndsAt?.getTime() ?? null)
+  );
+}
+
+/**
+ * A series row as the generic materializer wants to see it (§2).
+ *
+ * `planSeries` is pure, so handing it this snapshot is how the edit path can
+ * ask "which dates does the new rule owe?" before it decides which of the old
+ * ones to delete.
+ */
+export function snapshotOf(series: TaskSeriesRow): SeriesSnapshot {
+  return {
+    id: series.id,
+    rule: ruleOf(series),
+    offsetMinutes: series.dueOffsetMinutes,
+    seriesEndsAt: series.seriesEndsAt,
+    materializedThrough: series.materializedThrough,
+    archivedAt: series.archivedAt,
   };
 }
 
@@ -807,10 +856,22 @@ export class TasksService {
    * means every non-overridden occurrence picks the new title or note up for
    * free, and every override keeps winning.
    *
-   * A **schedule** change deletes the future `scheduled`, non-exception rows
-   * and re-materializes. The watermark is pulled back to `now` rather than
+   * A **schedule** change re-plans the window and keeps every date the new rule
+   * still produces — as the same row. Only the dates that genuinely stopped
+   * existing are deleted. The watermark is pulled back to `now` rather than
    * cleared, because "all" means all *future*: clearing it would re-expand from
    * DTSTART and manufacture history that never happened.
+   *
+   * ## Presence is not change
+   *
+   * The edit sheet posts the whole field set back, changed or not, so
+   * «переименовать дело» arrives carrying the deadline it loaded. Reading that
+   * as a schedule change is what used to delete and regenerate every future
+   * occurrence of a series nobody had rescheduled — and an occurrence id is a
+   * URL, a comment thread, a pending swap and a notification dedupe key, so the
+   * visible symptom («Дело сохранено», then «Задача не найдена» on the page the
+   * user saved from) was the mildest of the four things it broke. Both flags
+   * below therefore compare values, never presence.
    */
   private async editAll(
     tx: Executor,
@@ -837,9 +898,9 @@ export class TasksService {
       patch.reminderOffsets = normalizeReminderOffsets(input.reminderOffsets);
     }
 
-    const scheduleChanged = input.recurrence !== undefined;
-    if (input.recurrence !== undefined) {
-      const recurrence = compileRecurrence(input.recurrence);
+    const recurrence = input.recurrence === undefined ? null : compileRecurrence(input.recurrence);
+    const scheduleChanged = recurrence !== null && recurrenceDiffers(series, recurrence);
+    if (recurrence !== null && scheduleChanged) {
       patch.rrule = recurrence.rrule;
       patch.dtstartLocal = recurrence.dtstartLocal;
       patch.timezone = recurrence.timezone;
@@ -848,28 +909,74 @@ export class TasksService {
       patch.seriesEndsAt = recurrence.seriesEndsAt;
       patch.materializedThrough = now;
     }
-    // A wall-clock offset change moves every future deadline, so it is a
-    // schedule change even without a new rule.
-    const offsetChanged = input.dueOffsetMinutes !== undefined;
+    // A wall-clock offset change moves every future deadline, so it re-derives
+    // the window even without a new rule. It moves `due_at`, though, not the
+    // set of dates — so it deletes nothing.
+    const offsetChanged =
+      input.dueOffsetMinutes !== undefined && input.dueOffsetMinutes !== series.dueOffsetMinutes;
+
+    // Who does it is not a schedule change — it deletes nothing and moves
+    // nothing — but it does have to reach the rows already materialized.
+    const assignmentChanged =
+      (input.rotationId !== undefined && (input.rotationId ?? null) !== series.rotationId) ||
+      (input.defaultAssigneeId !== undefined &&
+        (input.defaultAssigneeId ?? null) !== series.defaultAssigneeId);
 
     const updated = await repo.updateSeriesRow(tx, series.id, patch);
     if (!updated) throw notFound('Task series');
 
-    if (scheduleChanged || offsetChanged) {
-      const removed = await repo.deleteFutureScheduled(tx, {
-        seriesId: series.id,
-        fromInstant: now,
-      });
-      await this.forgetComments(tx, removed);
-      if (!scheduleChanged) {
-        await repo.updateSeriesRow(tx, series.id, { materializedThrough: now });
-      }
-      const reloaded = await repo.findSeriesById(tx, series.id);
-      if (reloaded) await this.materialize(tx, reloaded, now);
-      return toSeriesResponse(reloaded ?? updated);
+    if (!scheduleChanged && !offsetChanged) {
+      if (assignmentChanged) await this.reassignByRule(tx, updated, now);
+      return toSeriesResponse(updated);
     }
 
-    return toSeriesResponse(updated);
+    if (!scheduleChanged) {
+      await repo.updateSeriesRow(tx, series.id, { materializedThrough: now });
+    }
+    const reloaded = await repo.findSeriesById(tx, series.id);
+    if (!reloaded) throw notFound('Task series');
+
+    // The same pure plan the materializer is about to run, computed here so the
+    // delete below knows which keys the new rule still owes. It reads the row
+    // just written, in this transaction, with the same `now` — so the two
+    // expansions agree by construction rather than by luck.
+    const plan = planSeries(snapshotOf(reloaded), { now });
+    const keepKeys = plan.occurrences.map((occurrence) => occurrence.occurrenceKey);
+
+    // Only the dates the new rule stopped producing. A surviving date keeps its
+    // row, and the materializer's `ON CONFLICT DO NOTHING` then keeps it too:
+    // same id, same assignee, same comment thread, same reminder dedupe key.
+    const removed = await repo.deleteFutureScheduled(tx, {
+      seriesId: reloaded.id,
+      fromInstant: now,
+      keepKeys,
+    });
+    await this.forgetComments(tx, removed);
+
+    await this.materialize(tx, reloaded, now);
+
+    // A kept row still holds instants derived from the old deadline offset or
+    // the old timezone: `DO NOTHING` preserved its identity and its staleness
+    // alike. This is the other half of that bargain.
+    await repo.refreshScheduledInstants(
+      tx,
+      reloaded.id,
+      plan.occurrences.map((occurrence) => ({
+        occurrenceKey: occurrence.occurrenceKey,
+        startsAt: occurrence.startsAt,
+        derivedAt: occurrence.derivedAt,
+        localDate: occurrence.localDate,
+      })),
+    );
+
+    // An edit that changes the schedule *and* the roster walks the rotation
+    // twice — once for the rows materialization created, once here for the ones
+    // it kept. A `round_robin` cursor therefore ends a few positions further
+    // along than it strictly needs to be, which costs a turn order and nothing
+    // else; every other strategy is stateless between runs.
+    if (assignmentChanged) await this.reassignByRule(tx, reloaded, now);
+
+    return toSeriesResponse(reloaded);
   }
 
   /**
@@ -1307,7 +1414,7 @@ export class TasksService {
     ex: Executor,
     series: TaskSeriesRow,
     now: Date,
-  ): Promise<{ decorate: OccurrenceDecorator; run: RotationRun | null }> {
+  ): Promise<{ decorate: OccurrenceDecorator; pick: AssigneePick; run: RotationRun | null }> {
     let run: RotationRun | null = null;
     if (series.rotationId !== null) {
       const snapshot = await this.rotation.loadSnapshot(ex, series.rotationId, { now });
@@ -1317,22 +1424,57 @@ export class TasksService {
     const fallback = series.defaultAssigneeId;
     const manual: AssignedVia = 'manual';
 
-    const decorate: OccurrenceDecorator = (occurrence) => {
+    // Typed, because the same walk has to serve rows that do not exist yet
+    // (the decorator, below) and rows that already do ({@link reassignByRule}).
+    const pick: AssigneePick = (startsAt) => {
       if (run) {
-        const pick = run.assign(occurrence.startsAt);
-        if (pick.userId !== null) {
-          return { assignee_id: pick.userId, assigned_via: pick.assignedVia };
+        const chosen = run.assign(startsAt);
+        if (chosen.userId !== null) {
+          return { assigneeId: chosen.userId, assignedVia: chosen.assignedVia };
         }
         // `anyone`, or nobody eligible: leave it claimable rather than
         // silently handing it to the default assignee.
-        return { assignee_id: null, assigned_via: null };
+        return { assigneeId: null, assignedVia: null };
       }
 
-      if (fallback !== null) return { assignee_id: fallback, assigned_via: manual };
-      return { assignee_id: null, assigned_via: null };
+      if (fallback !== null) return { assigneeId: fallback, assignedVia: manual };
+      return { assigneeId: null, assignedVia: null };
     };
 
-    return { decorate, run };
+    const decorate: OccurrenceDecorator = (occurrence) => {
+      const chosen = pick(occurrence.startsAt);
+      return { assignee_id: chosen.assigneeId, assigned_via: chosen.assignedVia };
+    };
+
+    return { decorate, pick, run };
+  }
+
+  /**
+   * Re-run the rule's assignment over the occurrences that already exist.
+   *
+   * Assignment is frozen at materialization and never recomputed on read (D5),
+   * which is what stops a chore changing owner overnight. «Кто» is a series
+   * setting, though, so changing it for the whole series has to reach the rows
+   * already on the board — otherwise the change appears to do nothing until the
+   * horizon extends past them, which is up to ninety days of doing nothing.
+   *
+   * This used to happen by accident: the edit sheet always posts the deadline,
+   * the deadline always counted as a schedule change, and the regeneration that
+   * followed re-decorated everything. Now that an edit keeps its occurrences,
+   * the reassignment has to be asked for by name.
+   */
+  private async reassignByRule(tx: Executor, series: TaskSeriesRow, now: Date): Promise<void> {
+    const rows = await repo.listFutureRuleAssigned(tx, series.id, now);
+    if (rows.length === 0) return;
+
+    const { pick, run } = await this.assigneeDecorator(tx, series, now);
+    for (const row of rows) {
+      await repo.setRuleAssignment(tx, row.id, pick(row.startsAt));
+    }
+
+    if (run !== null && series.rotationId !== null && run.cursorMoved) {
+      await this.rotation.saveCursor(tx, series.rotationId, run.cursor);
+    }
   }
 
   /**

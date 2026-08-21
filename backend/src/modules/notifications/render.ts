@@ -1,6 +1,7 @@
 import {
   APP_ROUTES,
   countRu,
+  EVENT_DATE_PARAM,
   NOTIFICATION_TYPES,
   RU_PLURALS,
   type NotificationType,
@@ -83,6 +84,24 @@ function id(payload: NotificationPayload, ...keys: string[]): string | null {
 /** `/tasks/<id>` when the id is present, otherwise the list route. */
 function route(base: string, entityId: string | null): string {
   return entityId ? `${base}/${entityId}` : base;
+}
+
+/** A floating local date (D2) — `YYYY-MM-DD` — or `null` if the payload has none. */
+function dateKey(payload: NotificationPayload, key: string): string | null {
+  const value = text(payload, key);
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
+}
+
+/**
+ * `…?date=YYYY-MM-DD`, or the bare path when there is no date to carry.
+ *
+ * Which instance a link is about, for a detail route whose path segment can
+ * only name the parent — see `event_reminder`. Deliberately a query string:
+ * the pino request serializer drops those, so nothing here reaches a log line.
+ * `EVENT_DATE_PARAM` is shared with the PWA, which reads it back.
+ */
+function focusDate(path: string, date: string | null): string {
+  return date ? `${path}?${EVENT_DATE_PARAM}=${date}` : path;
 }
 
 /** Trims to `max` characters on a word boundary and appends an ellipsis. */
@@ -301,8 +320,40 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
 
     /* -------------------------------- calendar ----------------------------- */
 
+    /**
+     * The fourth bug in the deep-link family, and the one the guard blessed.
+     *
+     * `/calendar/:eventId` is a **series** route — `EventDetailPage` hands the
+     * segment straight to `GET /events/series/:id`. This case used to read
+     * `id(p, 'occurrenceId', …)`, and `events.jobs.ts` puts an `occurrenceId`
+     * in every reminder payload, so `occurrenceId` always won: every reminder
+     * this app can emit linked to `/calendar/<event_occurrences.id>`, a lookup
+     * that cannot match by construction (the two tables share no ids — 186
+     * occurrence rows in dev, zero of them an id any series has). Not
+     * intermittently — always, and only reachable from a push, which is the one
+     * place the reader has no idea what went wrong.
+     *
+     * So the path carries `seriesId`, and the *date* the reminder is about
+     * rides along as `?date=`. Three reasons that beats the alternatives:
+     *
+     *  - a reminder is about one instance, and dropping the occurrence
+     *    entirely would land the reader on «Ужин у бабушки, повторяется по
+     *    средам» with no hint which среда was being announced;
+     *  - occurrence ids in this app are **not stable** — editing a series
+     *    replaces its occurrence rows — so any link keyed by one rots on the
+     *    next edit, whereas a local date is data and stays true forever;
+     *  - `entityId` is gone from the fallback chain on purpose. It is the
+     *    intent's generic pointer and its kind lives in `entityType`, which
+     *    for this type is `event_occurrence` — i.e. exactly the wrong kind.
+     *    Falling back to it would quietly restore the bug.
+     *
+     * Links are rendered from the payload on every read (`notifications.
+     * service.ts` builds the inbox row's `link` at list time, and there is no
+     * `link` column), so this fix reaches every reminder already in the inbox:
+     * `seriesId` and `localDate` have been in the payload all along.
+     */
     case 'event_reminder': {
-      const eventId = id(p, 'occurrenceId', 'eventId', 'entityId');
+      const seriesId = id(p, 'seriesId', 'eventId');
       return {
         title: 'Скоро событие',
         body: joinBody(
@@ -310,12 +361,17 @@ function renderRaw(type: NotificationType, p: NotificationPayload): RenderedNoti
           text(p, 'startsLabel'),
           text(p, 'location'),
         ),
-        navigate: route(APP_ROUTES.calendar, eventId),
+        navigate: focusDate(
+          route(APP_ROUTES.calendar, seriesId),
+          seriesId ? dateKey(p, 'localDate') : null,
+        ),
       };
     }
 
     case 'event_created': {
-      const eventId = id(p, 'eventId', 'occurrenceId', 'entityId');
+      // Series ids only, for the same reason as above. `entityId` stays in the
+      // chain here because this intent's `entityType` is `event_series`.
+      const eventId = id(p, 'seriesId', 'eventId', 'entityId');
       return {
         title: 'Новое событие',
         body: joinBody(

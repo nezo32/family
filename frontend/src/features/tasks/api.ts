@@ -32,6 +32,8 @@ export interface OccurrenceFilters {
   /** `'me'` is resolved server-side; the client never guesses its own id. */
   assignee?: 'me';
   assigneeId?: string;
+  /** One series' instances — how the detail page finds a date after an edit. */
+  seriesId?: string;
   unassignedOnly?: boolean;
   category?: string;
   from?: string;
@@ -79,6 +81,7 @@ export const fetchOccurrences = (filters: OccurrenceFilters, signal?: AbortSigna
     query: {
       assignee: filters.assignee,
       assigneeId: filters.assigneeId,
+      seriesId: filters.seriesId,
       unassignedOnly: filters.unassignedOnly,
       category: filters.category,
       from: filters.from,

@@ -158,10 +158,32 @@ since March, under three different schedules".
 
 ### 3.4 Edit all
 
-Update the series in place. If the _schedule_ changed, delete every
-`scheduled`, non-exception future occurrence and re-materialize; if only
-metadata changed (title, notes, category), nothing is deleted — the resolution
-rule means every non-overridden occurrence picks the new value up for free.
+Update the series in place. If only metadata changed (title, notes, category),
+nothing is deleted — the resolution rule means every non-overridden occurrence
+picks the new value up for free.
+
+If the _schedule_ changed, the new rule is expanded over the window **before**
+anything is deleted, and only the future `scheduled`, non-exception rows whose
+`occurrence_key` the new rule no longer produces are removed. A date that
+survives the edit survives it **as the same row**: the unique index turns its
+re-insertion into a no-op conflict, and the derived columns (`starts_at`,
+`due_at`, `local_date`, `starts_local`) are then re-derived in place so a new
+deadline offset or timezone still reaches it.
+
+That is not a nicety. An occurrence id is a URL (`/tasks/:occurrenceId`), a
+comment thread, a `chore_swaps` row that cascades on delete, a `kudos` link that
+nulls on delete, and the dedupe key of every notification about that instance.
+Regenerating a row the edit did not move throws all of them away.
+
+A change to the **deadline offset** moves `due_at` and nothing else, so it
+deletes nothing at all; a change to **who does it** re-runs the rule's
+assignment over the rows already on the board (never over `is_exception` rows —
+those belong to whoever claimed or was handed them).
+
+Every one of these is decided by **comparing values, not by a key being
+present**: the edit sheet posts the whole field set back whether or not it
+changed, so "the deadline is in the payload" says nothing about whether the
+deadline moved.
 
 Past occurrences are never touched by any scope. "All" means all future.
 

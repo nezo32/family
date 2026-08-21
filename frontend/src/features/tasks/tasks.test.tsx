@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -30,6 +31,7 @@ const apiMock = vi.hoisted(() => ({
 vi.mock('@/shared/api/client', () => ({ api: apiMock }));
 
 import { ApiError } from '@/shared/api/errors';
+import TaskDetailPage from './pages/TaskDetailPage';
 import { RecurrenceBuilder } from './components/RecurrenceBuilder';
 import { ScheduleRepeatRow } from './components/ScheduleField';
 import { TaskEditor } from './components/TaskEditor';
@@ -603,5 +605,99 @@ describe('reminders', () => {
     render(<ReminderHarness />);
     expect(screen.queryByRole('radiogroup')).toBeNull();
     expect(screen.getAllByRole('group').length).toBeGreaterThan(0);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* 6. the detail page follows the occurrence it was standing on                */
+/* -------------------------------------------------------------------------- */
+
+const SUCCESSOR_SERIES_ID = '55555555-5555-4555-8555-555555555555';
+const SUCCESSOR_OCCURRENCE_ID = '66666666-6666-4666-8666-666666666666';
+
+/**
+ * A save can legitimately retire the row the detail page is routed by: a
+ * `this_and_future` split moves that date to a successor series, and a schedule
+ * change can drop the date entirely. Neither may end on «Задача не найдена» —
+ * that screen means "deleted, or not yours", and this is neither.
+ */
+function renderDetail(client: QueryClient) {
+  return render(
+    <MemoryRouter initialEntries={[`/tasks/${OCCURRENCE_ID}`]}>
+      <Routes>
+        <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
+        <Route path="/tasks" element={<div>Список дел</div>} />
+      </Routes>
+    </MemoryRouter>,
+    { wrapper: wrapperFor(client) },
+  );
+}
+
+/** Answers everything the detail page reads; `sameDate` is the post-save lookup. */
+function stubDetail(sameDate: TaskOccurrenceResponse[]): void {
+  apiMock.get.mockImplementation((path: string, init?: { query?: Record<string, unknown> }) => {
+    if (path === '/me') {
+      return Promise.resolve(me(['task:read:any', 'task:update:any', 'task:complete:any']));
+    }
+    if (path === '/members') return Promise.resolve([]);
+    if (path === '/chores/swaps') return Promise.resolve({ items: [], nextCursor: null });
+    if (path === `/tasks/occurrences/${OCCURRENCE_ID}`) return Promise.resolve(occurrence());
+    if (path === `/tasks/series/${SERIES_ID}`) return Promise.resolve(series());
+    if (path === '/tasks/occurrences' && init?.query?.seriesId !== undefined) {
+      return Promise.resolve({ items: sameDate, nextCursor: null });
+    }
+    return Promise.reject(new ApiError({ code: 'NOT_FOUND', status: 404 }));
+  });
+}
+
+/** Открыть «Изменить» → выбрать «Все» → «Сохранить». */
+async function saveWholeSeries(): Promise<void> {
+  fireEvent.click(await screen.findByRole('button', { name: 'Изменить' }));
+  fireEvent.click(await screen.findByRole('radio', { name: /^Все/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Продолжить' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Сохранить' }));
+}
+
+describe('detail page after a save', () => {
+  it('follows the date to the successor a split created', async () => {
+    stubDetail([occurrence({ id: SUCCESSOR_OCCURRENCE_ID, seriesId: SUCCESSOR_SERIES_ID })]);
+    apiMock.patch.mockResolvedValue(series({ id: SUCCESSOR_SERIES_ID }));
+
+    renderDetail(makeClient());
+    await saveWholeSeries();
+
+    // The old id no longer resolves, so the page moves to the row that
+    // replaced it rather than refetching a 404.
+    await waitFor(() => {
+      const asked = apiMock.get.mock.calls.some(
+        ([path]) => path === `/tasks/occurrences/${SUCCESSOR_OCCURRENCE_ID}`,
+      );
+      expect(asked).toBe(true);
+    });
+  });
+
+  it('says the date left the schedule instead of claiming the task is missing', async () => {
+    stubDetail([]);
+    apiMock.patch.mockResolvedValue(series());
+
+    renderDetail(makeClient());
+    await saveWholeSeries();
+
+    // Header and error state both carry it, hence `findAll`.
+    expect(await screen.findAllByText('Этой даты больше нет в расписании')).not.toHaveLength(0);
+    expect(screen.queryByText('Задача не найдена')).toBeNull();
+  });
+
+  it('stays put when the save left the occurrence where it was', async () => {
+    stubDetail([occurrence()]);
+    apiMock.patch.mockResolvedValue(series());
+
+    renderDetail(makeClient());
+    await saveWholeSeries();
+
+    await waitFor(() => {
+      expect(screen.queryByText('Этой даты больше нет в расписании')).toBeNull();
+    });
+    expect(await screen.findByRole('button', { name: 'Изменить' })).toBeInTheDocument();
   });
 });

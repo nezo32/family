@@ -92,6 +92,10 @@ export const TASKS_RU = {
   loadError: 'Не удалось загрузить задачи',
   notFoundTitle: 'Задача не найдена',
   notFoundDescription: 'Возможно, её удалили или у вас нет к ней доступа.',
+  /** After a save that took this date out of the schedule — not an error. */
+  rescheduledTitle: 'Этой даты больше нет в расписании',
+  rescheduledDescription:
+    'Изменения сохранены, но на этот день дела больше нет. Остальные дни серии на месте.',
   backToList: 'Ко всем задачам',
 
   /* ---- actions ---- */
