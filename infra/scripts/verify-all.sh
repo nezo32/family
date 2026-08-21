@@ -154,6 +154,25 @@ fi
 # it is forced to 1 in production regardless.
 printf '\n\033[1;36m── stack for e2e\033[0m\n'
 
+# Object storage, said out loud before a single spec runs.
+#
+# Three specs in `wall-media.spec.ts` upload real bytes, and `uploadMedia()`
+# opens with `requireStorage()` — so a missing object store does not *skip*
+# them, it fails them: six failures across the two browser projects, thirty
+# seconds apart, and the loudest of them asserts a refusal, so it reads as a
+# broken assertion about file formats rather than as a missing service. CI
+# spent a red run being read that way. One curl says it in one line instead,
+# and `.github/workflows/ci.yml` now asserts the same thing twice in the job
+# this section is a transcription of.
+s3_up=$(curl -s -o /dev/null -w '%{http_code}' "$TEST_S3/health" 2>/dev/null)
+if [[ "$s3_up" != "200" ]]; then
+  printf '\033[1;31m   object storage is not answering at %s (http %s)\033[0m\n' "$TEST_S3" "$s3_up"
+  printf '   the media specs will fail on the wrong error until it is up:\n'
+  printf '     docker compose -f infra/docker-compose.dev.yml up -d rustfs\n'
+  FAIL=$((FAIL + 1))
+  FAILED+=("e2e: object storage unreachable at $TEST_S3 — the media specs cannot pass")
+fi
+
 api_up=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$API_PORT/health" 2>/dev/null)
 web_up=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$WEB_PORT/" 2>/dev/null)
 
@@ -178,6 +197,19 @@ else
   done
 fi
 echo "   api=$api_up web=$web_up"
+
+# Reachable is only half of it: the API also has to have been *told*.
+# `storage.routes.ts` logs one of two lines from an `onReady` hook, which runs
+# before the server listens — so whichever line it is, it is already in the log
+# by the time /health answers. Only when this run started the API itself: a
+# reused stack's log belongs to whoever started it, and a stale line from an
+# earlier one would be a false alarm.
+if [[ -n "${API_PID:-}" ]] && grep -q 'object storage is not configured' /tmp/verify-api.log 2>/dev/null; then
+  printf '\033[1;31m   the API on :%s booted with no object storage configured\033[0m\n' "$API_PORT"
+  printf '   POST /api/media answers 503, so the upload specs fail on the wrong sentence.\n'
+  FAIL=$((FAIL + 1))
+  FAILED+=("e2e: the API has no object storage configured — the media specs cannot pass")
+fi
 
 if [[ "$api_up" == "200" && "$web_up" == "200" ]]; then
   step "e2e: whole app (smoke + deep)" bash -c \

@@ -389,6 +389,26 @@ jobs:
       COOKIE_SECRET: ci-cookie-secret-not-used-anywhere-else-0123456789abcdef
       ENCRYPTION_KEY: Y2ktZW5jcnlwdGlvbi1rZXktMzItYnl0ZXMtbG9uZyE=
       VAPID_SUBJECT: mailto:ci@example.com
+      # Object storage, for the same reason the backend-tests job runs a RustFS
+      # service container — but with sharper teeth here, because without it the
+      # media specs do not fail *usefully*, they fail wrongly.
+      #
+      # `uploadMedia()` opens with `requireStorage()`, so with these four unset
+      # `POST /api/media` answers 503 before it sniffs a single magic byte. The
+      # three specs in `frontend/e2e/wall-media.spec.ts` that upload real bytes
+      # then fail across both browser projects — six failures, thirty seconds
+      # apart — and the most misleading of them is the one that asserts a
+      # *refusal*: it expects the server's own 415 sentence («Не удалось
+      # распознать файл»), so a different refusal reads as a broken assertion
+      # rather than as a missing service. That is exactly how it read.
+      #
+      # `infra/scripts/verify-all.sh` has always passed these four to its e2e
+      # stack, which is why the suite was green on a laptop and red here. The
+      # two are meant to be transcriptions of each other; keep them so.
+      S3_ENDPOINT: http://127.0.0.1:9000
+      S3_ACCESS_KEY_ID: family
+      S3_SECRET_ACCESS_KEY: familysecret
+      S3_BUCKET: family-media
       # Pins every worker of this run to one owner account, the way the
       # config's own per-invocation mint would — but recognisably, so a row
       # left behind by a crashed run traces back to the job that made it.
@@ -407,12 +427,33 @@ jobs:
           name: shared-dist
           path: ${{ env.SHARED_DIST }}
 
-      # `--wait` blocks until both healthchecks pass, so there is no ad-hoc
+      # `--wait` blocks until all three healthchecks pass, so there is no ad-hoc
       # polling here. The compose file also mounts `infra/postgres/init`, which
       # creates the extensions the migrations need — the backend-tests job has
       # to do that by hand because a `services:` container gets no initdb mount.
-      - name: Start the dev stack (postgres + redis)
-        run: docker compose -f infra/docker-compose.dev.yml up -d --wait postgres redis
+      #
+      # `rustfs` is named explicitly along with the other two, and the list is
+      # the whole point of the step: it used to read `postgres redis`, and the
+      # media half of the Playwright suite was therefore running against an app
+      # whose object storage did not exist. Compose rather than a `services:`
+      # block for the reason in the header — and it costs nothing extra here,
+      # since the dev file already defines the service the developer uses.
+      - name: Start the dev stack (postgres + redis + object storage)
+        run: docker compose -f infra/docker-compose.dev.yml up -d --wait postgres redis rustfs
+
+      # Healthy inside compose's own network is not the same as reachable on
+      # the published port, and the difference is invisible: the upload specs
+      # would simply go back to failing on the wrong sentence. Same step and
+      # the same reasoning as "Assert object storage is reachable" in the
+      # backend-tests job above.
+      - name: Assert object storage is reachable
+        run: |
+          if ! curl -fsS -o /dev/null "$S3_ENDPOINT"/health; then
+            echo "::error::Object storage is not reachable at $S3_ENDPOINT. The media specs in frontend/e2e/wall-media.spec.ts upload real bytes, and POST /api/media answers 503 without it — six specs would fail on the wrong error instead."
+            docker compose -f infra/docker-compose.dev.yml ps || true
+            docker compose -f infra/docker-compose.dev.yml logs --tail 50 rustfs || true
+            exit 1
+          fi
 
       # The specs click from a list screen into a detail page, so the database
       # has to hold at least one task, event, goal and shopping list. The seed
@@ -459,6 +500,22 @@ jobs:
             echo "::error::The e2e stack did not come up"
             echo "-- api --"; tail -50 "$RUNNER_TEMP/api.log"
             echo "-- web --"; tail -50 "$RUNNER_TEMP/web.log"
+            exit 1
+          fi
+
+          # Reachable is only half of it: the API also has to have been *told*,
+          # and the step above cannot see whether it was. `storage.routes.ts`
+          # logs "object storage ready" or "object storage is not configured"
+          # from an `onReady` hook — which runs before the server listens, so
+          # by the time /health answers 200 the answer is already in the log.
+          #
+          # This is the assertion that would have caught the run this job went
+          # red on: the four S3_* were simply absent, every upload was 503, and
+          # the only symptom was six media specs failing half a minute apart on
+          # a sentence about file formats. Fail here instead, in one line.
+          if ! grep -q 'object storage ready' "$RUNNER_TEMP/api.log"; then
+            echo "::error::The API booted without usable object storage, so POST /api/media will answer 503 and every upload spec in frontend/e2e/wall-media.spec.ts will fail on the wrong sentence. Check the S3_* variables in this job and the rustfs service."
+            grep -i 'object storage' "$RUNNER_TEMP/api.log" || echo "(the API log has no 'object storage' line at all)"
             exit 1
           fi
 

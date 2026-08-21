@@ -240,6 +240,8 @@ projects (`desktop-chrome`, `mobile-safari`).
 ```bash
 # backend
 BACKEND_PORT=3102 APP_PUBLIC_URL=http://localhost:5175 RATE_LIMIT_FACTOR=100 \
+  S3_ENDPOINT=http://127.0.0.1:9000 S3_ACCESS_KEY_ID=family \
+  S3_SECRET_ACCESS_KEY=familysecret S3_BUCKET=family-media \
   npx tsx --env-file-if-exists=.env src/main.ts
 
 # frontend
@@ -250,11 +252,22 @@ VITE_API_PROXY_TARGET=http://localhost:3102 npx vite preview --port 5175 --stric
 E2E_BASE_URL=http://localhost:5175 E2E_API_URL=http://localhost:5175 npx playwright test
 ```
 
-Two things about that command are load-bearing:
+Three things about that command are load-bearing:
 
 - **`localhost`, never `127.0.0.1`.** They are different origins to CORS, and the
   allow-list is built from `APP_PUBLIC_URL`. Point the suite at the IP form and
   every POST comes back `403 Origin not allowed`.
+- **The four `S3_*`.** Three specs in `wall-media.spec.ts` upload real bytes
+  through `POST /api/media`, and `uploadMedia()` opens with `requireStorage()` —
+  so a backend started without them answers **503** before it sniffs a single
+  magic byte, and those three fail across both browser projects. Six failures,
+  and the most misleading is the one asserting a _refusal_: it expects the
+  server's own 415 sentence («Не удалось распознать файл») and gets a different
+  refusal, which reads as a broken assertion rather than as a missing service.
+  Bring `rustfs` up with the rest of the dev stack — the compose command above
+  with no service list after it — and the backend logs `object storage ready` at
+  boot. Without it the same line reads «object storage is not configured», and
+  that is the fastest way to tell these six failures from a real regression.
 - **`RATE_LIMIT_FACTOR=100`.** Without it the dev backend enforces the production
   limits — registration 5/hour/IP, login 10/15min/IP, refresh 60/min/IP — and a
   suite that signs in a few times per run exhausts them in minutes. The symptom
@@ -273,7 +286,7 @@ start the API and a `vite preview` in front of it, then run the suite. It is a
 transcription of `infra/scripts/verify-all.sh`, and the two should be changed
 together rather than allowed to drift.
 
-Three things in that job are load-bearing, and all three are the lessons above
+Four things in that job are load-bearing, and all four are the lessons above
 written as YAML:
 
 - **It brings the services up with `docker compose -f
@@ -287,6 +300,17 @@ infra/docker-compose.dev.yml`, not with a `services:` block.** `helpers.ts`
   drifting apart. **If you change how `helpers.ts` reaches the database, that
   job changes with it.**
 - **`RATE_LIMIT_FACTOR=100`,** for the reason in the previous section.
+- **The dev stack comes up _with_ `rustfs`, and the job asserts it twice.** The
+  step names the services (`up -d --wait postgres redis rustfs`) and the job
+  passes the four `S3_*` to the API, exactly as `verify-all.sh` always has. Once
+  it did neither: the list read `postgres redis`, no `S3_*` was set, and the six
+  upload specs failed on the wrong sentence while every other job stayed green.
+  The assertions exist so that is never again diagnosed from the failures —
+  `curl "$S3_ENDPOINT"/health` before the API starts, because healthy inside
+  compose's network is not the same as reachable on the published port; and a
+  `grep` for `object storage ready` in the API log after it starts, because
+  reachable is not the same as _configured_. The log line is written from an
+  `onReady` hook, before the server listens, so it cannot be raced.
 - **`NODE_ENV` is not set.** A job-level `NODE_ENV=development` reaches every
   step, and `vite build` then emits the React development bundle — 940 KB
   against 695 KB, measured — so the suite would be exercising a bundle no user
